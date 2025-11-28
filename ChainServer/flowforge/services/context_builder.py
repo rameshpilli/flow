@@ -18,6 +18,7 @@ from typing import Any
 
 from flowforge.services.models import (
     ChainRequest,
+    ChainRequestOverrides,
     CompanyInfo,
     ContextBuilderOutput,
     PersonaInfo,
@@ -79,10 +80,15 @@ class ContextBuilderService:
 
         Returns:
             ContextBuilderOutput with all extracted context
+
+        User Overrides:
+            If request.overrides is provided, those values take precedence
+            over API-extracted values. Overrides can also skip API calls entirely.
         """
         start_time = datetime.now()
         timing: dict[str, float] = {}
         errors: dict[str, str] = {}
+        overrides = request.overrides or ChainRequestOverrides()
 
         # Initialize output
         output = ContextBuilderOutput(errors={}, timing_ms={})
@@ -90,8 +96,8 @@ class ContextBuilderService:
         # Run extractors in parallel where possible
         tasks = []
 
-        # 1. Corporate Client Firm Extractor
-        if request.corporate_company_name:
+        # 1. Corporate Client Firm Extractor (can be skipped via override)
+        if request.corporate_company_name and not overrides.skip_company_lookup:
             tasks.append(("firm", self._extract_firm(request.corporate_company_name)))
 
         # 2. Temporal Context Extractor (depends on firm result for ticker)
@@ -134,13 +140,24 @@ class ContextBuilderService:
                         self._apply_result(output, name, data)
 
         # Extract firm info first to get ticker for temporal context
-        if output.company_info and output.company_info.ticker:
-            ticker = output.company_info.ticker
-        else:
-            ticker = None
+        # Apply user overrides to company info
+        if output.company_info:
+            output.company_info = self._apply_company_overrides(output.company_info, overrides)
+        elif overrides.skip_company_lookup and request.corporate_company_name:
+            # Create minimal company info from overrides when API is skipped
+            output.company_info = CompanyInfo(
+                name=request.corporate_company_name,
+                ticker=overrides.ticker,
+                cik=overrides.company_cik,
+                industry=overrides.industry,
+                sector=overrides.sector,
+            )
+
+        ticker = overrides.ticker or (output.company_info.ticker if output.company_info else None)
 
         # 2. Temporal Context Extractor (needs ticker or company name)
-        if request.corporate_company_name or ticker:
+        # Can be skipped if user provides fiscal quarter override
+        if not overrides.skip_earnings_calendar_api and (request.corporate_company_name or ticker):
             try:
                 temporal_start = datetime.now()
                 temporal_data, temporal_error = await self._extract_temporal_context(
@@ -157,11 +174,33 @@ class ContextBuilderService:
             except Exception as e:
                 errors["temporal"] = str(e)
                 logger.error(f"Temporal extractor failed: {e}")
+        elif overrides.skip_earnings_calendar_api or overrides.fiscal_quarter:
+            # Create temporal context from overrides/computed values
+            output.temporal_context = self._create_temporal_from_overrides(
+                request.meeting_datetime, overrides
+            )
+
+        # Apply temporal overrides
+        if output.temporal_context:
+            output.temporal_context = self._apply_temporal_overrides(
+                output.temporal_context, overrides
+            )
 
         # Set resolved company name
         if output.company_info:
             output.company_name = output.company_info.name
             output.ticker = output.company_info.ticker
+
+        # Apply persona overrides
+        if output.rbc_persona:
+            output.rbc_persona = self._apply_rbc_persona_overrides(
+                output.rbc_persona, overrides
+            )
+        if output.corporate_client_personas:
+            output.corporate_client_personas = [
+                self._apply_client_persona_overrides(p, overrides)
+                for p in output.corporate_client_personas
+            ]
 
         output.errors = errors
         output.timing_ms = timing
@@ -260,17 +299,16 @@ class ContextBuilderService:
 
             # Determine current quarter
             quarter = (meeting_date.month - 1) // 3 + 1
-            current_quarter = f"Q{quarter} {meeting_date.year}"
-            fiscal_year = f"FY{meeting_date.year}"
+            fiscal_quarter = str(quarter)
+            fiscal_year = str(meeting_date.year)
 
             # In production, call earnings calendar API
             # For now, create mock temporal context
             result = TemporalContext(
-                meeting_date=meeting_date,
-                current_quarter=current_quarter,
+                meeting_date=str(meeting_date),
+                fiscal_quarter=fiscal_quarter,
                 fiscal_year=fiscal_year,
                 days_to_earnings=None,  # Would come from API
-                lookback_period="12 months",
                 news_lookback_days=self.DEFAULT_NEWS_LOOKBACK_DAYS,
                 filing_quarters=self.DEFAULT_FILING_QUARTERS,
             )
@@ -416,3 +454,151 @@ class ContextBuilderService:
                 profile["company_similarity_score"] = 0.0
 
         return sorted(profiles, key=lambda x: x.get("company_similarity_score", 0), reverse=True)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    #                       USER OVERRIDE HELPERS
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _apply_company_overrides(
+        self,
+        company_info: CompanyInfo,
+        overrides: ChainRequestOverrides,
+    ) -> CompanyInfo:
+        """
+        Apply user overrides to company info.
+
+        Overrides take precedence over API-extracted values.
+        """
+        # Create a dict from the existing company info
+        data = company_info.model_dump()
+
+        # Apply overrides where provided
+        if overrides.ticker:
+            data["ticker"] = overrides.ticker
+        if overrides.company_cik:
+            data["cik"] = overrides.company_cik
+        if overrides.industry:
+            data["industry"] = overrides.industry
+        if overrides.sector:
+            data["sector"] = overrides.sector
+
+        return CompanyInfo(**data)
+
+    def _apply_temporal_overrides(
+        self,
+        temporal: TemporalContext,
+        overrides: ChainRequestOverrides,
+    ) -> TemporalContext:
+        """
+        Apply user overrides to temporal context.
+
+        Overrides take precedence over API-extracted values.
+        """
+        data = temporal.model_dump()
+
+        # Apply overrides where provided
+        if overrides.fiscal_quarter:
+            # Normalize quarter format (Q1, Q2, etc.)
+            q = overrides.fiscal_quarter.upper().replace("Q", "").strip()
+            data["fiscal_quarter"] = q
+        if overrides.fiscal_year:
+            # Normalize year format
+            year = overrides.fiscal_year.upper().replace("FY", "").strip()
+            data["fiscal_year"] = year
+        if overrides.next_earnings_date:
+            data["event_dt"] = overrides.next_earnings_date
+        if overrides.news_lookback_days:
+            data["news_lookback_days"] = overrides.news_lookback_days
+        if overrides.filing_quarters:
+            data["filing_quarters"] = overrides.filing_quarters
+
+        return TemporalContext(**data)
+
+    def _create_temporal_from_overrides(
+        self,
+        meeting_datetime: str | None,
+        overrides: ChainRequestOverrides,
+    ) -> TemporalContext:
+        """
+        Create temporal context from user overrides when API is skipped.
+
+        Uses computed quarter from meeting date if not provided in overrides.
+        """
+        # Parse meeting date
+        meeting_date = None
+        if meeting_datetime:
+            try:
+                meeting_date = datetime.fromisoformat(
+                    meeting_datetime.replace("Z", "+00:00")
+                ).date()
+            except ValueError:
+                meeting_date = date.today()
+        else:
+            meeting_date = date.today()
+
+        # Compute quarter from meeting date if not overridden
+        if overrides.fiscal_quarter:
+            q = overrides.fiscal_quarter.upper().replace("Q", "").strip()
+            fiscal_quarter = q
+        else:
+            quarter = (meeting_date.month - 1) // 3 + 1
+            fiscal_quarter = str(quarter)
+
+        # Get fiscal year
+        if overrides.fiscal_year:
+            fiscal_year = overrides.fiscal_year.upper().replace("FY", "").strip()
+        else:
+            fiscal_year = str(meeting_date.year)
+
+        return TemporalContext(
+            meeting_date=str(meeting_date),
+            fiscal_quarter=fiscal_quarter,
+            fiscal_year=fiscal_year,
+            event_dt=overrides.next_earnings_date,
+            news_lookback_days=overrides.news_lookback_days or self.DEFAULT_NEWS_LOOKBACK_DAYS,
+            filing_quarters=overrides.filing_quarters or self.DEFAULT_FILING_QUARTERS,
+        )
+
+    def _apply_rbc_persona_overrides(
+        self,
+        persona: PersonaInfo,
+        overrides: ChainRequestOverrides,
+    ) -> PersonaInfo:
+        """
+        Apply user overrides to RBC persona.
+        """
+        data = persona.model_dump()
+
+        if overrides.rbc_persona_name:
+            data["name"] = overrides.rbc_persona_name
+            parts = overrides.rbc_persona_name.split()
+            if parts:
+                data["first_name"] = parts[0]
+                data["last_name"] = parts[-1] if len(parts) > 1 else ""
+        if overrides.rbc_persona_role:
+            data["role"] = overrides.rbc_persona_role
+
+        return PersonaInfo(**data)
+
+    def _apply_client_persona_overrides(
+        self,
+        persona: PersonaInfo,
+        overrides: ChainRequestOverrides,
+    ) -> PersonaInfo:
+        """
+        Apply user overrides to client persona.
+
+        Note: Only applies to the first client persona if multiple exist.
+        """
+        data = persona.model_dump()
+
+        if overrides.client_persona_name:
+            data["name"] = overrides.client_persona_name
+            parts = overrides.client_persona_name.split()
+            if parts:
+                data["first_name"] = parts[0]
+                data["last_name"] = parts[-1] if len(parts) > 1 else ""
+        if overrides.client_persona_role:
+            data["role"] = overrides.client_persona_role
+
+        return PersonaInfo(**data)

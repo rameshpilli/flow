@@ -523,6 +523,50 @@ def create_anthropic_summarizer(
     return LangChainSummarizer(llm=llm, strategy=strategy, **kwargs)
 
 
+def create_gateway_summarizer(
+    server_url: str | None = None,
+    model_name: str | None = None,
+    oauth_endpoint: str | None = None,
+    client_id: str | None = None,
+    client_secret: str | None = None,
+    api_key: str | None = None,
+    strategy: SummarizationStrategy = SummarizationStrategy.MAP_REDUCE,
+    **kwargs,
+) -> LangChainSummarizer:
+    """
+    Create a summarizer using the LLM Gateway client.
+
+    Uses OAuth authentication for enterprise environments.
+
+    Usage:
+        # From environment variables
+        summarizer = create_gateway_summarizer()
+
+        # With explicit config
+        summarizer = create_gateway_summarizer(
+            server_url="https://llm.company.com/v1",
+            model_name="gpt-4",
+            oauth_endpoint="https://auth.company.com/oauth/token",
+            client_id="my-client-id",
+            client_secret="my-secret",
+        )
+    """
+    from flowforge.services.llm_gateway import get_llm_client
+
+    gateway_client = get_llm_client(
+        server_url=server_url,
+        model_name=model_name,
+        oauth_endpoint=oauth_endpoint,
+        client_id=client_id,
+        client_secret=client_secret,
+        api_key=api_key,
+    )
+
+    # Get LangChain-compatible LLM from gateway client
+    llm = gateway_client.get_langchain_llm()
+    return LangChainSummarizer(llm=llm, strategy=strategy, **kwargs)
+
+
 def create_domain_aware_middleware(
     llm: Any | None = None,
     max_tokens: int = 4000,

@@ -606,10 +606,97 @@ print(result.content_prioritization)   # Stage 2: Prioritized sources, subquerie
 print(result.response_builder)         # Stage 3: Agent results, final content
 ```
 
+### User Overrides
+
+Users can override computed/extracted values in Stage 1 (Context Builder). This is useful when:
+- The earnings calendar API is unavailable
+- You know the correct fiscal quarter/year
+- You want to skip API calls for faster testing
+- You need to correct mismatched company data
+
+#### Override Fields
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `ticker` | Override ticker symbol | `"AAPL"` |
+| `company_cik` | Override SEC CIK number | `"0000320193"` |
+| `industry` | Override industry classification | `"Technology"` |
+| `sector` | Override business sector | `"Consumer Electronics"` |
+| `fiscal_quarter` | Override fiscal quarter | `"Q1"`, `"Q2"`, `"Q3"`, `"Q4"` |
+| `fiscal_year` | Override fiscal year | `"2025"`, `"FY2025"` |
+| `next_earnings_date` | Override next earnings date | `"2025-01-30"` |
+| `news_lookback_days` | Override news lookback period (1-365) | `90` |
+| `filing_quarters` | Override SEC filing lookback (1-20) | `12` |
+| `rbc_persona_name` | Override RBC employee name | `"John Smith"` |
+| `rbc_persona_role` | Override RBC employee role | `"Senior Analyst"` |
+| `client_persona_name` | Override client contact name | `"Jane Doe"` |
+| `client_persona_role` | Override client contact role | `"CFO"` |
+| `skip_earnings_calendar_api` | Skip earnings calendar API call | `True` |
+| `skip_company_lookup` | Skip company lookup API call | `True` |
+
+#### Usage Example
+
+```python
+from flowforge.services.models import ChainRequest, ChainRequestOverrides
+
+# Create request with user overrides
+request = ChainRequest(
+    corporate_company_name="Apple Inc",
+    meeting_datetime="2025-02-15",
+    rbc_employee_email="john.doe@rbc.com",
+
+    # User overrides - these take precedence over API-extracted values
+    overrides=ChainRequestOverrides(
+        ticker="AAPL",                    # Override extracted ticker
+        fiscal_quarter="Q1",              # Override to Q1 (instead of computed)
+        fiscal_year="2025",               # Override fiscal year
+        next_earnings_date="2025-01-30",  # Override earnings date
+        news_lookback_days=90,            # Extended news lookback
+        filing_quarters=12,               # More filing history
+        skip_earnings_calendar_api=True,  # Skip the earnings API call
+    ),
+)
+
+# Run the chain - overrides are applied automatically
+result = await chain.run(request)
+
+# The context_builder output will use override values
+print(result.context_builder["ticker"])  # "AAPL"
+print(result.context_builder["temporal_context"]["fiscal_quarter"])  # "1"
+```
+
+#### Skip API Calls
+
+When developing or testing, you can skip external API calls entirely:
+
+```python
+request = ChainRequest(
+    corporate_company_name="Test Company",
+    meeting_datetime="2025-06-01",
+    overrides=ChainRequestOverrides(
+        # Provide required data directly
+        ticker="TEST",
+        industry="Technology",
+        fiscal_quarter="Q2",
+
+        # Skip API calls
+        skip_company_lookup=True,         # Don't call company matching API
+        skip_earnings_calendar_api=True,  # Don't call earnings calendar API
+    ),
+)
+```
+
+#### Override Priority
+
+Overrides are applied in this order:
+1. API extracts data (company lookup, earnings calendar, LDAP, ZoomInfo)
+2. User overrides are applied on top of extracted data
+3. If `skip_*` flags are set, those APIs are not called at all
+
 ### CMPT Chain Flow
 
 ```
-ChainRequest
+ChainRequest (with optional overrides)
      │
      ▼
 ┌─────────────────────────────────────────────┐
@@ -617,6 +704,7 @@ ChainRequest
 │ - Extract company info (ticker, industry)   │
 │ - Extract temporal context (earnings date)  │
 │ - Extract personas (RBC, client)            │
+│ - ✨ Apply user overrides                   │
 └─────────────────────────────────────────────┘
      │
      ▼

@@ -7,15 +7,26 @@ Services:
 - ContextBuilder: Extracts firm info, temporal context, personas
 - ContentPrioritization: Prioritizes sources, generates subqueries
 - ResponseBuilder: Executes agents, builds final response
+- LLMGateway: Enterprise LLM client with OAuth support
 """
 
 from flowforge.services.content_prioritization import ContentPrioritizationService
 from flowforge.services.context_builder import ContextBuilderService
+from flowforge.services.llm_gateway import (
+    LLMGatewayClient,
+    OAuthTokenManager,
+    get_default_llm_client,
+    get_llm_client,
+    init_default_llm_client,
+    set_default_llm_client,
+    timed_lru_cache,
+)
 from flowforge.services.models import (
     # Response Builder Models
     AgentResult,
     # Request/Response Models
     ChainRequest,
+    ChainRequestOverrides,
     ChainResponse,
     # Context Builder Models
     CompanyInfo,
@@ -36,6 +47,7 @@ from flowforge.services.response_builder import ResponseBuilderService
 __all__ = [
     # Models
     "ChainRequest",
+    "ChainRequestOverrides",
     "ChainResponse",
     "CompanyInfo",
     "TemporalContext",
@@ -53,4 +65,12 @@ __all__ = [
     "ContextBuilderService",
     "ContentPrioritizationService",
     "ResponseBuilderService",
+    # LLM Gateway
+    "LLMGatewayClient",
+    "OAuthTokenManager",
+    "get_llm_client",
+    "get_default_llm_client",
+    "set_default_llm_client",
+    "init_default_llm_client",
+    "timed_lru_cache",
 ]

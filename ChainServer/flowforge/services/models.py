@@ -46,6 +46,10 @@ class ChainRequest(BaseModel):
     - Calendar invite → corporate_company_name, meeting_datetime
     - Calendar attendees → corporate_client_email, corporate_client_names
     - User session → rbc_employee_email
+
+    User Overrides:
+    Users can override any computed/extracted values by providing them in the
+    `overrides` field. These take precedence over API-extracted values.
     """
 
     # From calendar invite
@@ -61,6 +65,81 @@ class ChainRequest(BaseModel):
 
     # Options
     verbose: bool = False
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    #                          USER OVERRIDES
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Users can override computed/extracted values. These take precedence.
+    overrides: "ChainRequestOverrides | None" = Field(
+        None, description="User-provided overrides for computed values"
+    )
+
+
+class ChainRequestOverrides(BaseModel):
+    """
+    User-provided overrides for computed/extracted values.
+
+    When these fields are set, they take precedence over values
+    extracted from APIs (earnings calendar, company lookup, etc.).
+
+    Usage:
+        request = ChainRequest(
+            corporate_company_name="Apple Inc",
+            meeting_datetime="2025-02-15",
+            overrides=ChainRequestOverrides(
+                ticker="AAPL",
+                fiscal_quarter="Q1",
+                fiscal_year="2025",
+                next_earnings_date="2025-01-30",
+            )
+        )
+    """
+
+    # Company info overrides
+    ticker: str | None = Field(None, description="Override extracted ticker symbol")
+    company_cik: str | None = Field(None, description="Override SEC CIK number")
+    industry: str | None = Field(None, description="Override industry classification")
+    sector: str | None = Field(None, description="Override business sector")
+
+    # Temporal context overrides
+    fiscal_quarter: str | None = Field(
+        None, description="Override fiscal quarter (e.g., 'Q1', 'Q2', 'Q3', 'Q4')"
+    )
+    fiscal_year: str | None = Field(
+        None, description="Override fiscal year (e.g., '2025', 'FY2025')"
+    )
+    next_earnings_date: str | None = Field(
+        None, description="Override next earnings date (YYYY-MM-DD)"
+    )
+
+    # Lookback period overrides
+    news_lookback_days: int | None = Field(
+        None, ge=1, le=365, description="Override news lookback period (days)"
+    )
+    filing_quarters: int | None = Field(
+        None, ge=1, le=20, description="Override SEC filing lookback (quarters)"
+    )
+
+    # Persona overrides
+    rbc_persona_name: str | None = Field(None, description="Override RBC employee name")
+    rbc_persona_role: str | None = Field(None, description="Override RBC employee role/title")
+    client_persona_name: str | None = Field(None, description="Override client contact name")
+    client_persona_role: str | None = Field(None, description="Override client contact role/title")
+
+    # Data source overrides
+    skip_earnings_calendar_api: bool = Field(
+        False, description="Skip earnings calendar API call (use computed quarter)"
+    )
+    skip_company_lookup: bool = Field(
+        False, description="Skip company lookup API call (use provided company name)"
+    )
+
+    class Config:
+        extra = "allow"  # Allow additional custom overrides
+
+
+# Update ChainRequest to use the forward reference
+ChainRequest.model_rebuild()
 
 
 class ChainResponse(BaseModel):

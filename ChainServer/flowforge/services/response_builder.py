@@ -4,12 +4,13 @@ Response Builder Service
 Executes data agents and builds the final response:
 - Agent Executor: Runs subqueries against data agents in parallel
 - Prompt Builder: Constructs LLM prompts from agent results
-- Response Generator: Generates final meeting prep content
+- Response Generator: Generates final meeting prep content via LLM
 
 This is the third stage of the CMPT chain.
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 from typing import Any
@@ -26,18 +27,108 @@ from flowforge.services.models import (
 logger = logging.getLogger(__name__)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#                           LLM PROMPTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+FINANCIAL_METRICS_PROMPT = """You are a financial analyst extracting key metrics from data.
+
+Given the following data about {company_name}, extract structured financial metrics.
+
+DATA:
+{data}
+
+Extract and return a JSON object with these fields (use null if not available):
+{{
+    "latest_quarter": "Q3 2024",
+    "eps_actual": 1.25,
+    "eps_estimate": 1.20,
+    "eps_beat": true,
+    "eps_surprise_pct": 4.17,
+    "revenue_actual": "25.5B",
+    "revenue_estimate": "25.0B",
+    "revenue_beat": true,
+    "revenue_growth_yoy": 12.5,
+    "guidance": "Management raised FY guidance to...",
+    "key_metrics": ["metric1", "metric2"]
+}}
+
+Return ONLY valid JSON, no other text."""
+
+STRATEGIC_ANALYSIS_PROMPT = """You are a strategic analyst preparing meeting insights.
+
+Given the following data about {company_name}, generate a strategic analysis.
+
+COMPANY INFO:
+{company_info}
+
+NEWS & EVENTS:
+{news_data}
+
+SEC FILINGS:
+{sec_data}
+
+EARNINGS DATA:
+{earnings_data}
+
+Generate a strategic analysis with these sections (return as JSON):
+{{
+    "market_sentiment": "positive/negative/neutral",
+    "sentiment_reasoning": "Brief explanation...",
+    "key_themes": ["theme1", "theme2", "theme3"],
+    "risks": ["risk1", "risk2"],
+    "opportunities": ["opportunity1", "opportunity2"],
+    "talking_points": ["point1", "point2", "point3"],
+    "questions_to_ask": ["question1", "question2"]
+}}
+
+Return ONLY valid JSON, no other text."""
+
+MEETING_PREP_PROMPT = """You are preparing a concise meeting brief for a client meeting.
+
+COMPANY: {company_name}
+MEETING DATE: {meeting_date}
+
+FINANCIAL METRICS:
+{financial_metrics}
+
+STRATEGIC ANALYSIS:
+{strategic_analysis}
+
+RECENT NEWS:
+{news_summary}
+
+Generate a professional meeting preparation document with:
+1. Executive Summary (2-3 sentences)
+2. Key Financial Highlights (bullet points)
+3. Market Sentiment & Themes
+4. Risks to Discuss
+5. Opportunities to Highlight
+6. Suggested Talking Points
+7. Questions to Consider
+
+Keep it concise and actionable. Format in Markdown."""
+
+
 class ResponseBuilderService:
     """
     Service for executing agents and building the final response.
 
     Usage:
+        # Without LLM (mock/fallback mode)
         service = ResponseBuilderService()
+        output = await service.execute(context_output, prioritization_output)
+
+        # With LLM gateway
+        from flowforge.services.llm_gateway import get_llm_client
+        llm_client = get_llm_client()
+        service = ResponseBuilderService(llm_client=llm_client)
         output = await service.execute(context_output, prioritization_output)
 
     Or as a step in FlowForge:
         @forge.step(deps=[content_prioritization], produces=["response_builder_output"])
         async def response_builder(ctx):
-            service = ResponseBuilderService()
+            service = ResponseBuilderService(llm_client=ctx.get("llm_client"))
             output = await service.execute(
                 ctx.get("context_builder_output"),
                 ctx.get("content_prioritization_output"),
@@ -51,6 +142,10 @@ class ResponseBuilderService:
         max_parallel_agents: int = 5,
         collect_errors: bool = True,
         forge: Any | None = None,
+        llm_client: Any | None = None,
+        use_llm_for_metrics: bool = True,
+        use_llm_for_analysis: bool = True,
+        use_llm_for_content: bool = True,
     ):
         """
         Initialize the Response Builder service.
@@ -59,10 +154,18 @@ class ResponseBuilderService:
             max_parallel_agents: Maximum agents to run in parallel
             collect_errors: Whether to collect errors instead of failing fast
             forge: FlowForge instance for getting agent references
+            llm_client: LLMGatewayClient instance for LLM calls
+            use_llm_for_metrics: Use LLM for financial metrics extraction
+            use_llm_for_analysis: Use LLM for strategic analysis generation
+            use_llm_for_content: Use LLM for final content generation
         """
         self.max_parallel_agents = max_parallel_agents
         self.collect_errors = collect_errors
         self.forge = forge
+        self.llm_client = llm_client
+        self.use_llm_for_metrics = use_llm_for_metrics
+        self.use_llm_for_analysis = use_llm_for_analysis
+        self.use_llm_for_content = use_llm_for_content
 
     async def execute(
         self,
@@ -116,11 +219,27 @@ class ResponseBuilderService:
 
         # Step 4: Build final prepared content
         content_start = datetime.now()
-        prepared_content = self._build_prepared_content(
-            context,
-            financial_metrics,
-            strategic_analysis,
-        )
+        if self.llm_client and self.use_llm_for_content:
+            try:
+                prepared_content = await self._build_prepared_content_with_llm(
+                    context,
+                    financial_metrics,
+                    strategic_analysis,
+                    results_dict,
+                )
+            except Exception as e:
+                logger.warning(f"LLM content generation failed, using fallback: {e}")
+                prepared_content = self._build_prepared_content(
+                    context,
+                    financial_metrics,
+                    strategic_analysis,
+                )
+        else:
+            prepared_content = self._build_prepared_content(
+                context,
+                financial_metrics,
+                strategic_analysis,
+            )
         timing["build_content"] = (datetime.now() - content_start).total_seconds() * 1000
 
         total_duration = (datetime.now() - start_time).total_seconds() * 1000
@@ -304,10 +423,38 @@ class ResponseBuilderService:
         """
         Extract financial metrics from agent results.
 
-        In production, this would call an LLM to extract structured metrics.
+        Uses LLM if available, otherwise falls back to simple extraction.
         """
-        # Mock implementation - in production would use LLM
+        # Collect all financial data
         earnings = agent_results.get("earnings")
+        sec_filing = agent_results.get("sec_filing")
+
+        # Build data for LLM
+        data_parts = []
+        if earnings and earnings.success and earnings.items:
+            data_parts.append(f"EARNINGS:\n{json.dumps(earnings.items, indent=2)}")
+        if sec_filing and sec_filing.success and sec_filing.items:
+            data_parts.append(f"SEC FILINGS:\n{json.dumps(sec_filing.items, indent=2)}")
+
+        # Use LLM if available and enabled
+        if self.llm_client and self.use_llm_for_metrics and data_parts:
+            try:
+                company_name = context.company_name or "the company"
+                prompt = FINANCIAL_METRICS_PROMPT.format(
+                    company_name=company_name,
+                    data="\n\n".join(data_parts),
+                )
+
+                response = await self.llm_client.generate_async(prompt)
+                metrics = self._parse_json_response(response)
+                if metrics:
+                    logger.info(f"LLM extracted financial metrics for {company_name}")
+                    return metrics
+
+            except Exception as e:
+                logger.warning(f"LLM metrics extraction failed, using fallback: {e}")
+
+        # Fallback: simple extraction without LLM
         if earnings and earnings.success and earnings.items:
             latest = earnings.items[0]
             return {
@@ -329,12 +476,54 @@ class ResponseBuilderService:
         """
         Generate strategic analysis from agent results.
 
-        In production, this would call an LLM to generate analysis.
+        Uses LLM if available, otherwise falls back to simple heuristics.
         """
-        # Mock implementation - in production would use LLM
         news = agent_results.get("news")
-        sentiment_summary = "neutral"
+        sec_filing = agent_results.get("sec_filing")
+        earnings = agent_results.get("earnings")
 
+        # Use LLM if available and enabled
+        if self.llm_client and self.use_llm_for_analysis:
+            try:
+                company_name = context.company_name or "the company"
+
+                # Build company info
+                company_info = "N/A"
+                if context.company_info:
+                    company_info = json.dumps(context.company_info.model_dump(), indent=2)
+
+                # Build data sections
+                news_data = "No news data available"
+                if news and news.success and news.items:
+                    news_data = json.dumps(news.items, indent=2)
+
+                sec_data = "No SEC filing data available"
+                if sec_filing and sec_filing.success and sec_filing.items:
+                    sec_data = json.dumps(sec_filing.items, indent=2)
+
+                earnings_data = "No earnings data available"
+                if earnings and earnings.success and earnings.items:
+                    earnings_data = json.dumps(earnings.items, indent=2)
+
+                prompt = STRATEGIC_ANALYSIS_PROMPT.format(
+                    company_name=company_name,
+                    company_info=company_info,
+                    news_data=news_data,
+                    sec_data=sec_data,
+                    earnings_data=earnings_data,
+                )
+
+                response = await self.llm_client.generate_async(prompt)
+                analysis = self._parse_json_response(response)
+                if analysis:
+                    logger.info(f"LLM generated strategic analysis for {company_name}")
+                    return analysis
+
+            except Exception as e:
+                logger.warning(f"LLM strategic analysis failed, using fallback: {e}")
+
+        # Fallback: simple heuristic analysis
+        sentiment_summary = "neutral"
         if news and news.success and news.items:
             sentiments = [item.get("sentiment", "neutral") for item in news.items]
             positive = sentiments.count("positive")
@@ -352,13 +541,47 @@ class ResponseBuilderService:
             "opportunities": ["market expansion", "new product launches"],
         }
 
+    async def _build_prepared_content_with_llm(
+        self,
+        context: ContextBuilderOutput,
+        financial_metrics: dict[str, Any],
+        strategic_analysis: dict[str, Any],
+        agent_results: dict[str, AgentResult],
+    ) -> str:
+        """Build the final prepared meeting content using LLM."""
+        company_name = context.company_name or "Unknown Company"
+
+        # Get meeting date from temporal context
+        meeting_date = "TBD"
+        if context.temporal_context and context.temporal_context.meeting_date:
+            meeting_date = context.temporal_context.meeting_date
+
+        # Build news summary
+        news_summary = "No recent news available"
+        news = agent_results.get("news")
+        if news and news.success and news.items:
+            news_items = [f"- {item.get('title', 'N/A')} ({item.get('date', 'N/A')})" for item in news.items[:5]]
+            news_summary = "\n".join(news_items)
+
+        prompt = MEETING_PREP_PROMPT.format(
+            company_name=company_name,
+            meeting_date=meeting_date,
+            financial_metrics=json.dumps(financial_metrics, indent=2) if financial_metrics else "No data available",
+            strategic_analysis=json.dumps(strategic_analysis, indent=2) if strategic_analysis else "No data available",
+            news_summary=news_summary,
+        )
+
+        response = await self.llm_client.generate_async(prompt)
+        logger.info(f"LLM generated meeting prep content for {company_name}")
+        return response
+
     def _build_prepared_content(
         self,
         context: ContextBuilderOutput,
         financial_metrics: dict[str, Any],
         strategic_analysis: dict[str, Any],
     ) -> str:
-        """Build the final prepared meeting content"""
+        """Build the final prepared meeting content (fallback without LLM)."""
         company_name = context.company_name or "Unknown Company"
 
         sections = [
@@ -399,3 +622,35 @@ class ResponseBuilderService:
             sections.append("- Opportunities: " + ", ".join(strategic_analysis["opportunities"]))
 
         return "\n".join(sections)
+
+    def _parse_json_response(self, response: str) -> dict[str, Any] | None:
+        """Parse JSON from LLM response, handling markdown code blocks."""
+        try:
+            # Try direct parse first
+            return json.loads(response)
+        except json.JSONDecodeError:
+            pass
+
+        # Try to extract JSON from markdown code block
+        try:
+            import re
+
+            # Match ```json ... ``` or ``` ... ```
+            match = re.search(r"```(?:json)?\s*([\s\S]*?)```", response)
+            if match:
+                return json.loads(match.group(1).strip())
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+        # Try to find JSON object in response
+        try:
+            import re
+
+            match = re.search(r"\{[\s\S]*\}", response)
+            if match:
+                return json.loads(match.group())
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+        logger.warning(f"Failed to parse JSON from LLM response: {response[:200]}...")
+        return None

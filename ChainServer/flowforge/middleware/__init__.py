@@ -11,6 +11,7 @@ from flowforge.middleware.summarizer import (
     SummarizerMiddleware,
     create_anthropic_summarizer,
     create_domain_aware_middleware,
+    create_gateway_summarizer,
     create_openai_summarizer,
     get_domain_prompts,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "SummarizationStrategy",
     "create_openai_summarizer",
     "create_anthropic_summarizer",
+    "create_gateway_summarizer",
     "create_domain_aware_middleware",
     "DOMAIN_PROMPTS",
     "get_domain_prompts",

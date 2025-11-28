@@ -471,6 +471,605 @@ class TestExports:
         assert get_domain_prompts is not None
 
 
+class TestUserOverrides:
+    """Tests for user override functionality in ChainRequest"""
+
+    def test_chain_request_overrides_model(self):
+        """Test ChainRequestOverrides model creation"""
+        from flowforge.services.models import ChainRequest, ChainRequestOverrides
+
+        overrides = ChainRequestOverrides(
+            ticker="AAPL",
+            fiscal_quarter="Q1",
+            fiscal_year="2025",
+            next_earnings_date="2025-01-30",
+            news_lookback_days=60,
+        )
+
+        assert overrides.ticker == "AAPL"
+        assert overrides.fiscal_quarter == "Q1"
+        assert overrides.fiscal_year == "2025"
+        assert overrides.next_earnings_date == "2025-01-30"
+        assert overrides.news_lookback_days == 60
+
+    def test_chain_request_with_overrides(self):
+        """Test ChainRequest with overrides"""
+        from flowforge.services.models import ChainRequest, ChainRequestOverrides
+
+        request = ChainRequest(
+            corporate_company_name="Apple Inc",
+            meeting_datetime="2025-02-15",
+            rbc_employee_email="john.doe@rbc.com",
+            overrides=ChainRequestOverrides(
+                ticker="AAPL",
+                fiscal_quarter="Q1",
+                skip_earnings_calendar_api=True,
+            ),
+        )
+
+        assert request.corporate_company_name == "Apple Inc"
+        assert request.overrides is not None
+        assert request.overrides.ticker == "AAPL"
+        assert request.overrides.fiscal_quarter == "Q1"
+        assert request.overrides.skip_earnings_calendar_api is True
+
+    def test_chain_request_without_overrides(self):
+        """Test ChainRequest without overrides"""
+        from flowforge.services.models import ChainRequest
+
+        request = ChainRequest(
+            corporate_company_name="Microsoft",
+            meeting_datetime="2025-03-01",
+        )
+
+        assert request.corporate_company_name == "Microsoft"
+        assert request.overrides is None
+
+    @pytest.mark.asyncio
+    async def test_context_builder_with_ticker_override(self):
+        """Test ContextBuilder applies ticker override"""
+        from flowforge.services.context_builder import ContextBuilderService
+        from flowforge.services.models import ChainRequest, ChainRequestOverrides
+
+        service = ContextBuilderService()
+
+        request = ChainRequest(
+            corporate_company_name="Apple Inc",
+            meeting_datetime="2025-02-15",
+            overrides=ChainRequestOverrides(
+                ticker="AAPL",
+            ),
+        )
+
+        output = await service.execute(request)
+
+        # Ticker should be the override value
+        assert output.ticker == "AAPL"
+        assert output.company_info.ticker == "AAPL"
+
+    @pytest.mark.asyncio
+    async def test_context_builder_with_fiscal_quarter_override(self):
+        """Test ContextBuilder applies fiscal quarter override"""
+        from flowforge.services.context_builder import ContextBuilderService
+        from flowforge.services.models import ChainRequest, ChainRequestOverrides
+
+        service = ContextBuilderService()
+
+        request = ChainRequest(
+            corporate_company_name="Google",
+            meeting_datetime="2025-06-15",  # Would normally be Q2
+            overrides=ChainRequestOverrides(
+                fiscal_quarter="Q1",  # Override to Q1
+                fiscal_year="2025",
+            ),
+        )
+
+        output = await service.execute(request)
+
+        # Fiscal quarter should be the override value
+        assert output.temporal_context is not None
+        assert output.temporal_context.fiscal_quarter == "1"
+        assert output.temporal_context.fiscal_year == "2025"
+
+    @pytest.mark.asyncio
+    async def test_context_builder_skip_earnings_api(self):
+        """Test ContextBuilder skips earnings calendar API when override set"""
+        from flowforge.services.context_builder import ContextBuilderService
+        from flowforge.services.models import ChainRequest, ChainRequestOverrides
+
+        service = ContextBuilderService()
+
+        request = ChainRequest(
+            corporate_company_name="Netflix",
+            meeting_datetime="2025-04-15",
+            overrides=ChainRequestOverrides(
+                fiscal_quarter="Q2",
+                skip_earnings_calendar_api=True,
+            ),
+        )
+
+        output = await service.execute(request)
+
+        # Should have temporal context created from overrides
+        assert output.temporal_context is not None
+        assert output.temporal_context.fiscal_quarter == "2"
+
+    @pytest.mark.asyncio
+    async def test_context_builder_skip_company_lookup(self):
+        """Test ContextBuilder skips company lookup when override set"""
+        from flowforge.services.context_builder import ContextBuilderService
+        from flowforge.services.models import ChainRequest, ChainRequestOverrides
+
+        service = ContextBuilderService()
+
+        request = ChainRequest(
+            corporate_company_name="Test Company",
+            meeting_datetime="2025-05-01",
+            overrides=ChainRequestOverrides(
+                ticker="TEST",
+                industry="Technology",
+                skip_company_lookup=True,
+            ),
+        )
+
+        output = await service.execute(request)
+
+        # Company info should be created from overrides
+        assert output.company_info is not None
+        assert output.company_info.name == "Test Company"
+        assert output.company_info.ticker == "TEST"
+        assert output.company_info.industry == "Technology"
+
+    @pytest.mark.asyncio
+    async def test_context_builder_lookback_overrides(self):
+        """Test ContextBuilder applies lookback period overrides"""
+        from flowforge.services.context_builder import ContextBuilderService
+        from flowforge.services.models import ChainRequest, ChainRequestOverrides
+
+        service = ContextBuilderService()
+
+        request = ChainRequest(
+            corporate_company_name="Amazon",
+            meeting_datetime="2025-03-15",
+            overrides=ChainRequestOverrides(
+                news_lookback_days=90,
+                filing_quarters=12,
+            ),
+        )
+
+        output = await service.execute(request)
+
+        # Lookback periods should be the override values
+        assert output.temporal_context is not None
+        assert output.temporal_context.news_lookback_days == 90
+        assert output.temporal_context.filing_quarters == 12
+
+    def test_overrides_validation(self):
+        """Test that overrides have proper validation"""
+        from flowforge.services.models import ChainRequestOverrides
+        import pydantic
+
+        # news_lookback_days must be between 1 and 365
+        with pytest.raises(pydantic.ValidationError):
+            ChainRequestOverrides(news_lookback_days=0)
+
+        with pytest.raises(pydantic.ValidationError):
+            ChainRequestOverrides(news_lookback_days=400)
+
+        # filing_quarters must be between 1 and 20
+        with pytest.raises(pydantic.ValidationError):
+            ChainRequestOverrides(filing_quarters=0)
+
+        with pytest.raises(pydantic.ValidationError):
+            ChainRequestOverrides(filing_quarters=25)
+
+
+class TestLLMGateway:
+    """Tests for LLM Gateway client"""
+
+    def test_llm_gateway_client_creation(self):
+        """Test LLMGatewayClient can be created"""
+        from flowforge.services.llm_gateway import LLMGatewayClient
+
+        client = LLMGatewayClient(
+            server_url="https://llm.example.com/v1",
+            model_name="gpt-4",
+            api_key="test-key",
+        )
+
+        assert client.server_url == "https://llm.example.com/v1"
+        assert client.model_name == "gpt-4"
+        assert client.temperature == 0.0
+        assert client.max_tokens == 4096
+
+    def test_llm_gateway_client_with_oauth_config(self):
+        """Test LLMGatewayClient with OAuth configuration"""
+        from flowforge.services.llm_gateway import LLMGatewayClient
+
+        client = LLMGatewayClient(
+            server_url="https://llm.example.com/v1",
+            model_name="gpt-4",
+            oauth_endpoint="https://auth.example.com/oauth/token",
+            client_id="test-client",
+            client_secret="test-secret",
+        )
+
+        assert client._token_manager is not None
+        assert client._token_manager.oauth_endpoint == "https://auth.example.com/oauth/token"
+        assert client._token_manager.client_id == "test-client"
+
+    def test_oauth_token_manager_creation(self):
+        """Test OAuthTokenManager can be created"""
+        from flowforge.services.llm_gateway import OAuthTokenManager
+
+        manager = OAuthTokenManager(
+            oauth_endpoint="https://auth.example.com/oauth/token",
+            client_id="test-client",
+            client_secret="test-secret",
+        )
+
+        assert manager.oauth_endpoint == "https://auth.example.com/oauth/token"
+        assert manager.grant_type == "client_credentials"
+        assert manager.scope == "read"
+
+    def test_get_llm_client_factory(self):
+        """Test get_llm_client factory function"""
+        import os
+        from flowforge.services.llm_gateway import get_llm_client
+
+        # Set environment variables for testing
+        os.environ["LLM_GATEWAY_URL"] = "https://test.example.com/v1"
+        os.environ["LLM_MODEL_NAME"] = "test-model"
+        os.environ["LLM_API_KEY"] = "test-api-key"
+
+        try:
+            client = get_llm_client()
+            assert client.server_url == "https://test.example.com/v1"
+            assert client.model_name == "test-model"
+        finally:
+            # Clean up
+            del os.environ["LLM_GATEWAY_URL"]
+            del os.environ["LLM_MODEL_NAME"]
+            del os.environ["LLM_API_KEY"]
+
+    def test_timed_lru_cache(self):
+        """Test timed_lru_cache decorator"""
+        from flowforge.services.llm_gateway import timed_lru_cache
+        import time
+
+        call_count = 0
+
+        @timed_lru_cache(seconds=1)
+        def expensive_function(x):
+            nonlocal call_count
+            call_count += 1
+            return x * 2
+
+        # First call - should execute function
+        result1 = expensive_function(5)
+        assert result1 == 10
+        assert call_count == 1
+
+        # Second call within TTL - should use cache
+        result2 = expensive_function(5)
+        assert result2 == 10
+        assert call_count == 1
+
+        # Wait for cache to expire
+        time.sleep(1.1)
+
+        # Call after expiry - should execute function again
+        result3 = expensive_function(5)
+        assert result3 == 10
+        assert call_count == 2
+
+    def test_default_llm_client_singleton(self):
+        """Test default LLM client singleton pattern"""
+        from flowforge.services.llm_gateway import (
+            LLMGatewayClient,
+            get_default_llm_client,
+            set_default_llm_client,
+        )
+
+        # Initially should be None
+        assert get_default_llm_client() is None
+
+        # Set a default client
+        test_client = LLMGatewayClient(
+            server_url="https://test.example.com/v1",
+            model_name="test-model",
+            api_key="test-key",
+        )
+        set_default_llm_client(test_client)
+
+        # Should now return our client
+        retrieved = get_default_llm_client()
+        assert retrieved is test_client
+
+        # Clean up - set back to None
+        from flowforge.services import llm_gateway
+        llm_gateway._default_client = None
+
+
+class TestResponseBuilderWithLLM:
+    """Tests for ResponseBuilder with LLM integration"""
+
+    def test_response_builder_without_llm(self):
+        """Test ResponseBuilder works without LLM client"""
+        from flowforge.services.response_builder import ResponseBuilderService
+
+        service = ResponseBuilderService()
+        assert service.llm_client is None
+        assert service.use_llm_for_metrics is True
+        assert service.use_llm_for_analysis is True
+
+    def test_response_builder_with_llm_client(self):
+        """Test ResponseBuilder accepts LLM client"""
+        from flowforge.services.llm_gateway import LLMGatewayClient
+        from flowforge.services.response_builder import ResponseBuilderService
+
+        llm_client = LLMGatewayClient(
+            server_url="https://llm.example.com/v1",
+            model_name="gpt-4",
+            api_key="test-key",
+        )
+
+        service = ResponseBuilderService(llm_client=llm_client)
+        assert service.llm_client is llm_client
+
+    def test_response_builder_llm_toggle_flags(self):
+        """Test ResponseBuilder LLM toggle flags"""
+        from flowforge.services.response_builder import ResponseBuilderService
+
+        service = ResponseBuilderService(
+            use_llm_for_metrics=False,
+            use_llm_for_analysis=True,
+            use_llm_for_content=False,
+        )
+
+        assert service.use_llm_for_metrics is False
+        assert service.use_llm_for_analysis is True
+        assert service.use_llm_for_content is False
+
+    @pytest.mark.asyncio
+    async def test_response_builder_fallback_without_llm(self):
+        """Test ResponseBuilder falls back to heuristics without LLM"""
+        from flowforge.services.response_builder import ResponseBuilderService
+        from flowforge.services.models import (
+            CompanyInfo,
+            ContextBuilderOutput,
+            ContentPrioritizationOutput,
+        )
+
+        service = ResponseBuilderService()
+
+        context = ContextBuilderOutput(
+            company_info=CompanyInfo(name="Test Corp", ticker="TEST"),
+            company_name="Test Corp",
+            ticker="TEST",
+        )
+        prioritization = ContentPrioritizationOutput()
+
+        output = await service.execute(context, prioritization)
+
+        assert output is not None
+        assert output.prepared_content is not None
+        assert "Test Corp" in output.prepared_content
+
+    def test_parse_json_response(self):
+        """Test JSON parsing from LLM responses"""
+        from flowforge.services.response_builder import ResponseBuilderService
+
+        service = ResponseBuilderService()
+
+        # Test direct JSON
+        result = service._parse_json_response('{"key": "value"}')
+        assert result == {"key": "value"}
+
+        # Test JSON in markdown code block
+        result = service._parse_json_response('```json\n{"key": "value"}\n```')
+        assert result == {"key": "value"}
+
+        # Test JSON in plain code block
+        result = service._parse_json_response('```\n{"key": "value"}\n```')
+        assert result == {"key": "value"}
+
+        # Test JSON embedded in text
+        result = service._parse_json_response('Here is the result: {"key": "value"}')
+        assert result == {"key": "value"}
+
+        # Test invalid JSON
+        result = service._parse_json_response("not json at all")
+        assert result is None
+
+
+class TestGatewaySummarizer:
+    """Tests for Gateway Summarizer factory"""
+
+    def test_create_gateway_summarizer_import(self):
+        """Test create_gateway_summarizer is importable"""
+        from flowforge.middleware import create_gateway_summarizer
+
+        assert create_gateway_summarizer is not None
+
+    def test_middleware_exports_gateway_summarizer(self):
+        """Test middleware module exports create_gateway_summarizer"""
+        from flowforge.middleware import __all__
+
+        assert "create_gateway_summarizer" in __all__
+
+
+class TestLLMExports:
+    """Tests for LLM-related exports"""
+
+    def test_services_exports_llm_gateway(self):
+        """Test services module exports LLM gateway components"""
+        from flowforge.services import (
+            LLMGatewayClient,
+            OAuthTokenManager,
+            get_llm_client,
+            get_default_llm_client,
+            set_default_llm_client,
+            init_default_llm_client,
+            timed_lru_cache,
+        )
+
+        # All imports should succeed
+        assert LLMGatewayClient is not None
+        assert OAuthTokenManager is not None
+        assert get_llm_client is not None
+        assert get_default_llm_client is not None
+        assert set_default_llm_client is not None
+        assert init_default_llm_client is not None
+        assert timed_lru_cache is not None
+
+    def test_chain_request_overrides_exported(self):
+        """Test ChainRequestOverrides is exported from services"""
+        from flowforge.services import ChainRequestOverrides
+
+        assert ChainRequestOverrides is not None
+
+
+class TestConfig:
+    """Tests for configuration module"""
+
+    def test_config_from_env(self):
+        """Test Config can be loaded from environment"""
+        import os
+        from flowforge.config import Config
+
+        # Set some test environment variables
+        os.environ["LLM_GATEWAY_URL"] = "https://test.example.com/v1"
+        os.environ["LLM_MODEL_NAME"] = "test-model"
+        os.environ["LLM_API_KEY"] = "test-key"
+        os.environ["DEFAULT_NEWS_LOOKBACK_DAYS"] = "60"
+
+        try:
+            config = Config.from_env()
+
+            assert config.llm.server_url == "https://test.example.com/v1"
+            assert config.llm.model_name == "test-model"
+            assert config.llm.api_key == "test-key"
+            assert config.chain.default_news_lookback_days == 60
+
+        finally:
+            # Clean up
+            del os.environ["LLM_GATEWAY_URL"]
+            del os.environ["LLM_MODEL_NAME"]
+            del os.environ["LLM_API_KEY"]
+            del os.environ["DEFAULT_NEWS_LOOKBACK_DAYS"]
+
+    def test_llm_config_is_configured(self):
+        """Test LLMConfig.is_configured property"""
+        from flowforge.config import LLMConfig
+
+        # Not configured - missing server URL
+        config = LLMConfig(api_key="test-key")
+        assert config.is_configured is False
+
+        # Not configured - missing auth
+        config = LLMConfig(server_url="https://test.com")
+        assert config.is_configured is False
+
+        # Configured with API key
+        config = LLMConfig(server_url="https://test.com", api_key="test-key")
+        assert config.is_configured is True
+
+        # Configured with OAuth
+        config = LLMConfig(
+            server_url="https://test.com",
+            oauth_endpoint="https://auth.com",
+            client_id="id",
+            client_secret="secret",
+        )
+        assert config.is_configured is True
+
+    def test_config_get_llm_client(self):
+        """Test Config.get_llm_client() factory method"""
+        from flowforge.config import Config, LLMConfig
+
+        # Unconfigured - should return None
+        config = Config()
+        assert config.get_llm_client() is None
+
+        # Configured - should return client
+        config = Config(
+            llm=LLMConfig(
+                server_url="https://test.example.com/v1",
+                model_name="gpt-4",
+                api_key="test-key",
+            )
+        )
+        client = config.get_llm_client()
+        assert client is not None
+        assert client.server_url == "https://test.example.com/v1"
+        assert client.model_name == "gpt-4"
+
+    def test_config_to_dict(self):
+        """Test Config.to_dict() method"""
+        from flowforge.config import Config, LLMConfig
+
+        config = Config(
+            llm=LLMConfig(
+                server_url="https://test.com",
+                api_key="secret-key",
+            )
+        )
+
+        result = config.to_dict()
+
+        # Should include server URL but mask auth details
+        assert result["llm"]["server_url"] == "https://test.com"
+        assert result["llm"]["auth_method"] == "api_key"
+        # Should not expose the actual key
+        assert "secret-key" not in str(result)
+
+    def test_get_config_singleton(self):
+        """Test get_config returns singleton"""
+        from flowforge.config import get_config, reload_config
+        import flowforge.config as config_module
+
+        # Reset singleton
+        config_module._config = None
+
+        config1 = get_config()
+        config2 = get_config()
+
+        assert config1 is config2
+
+        # Reload should create new instance
+        config3 = reload_config()
+        assert config3 is not config1
+
+    def test_set_config(self):
+        """Test set_config allows custom config"""
+        from flowforge.config import Config, LLMConfig, get_config, set_config
+        import flowforge.config as config_module
+
+        custom_config = Config(
+            llm=LLMConfig(server_url="https://custom.com"),
+            log_level="DEBUG",
+        )
+
+        set_config(custom_config)
+
+        retrieved = get_config()
+        assert retrieved.llm.server_url == "https://custom.com"
+        assert retrieved.log_level == "DEBUG"
+
+        # Clean up
+        config_module._config = None
+
+    def test_config_exports_from_main_module(self):
+        """Test config exports are available from main flowforge module"""
+        from flowforge import Config, get_config, set_config, reload_config
+
+        assert Config is not None
+        assert get_config is not None
+        assert set_config is not None
+        assert reload_config is not None
+
+
 # Run tests
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

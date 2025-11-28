@@ -48,6 +48,9 @@ CMPT Chain Usage:
 
 # CMPT Chain
 from flowforge.chains import CMPTChain, create_cmpt_chain
+
+# Configuration
+from flowforge.config import Config, get_config, reload_config, set_config
 from flowforge.core.context import ChainContext
 
 # For backward compatibility with old decorator imports
@@ -71,6 +74,7 @@ from flowforge.middleware.summarizer import (
     SummarizerMiddleware,
     create_anthropic_summarizer,
     create_domain_aware_middleware,
+    create_gateway_summarizer,
     create_openai_summarizer,
 )
 from flowforge.middleware.token_manager import TokenManagerMiddleware
@@ -78,10 +82,13 @@ from flowforge.middleware.token_manager import TokenManagerMiddleware
 # Services (for direct usage)
 from flowforge.services import (
     ChainRequest,
+    ChainRequestOverrides,
     ChainResponse,
     ContentPrioritizationService,
     ContextBuilderService,
+    LLMGatewayClient,
     ResponseBuilderService,
+    get_llm_client,
 )
 
 __version__ = "0.1.0"
@@ -91,6 +98,11 @@ __all__ = [
     "Definitions",
     "Context",
     "ChainContext",
+    # Configuration
+    "Config",
+    "get_config",
+    "set_config",
+    "reload_config",
     # Factory functions
     "get_forge",
     "set_forge",
@@ -108,6 +120,7 @@ __all__ = [
     "SummarizationStrategy",
     "create_openai_summarizer",
     "create_anthropic_summarizer",
+    "create_gateway_summarizer",
     "create_domain_aware_middleware",
     "DOMAIN_PROMPTS",
     "CacheMiddleware",
@@ -123,8 +136,12 @@ __all__ = [
     "create_cmpt_chain",
     # Services
     "ChainRequest",
+    "ChainRequestOverrides",
     "ChainResponse",
     "ContextBuilderService",
     "ContentPrioritizationService",
     "ResponseBuilderService",
+    # LLM Gateway
+    "LLMGatewayClient",
+    "get_llm_client",
 ]
