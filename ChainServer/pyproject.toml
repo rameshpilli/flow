@@ -1,0 +1,215 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "flowforge"
+version = "0.1.0"
+description = "A DAG-based chain orchestration framework for AI/ML pipelines"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Your Team", email = "team@example.com" },
+]
+keywords = ["ai", "ml", "chains", "dag", "orchestration", "langchain", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "pydantic>=2.0",
+    "httpx>=0.25.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+summarization = [
+    "tiktoken>=0.5.0",
+    "langchain-core>=0.1.0",
+    "langchain-text-splitters>=0.0.1",
+]
+openai = [
+    "langchain-openai>=0.0.5",
+]
+anthropic = [
+    "langchain-anthropic>=0.1.0",
+]
+all = [
+    "tiktoken>=0.5.0",
+    "langchain-core>=0.1.0",
+    "langchain-text-splitters>=0.0.1",
+    "langchain-openai>=0.0.5",
+    "langchain-anthropic>=0.1.0",
+]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+    "black>=23.0.0",
+    "mypy>=1.5.0",
+    "pre-commit>=3.4.0",
+]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.0.0",
+    "mkdocstrings[python]>=0.23.0",
+]
+
+[project.scripts]
+flowforge = "flowforge.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/your-org/flowforge"
+Documentation = "https://flowforge.readthedocs.io"
+Repository = "https://github.com/your-org/flowforge"
+
+# ============================================================
+# HATCH - Build configuration
+# ============================================================
+[tool.hatch.build.targets.wheel]
+packages = ["flowforge"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/flowforge",
+    "/tests",
+    "/examples",
+]
+
+# ============================================================
+# RUFF - Fast Python linter
+# ============================================================
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+]
+ignore = [
+    "E501",   # line too long (handled by black)
+    "B008",   # do not perform function calls in argument defaults
+    "B905",   # zip without strict
+    "C901",   # too complex
+    "B023",   # function definition does not bind loop variable (often intentional)
+    "B024",   # abstract base class without abstract methods
+    "B027",   # empty method in abstract class without decorator
+    "B904",   # raise from (stylistic)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]           # Allow asserts in tests
+"__init__.py" = ["F401"]       # Allow unused imports in __init__.py
+"examples/*" = ["F841"]        # Allow unused variables in examples
+"flowforge/services/*" = ["F841"]  # Allow unused variables in placeholder services
+"flowforge/core/*" = ["F841"]  # Allow unused variables in core
+
+[tool.ruff.lint.isort]
+known-first-party = ["flowforge"]
+
+# ============================================================
+# BLACK - Code formatter
+# ============================================================
+[tool.black]
+target-version = ["py310", "py311", "py312"]
+line-length = 100
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.eggs
+    | \.git
+    | \.hg
+    | \.mypy_cache
+    | \.tox
+    | \.venv
+    | _build
+    | buck-out
+    | build
+    | dist
+    | venv
+)/
+'''
+
+# ============================================================
+# MYPY - Static type checking
+# ============================================================
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # Gradually enable
+ignore_missing_imports = true
+exclude = [
+    "venv",
+    ".venv",
+    "tests",
+]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+# ============================================================
+# PYTEST - Testing
+# ============================================================
+[tool.pytest.ini_options]
+minversion = "7.0"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+python_classes = ["Test*"]
+addopts = [
+    "-ra",
+    "-q",
+    "--strict-markers",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks integration tests",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+# ============================================================
+# COVERAGE - Test coverage
+# ============================================================
+[tool.coverage.run]
+source = ["flowforge"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__init__.py",
+    "*/cli.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "@abstractmethod",
+]
+show_missing = true
+fail_under = 70

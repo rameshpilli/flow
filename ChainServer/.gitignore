@@ -1,9 +1,3 @@
-# Build artifacts
-Makefile
-pyproject.toml
-requirements*.txt
-.pre-commit-config.yaml
-
 # Python
 __pycache__/
 *.py[cod]
