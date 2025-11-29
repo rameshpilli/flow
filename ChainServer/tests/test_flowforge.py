@@ -37,9 +37,11 @@ class TestChainContext:
     def test_context_scope(self):
         ctx = ChainContext(request_id="test")
         ctx.set("chain_data", "persists", scope=ContextScope.CHAIN)
+
+        # Enter step first, THEN set step-scoped data
+        ctx.enter_step("test_step")
         ctx.set("step_data", "temporary", scope=ContextScope.STEP)
 
-        ctx.enter_step("test_step")
         assert ctx.get("chain_data") == "persists"
         assert ctx.get("step_data") == "temporary"
 
@@ -200,7 +202,8 @@ class TestDAGExecution:
         result = await forge.run("error_chain")
 
         assert result["success"] is False
-        assert "Test error" in result["error"]
+        # error is a dict with structured error info
+        assert "Test error" in result["error"]["message"]
 
 
 class TestMiddleware:
@@ -1068,6 +1071,726 @@ class TestConfig:
         assert get_config is not None
         assert set_config is not None
         assert reload_config is not None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#                      DAG EXECUTOR BEHAVIOR TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestDAGExecutorBehaviors:
+    """Tests for DAG executor specific behaviors like fail-fast, retry, etc."""
+
+    def setup_method(self):
+        get_agent_registry().clear()
+        get_step_registry().clear()
+        get_chain_registry().clear()
+
+    @pytest.mark.asyncio
+    async def test_fail_fast_cancels_pending_tasks(self):
+        """Test that fail_fast mode truly cancels pending tasks when one fails."""
+        forge = FlowForge(name="test")
+        started_tasks = set()
+        completed_tasks = set()
+
+        @forge.step(name="fast_fail")
+        async def fast_fail(ctx):
+            started_tasks.add("fast_fail")
+            await asyncio.sleep(0.05)
+            raise ValueError("Intentional failure")
+
+        @forge.step(name="slow_step")
+        async def slow_step(ctx):
+            started_tasks.add("slow_step")
+            await asyncio.sleep(0.5)  # This should be cancelled
+            completed_tasks.add("slow_step")
+            return {}
+
+        @forge.chain(name="fail_fast_chain")
+        class FailFastChain:
+            steps = ["fast_fail", "slow_step"]
+            error_handling = "fail_fast"
+
+        result = await forge.run("fail_fast_chain")
+
+        assert result["success"] is False
+        # Both started (run in parallel)
+        assert "fast_fail" in started_tasks
+        assert "slow_step" in started_tasks
+        # But slow_step should NOT complete (was cancelled)
+        assert "slow_step" not in completed_tasks
+
+    @pytest.mark.asyncio
+    async def test_retry_only_records_final_result(self):
+        """Test that retry logic only records the final outcome, not intermediate failures."""
+        forge = FlowForge(name="test")
+        attempt_count = 0
+
+        @forge.step(name="flaky_step", retry=2)  # Will retry up to 2 times
+        async def flaky_step(ctx):
+            nonlocal attempt_count
+            attempt_count += 1
+            if attempt_count < 3:
+                raise ValueError(f"Attempt {attempt_count} failed")
+            return {"success": True}
+
+        @forge.chain(name="retry_chain")
+        class RetryChain:
+            steps = ["flaky_step"]
+            error_handling = "retry"
+
+        result = await forge.run("retry_chain")
+
+        # Should succeed on the 3rd attempt
+        assert result["success"] is True
+        assert attempt_count == 3
+
+        # Only ONE result should be recorded (the successful one)
+        # Not 3 results (2 failures + 1 success)
+        flaky_results = [r for r in result["results"] if r["step"] == "flaky_step"]
+        assert len(flaky_results) == 1
+        assert flaky_results[0]["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_continue_mode_skips_failed_dependents(self):
+        """Test that in continue mode, dependents of failed steps are skipped."""
+        forge = FlowForge(name="test")
+
+        @forge.step(name="step_a")
+        async def step_a(ctx):
+            raise ValueError("Step A fails")
+
+        @forge.step(name="step_b")
+        async def step_b(ctx):
+            return {"b": "success"}
+
+        @forge.step(name="step_c", deps=["step_a"])  # Depends on failing step
+        async def step_c(ctx):
+            return {"c": "success"}
+
+        @forge.step(name="step_d", deps=["step_b"])  # Depends on succeeding step
+        async def step_d(ctx):
+            return {"d": "success"}
+
+        @forge.chain(name="continue_chain")
+        class ContinueChain:
+            steps = ["step_a", "step_b", "step_c", "step_d"]
+            error_handling = "continue"
+
+        result = await forge.run("continue_chain")
+
+        # Overall should fail because step_a failed
+        assert result["success"] is False
+
+        # Collect results by step (key is "step", not "step_name")
+        results_by_step = {r["step"]: r for r in result["results"]}
+
+        # step_a: FAILED
+        assert results_by_step["step_a"]["success"] is False
+
+        # step_b: SUCCESS
+        assert results_by_step["step_b"]["success"] is True
+
+        # step_c: SKIPPED (dependency step_a failed) - may not be in results
+        if "step_c" in results_by_step:
+            assert results_by_step["step_c"]["success"] is False
+
+        # step_d: SUCCESS (dependency step_b succeeded)
+        assert results_by_step["step_d"]["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_per_step_concurrency_limit(self):
+        """Test that per-step concurrency limits are respected."""
+        forge = FlowForge(name="test")
+        concurrent_count = 0
+        max_concurrent = 0
+
+        @forge.step(name="limited_step", max_concurrency=2)
+        async def limited_step(ctx):
+            nonlocal concurrent_count, max_concurrent
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
+            await asyncio.sleep(0.1)
+            concurrent_count -= 1
+            return {}
+
+        # We need multiple parallel invocations
+        # Since chains run once, we'll just verify the config is applied
+        # Use the forge's own registry (since it's isolated)
+        spec = forge._step_registry.get_spec("limited_step")
+        assert spec is not None
+        assert spec.max_concurrency == 2
+
+    @pytest.mark.asyncio
+    async def test_step_spec_has_resources_field(self):
+        """Test that StepSpec has a dedicated resources field (not in retry_config)."""
+        forge = FlowForge(name="test")
+
+        @forge.step(name="resource_step", resources=["db", "cache"])
+        async def resource_step(ctx, db=None, cache=None):
+            return {}
+
+        # Use forge's own registry (isolated)
+        spec = forge._step_registry.get_spec("resource_step")
+        assert spec is not None
+
+        # Resources should be a proper list field, not buried in retry_config
+        assert hasattr(spec, "resources")
+        assert spec.resources == ["db", "cache"]
+
+        # retry_config should NOT contain resources
+        assert not hasattr(spec.retry_config, "resources") or "resources" not in vars(spec.retry_config)
+
+    @pytest.mark.asyncio
+    async def test_retry_config_is_typed_dataclass(self):
+        """Test that retry_config is now a proper RetryConfig dataclass."""
+        forge = FlowForge(name="test")
+
+        @forge.step(name="retry_step", retry=3)
+        async def retry_step(ctx):
+            return {}
+
+        from flowforge.core.registry import RetryConfig
+
+        # Use forge's own registry (isolated)
+        spec = forge._step_registry.get_spec("retry_step")
+        assert spec is not None
+
+        # Should be a RetryConfig instance, not a dict
+        assert isinstance(spec.retry_config, RetryConfig)
+        assert spec.retry_config.count == 3
+        assert spec.retry_config.delay_ms == 1000  # Default
+        assert spec.retry_config.backoff_multiplier == 1.0  # Default
+
+    @pytest.mark.asyncio
+    async def test_dag_node_skipped_state(self):
+        """Test that DAGNode can transition to SKIPPED state."""
+        from flowforge.core.dag import DAGNode, StepState
+        from flowforge.core.registry import RetryConfig, StepSpec, ComponentMetadata
+
+        # Create a mock StepSpec
+        spec = StepSpec(
+            metadata=ComponentMetadata(name="test_step"),
+            handler=lambda ctx: None,
+            retry_config=RetryConfig(),
+        )
+
+        node = DAGNode(name="test_node", spec=spec)
+        assert node.state == StepState.PENDING
+
+        await node.set_skipped("dependency failed: parent_step")
+
+        assert node.state == StepState.SKIPPED
+        assert node.result is not None
+        # Skipped nodes use skipped_reason, not error
+        assert node.result.skipped_reason == "dependency failed: parent_step"
+        assert node.result.error is None  # Not an error, just skipped
+
+
+class TestErrorHandlingModes:
+    """Comprehensive tests for error handling modes: fail_fast, continue, retry."""
+
+    def setup_method(self):
+        get_agent_registry().clear()
+        get_step_registry().clear()
+        get_chain_registry().clear()
+
+    @pytest.mark.asyncio
+    async def test_fail_fast_stops_immediately(self):
+        """Test that fail_fast mode stops execution on first failure."""
+        forge = FlowForge(name="test")
+        executed_steps = []
+
+        @forge.step(name="step_a")
+        async def step_a(ctx):
+            executed_steps.append("a")
+            raise ValueError("Step A fails")
+
+        @forge.step(name="step_b")
+        async def step_b(ctx):
+            executed_steps.append("b")
+            return {"b": "success"}
+
+        @forge.step(name="step_c", deps=["step_a", "step_b"])
+        async def step_c(ctx):
+            executed_steps.append("c")
+            return {"c": "success"}
+
+        @forge.chain(name="fail_fast_chain")
+        class FailFastChain:
+            steps = ["step_a", "step_b", "step_c"]
+            error_handling = "fail_fast"
+
+        result = await forge.run("fail_fast_chain")
+
+        assert result["success"] is False
+        # step_a and step_b start in parallel, step_c never runs
+        assert "a" in executed_steps
+        assert "c" not in executed_steps  # Never reached
+
+    @pytest.mark.asyncio
+    async def test_continue_mode_runs_all_independent_steps(self):
+        """Test that continue mode runs all steps that can run."""
+        forge = FlowForge(name="test")
+        executed_steps = []
+
+        @forge.step(name="step_a")
+        async def step_a(ctx):
+            executed_steps.append("a")
+            raise ValueError("Step A fails")
+
+        @forge.step(name="step_b")
+        async def step_b(ctx):
+            executed_steps.append("b")
+            ctx.set("b_data", "from_b")
+            return {"b": "success"}
+
+        @forge.step(name="step_c", deps=["step_a"])
+        async def step_c(ctx):
+            executed_steps.append("c")
+            return {"c": "success"}
+
+        @forge.step(name="step_d", deps=["step_b"])
+        async def step_d(ctx):
+            executed_steps.append("d")
+            return {"d": "success"}
+
+        @forge.chain(name="continue_chain")
+        class ContinueChain:
+            steps = ["step_a", "step_b", "step_c", "step_d"]
+            error_handling = "continue"
+
+        result = await forge.run("continue_chain")
+
+        assert result["success"] is False  # Overall fails
+        assert "a" in executed_steps  # Ran and failed
+        assert "b" in executed_steps  # Ran and succeeded
+        assert "c" not in executed_steps  # Skipped (depends on failed a)
+        assert "d" in executed_steps  # Ran (depends on successful b)
+
+    @pytest.mark.asyncio
+    async def test_continue_mode_skipped_step_has_reason(self):
+        """Test that skipped steps have clear skip reasons."""
+        forge = FlowForge(name="test")
+
+        @forge.step(name="failing_parent")
+        async def failing_parent(ctx):
+            raise ValueError("Parent fails")
+
+        @forge.step(name="child_step", deps=["failing_parent"])
+        async def child_step(ctx):
+            return {"child": "success"}
+
+        @forge.chain(name="skip_chain")
+        class SkipChain:
+            steps = ["failing_parent", "child_step"]
+            error_handling = "continue"
+
+        result = await forge.run("skip_chain")
+
+        # Find child_step result
+        child_result = next(
+            (r for r in result["results"] if r["step"] == "child_step"),
+            None
+        )
+
+        assert child_result is not None
+        assert child_result["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_retry_mode_retries_on_failure(self):
+        """Test that retry mode actually retries failed steps."""
+        forge = FlowForge(name="test")
+        attempt_count = 0
+
+        @forge.step(name="flaky_step", retry=3)
+        async def flaky_step(ctx):
+            nonlocal attempt_count
+            attempt_count += 1
+            if attempt_count < 3:
+                raise ValueError(f"Attempt {attempt_count} failed")
+            return {"success": True, "attempts": attempt_count}
+
+        @forge.chain(name="retry_chain")
+        class RetryChain:
+            steps = ["flaky_step"]
+            error_handling = "retry"
+
+        result = await forge.run("retry_chain")
+
+        assert result["success"] is True
+        assert attempt_count == 3  # Took 3 attempts
+
+    @pytest.mark.asyncio
+    async def test_retry_exhaustion_records_failure(self):
+        """Test that exhausted retries result in proper failure recording."""
+        forge = FlowForge(name="test")
+        attempt_count = 0
+
+        @forge.step(name="always_fails", retry=2)
+        async def always_fails(ctx):
+            nonlocal attempt_count
+            attempt_count += 1
+            raise ValueError("Always fails")
+
+        @forge.chain(name="exhausted_chain")
+        class ExhaustedChain:
+            steps = ["always_fails"]
+            error_handling = "retry"
+
+        result = await forge.run("exhausted_chain")
+
+        assert result["success"] is False
+        assert attempt_count == 3  # Initial + 2 retries
+
+
+class TestResourceCleanup:
+    """Tests for resource cleanup on failures."""
+
+    def setup_method(self):
+        get_agent_registry().clear()
+        get_step_registry().clear()
+        get_chain_registry().clear()
+
+    @pytest.mark.asyncio
+    async def test_resources_cleanup_on_success(self):
+        """Test that resources are cleaned up after successful execution."""
+        cleanup_called = False
+
+        async def cleanup_fn(resource):
+            nonlocal cleanup_called
+            cleanup_called = True
+
+        forge = FlowForge(name="test")
+        forge.register_resource(
+            "test_resource",
+            factory=lambda: {"data": "test"},
+            cleanup=cleanup_fn,
+        )
+
+        @forge.step(name="use_resource", resources=["test_resource"])
+        async def use_resource(ctx, test_resource=None):
+            return {"used": True}
+
+        @forge.chain(name="resource_chain")
+        class ResourceChain:
+            steps = ["use_resource"]
+
+        async with forge:
+            await forge.run("resource_chain")
+
+        assert cleanup_called is True
+
+    @pytest.mark.asyncio
+    async def test_resources_cleanup_on_failure(self):
+        """Test that resources are cleaned up even when chain fails."""
+        cleanup_called = False
+
+        async def cleanup_fn(resource):
+            nonlocal cleanup_called
+            cleanup_called = True
+
+        forge = FlowForge(name="test")
+        forge.register_resource(
+            "test_resource",
+            factory=lambda: {"data": "test"},
+            cleanup=cleanup_fn,
+        )
+
+        @forge.step(name="failing_step", resources=["test_resource"])
+        async def failing_step(ctx, test_resource=None):
+            raise ValueError("Step fails")
+
+        @forge.chain(name="failing_chain")
+        class FailingChain:
+            steps = ["failing_step"]
+
+        async with forge:
+            result = await forge.run("failing_chain")
+            assert result["success"] is False
+
+        assert cleanup_called is True
+
+
+class TestStepScopeCleanup:
+    """Tests for step-scoped data cleanup."""
+
+    def setup_method(self):
+        get_agent_registry().clear()
+        get_step_registry().clear()
+        get_chain_registry().clear()
+
+    @pytest.mark.asyncio
+    async def test_step_scope_cleanup_on_success(self):
+        """Test that step-scoped data is cleaned up after step completes."""
+        forge = FlowForge(name="test")
+
+        @forge.step(name="step_with_scope")
+        async def step_with_scope(ctx):
+            ctx.set("step_local", "temp_value", scope=ContextScope.STEP)
+            ctx.set("chain_data", "persists", scope=ContextScope.CHAIN)
+            return {"done": True}
+
+        @forge.step(name="check_scope", deps=["step_with_scope"])
+        async def check_scope(ctx):
+            # Step-scoped data from previous step should be gone
+            step_local = ctx.get("step_local")
+            chain_data = ctx.get("chain_data")
+            return {"step_local": step_local, "chain_data": chain_data}
+
+        @forge.chain(name="scope_chain")
+        class ScopeChain:
+            steps = ["step_with_scope", "check_scope"]
+
+        result = await forge.run("scope_chain")
+
+        assert result["success"] is True
+        # Find check_scope result
+        check_result = next(
+            (r for r in result["results"] if r["step"] == "check_scope"),
+            None
+        )
+        assert check_result["output"]["step_local"] is None  # Cleaned up
+        assert check_result["output"]["chain_data"] == "persists"
+
+    @pytest.mark.asyncio
+    async def test_step_scope_cleanup_on_exception(self):
+        """Test that step-scoped data is cleaned up even when step fails."""
+        forge = FlowForge(name="test")
+        ctx_after_failure = None
+
+        @forge.step(name="failing_step")
+        async def failing_step(ctx):
+            ctx.set("temp_data", "should_be_cleaned", scope=ContextScope.STEP)
+            raise ValueError("Step fails")
+
+        @forge.step(name="after_failure")
+        async def after_failure(ctx):
+            nonlocal ctx_after_failure
+            ctx_after_failure = ctx.get("temp_data")
+            return {"done": True}
+
+        @forge.chain(name="cleanup_chain")
+        class CleanupChain:
+            steps = ["failing_step", "after_failure"]
+            error_handling = "continue"
+
+        await forge.run("cleanup_chain")
+
+        # Step-scoped data should be cleaned up even after failure
+        assert ctx_after_failure is None
+
+
+class TestMiddlewareIsolation:
+    """Tests for middleware exception isolation."""
+
+    def setup_method(self):
+        get_agent_registry().clear()
+        get_step_registry().clear()
+        get_chain_registry().clear()
+
+    @pytest.mark.asyncio
+    async def test_middleware_failure_does_not_crash_step(self):
+        """Test that middleware failures don't prevent step execution."""
+        from flowforge.middleware.base import Middleware
+
+        class FailingMiddleware(Middleware):
+            async def before(self, ctx, step_name):
+                raise RuntimeError("Middleware fails")
+
+            async def after(self, ctx, step_name, result):
+                raise RuntimeError("Middleware fails")
+
+        forge = FlowForge(name="test")
+        forge.use(FailingMiddleware())
+
+        step_executed = False
+
+        @forge.step(name="test_step")
+        async def test_step(ctx):
+            nonlocal step_executed
+            step_executed = True
+            return {"success": True}
+
+        @forge.chain(name="middleware_chain")
+        class MiddlewareChain:
+            steps = ["test_step"]
+
+        result = await forge.run("middleware_chain")
+
+        assert result["success"] is True
+        assert step_executed is True
+
+    @pytest.mark.asyncio
+    async def test_multiple_middleware_continue_on_failure(self):
+        """Test that other middleware run even if one fails."""
+        from flowforge.middleware.base import Middleware
+
+        middleware_order = []
+
+        class FirstMiddleware(Middleware):
+            def __init__(self):
+                super().__init__(priority=10)
+
+            async def before(self, ctx, step_name):
+                middleware_order.append("first_before")
+                raise RuntimeError("First fails")
+
+            async def after(self, ctx, step_name, result):
+                middleware_order.append("first_after")
+
+        class SecondMiddleware(Middleware):
+            def __init__(self):
+                super().__init__(priority=20)
+
+            async def before(self, ctx, step_name):
+                middleware_order.append("second_before")
+
+            async def after(self, ctx, step_name, result):
+                middleware_order.append("second_after")
+
+        forge = FlowForge(name="test")
+        forge.use(FirstMiddleware())
+        forge.use(SecondMiddleware())
+
+        @forge.step(name="test_step")
+        async def test_step(ctx):
+            middleware_order.append("step")
+            return {}
+
+        @forge.chain(name="multi_mw_chain")
+        class MultiMWChain:
+            steps = ["test_step"]
+
+        await forge.run("multi_mw_chain")
+
+        # Second middleware should still run
+        assert "second_before" in middleware_order
+        assert "step" in middleware_order
+        assert "second_after" in middleware_order
+
+
+class TestMetricsMiddleware:
+    """Tests for the new MetricsMiddleware."""
+
+    def setup_method(self):
+        get_agent_registry().clear()
+        get_step_registry().clear()
+        get_chain_registry().clear()
+
+    @pytest.mark.asyncio
+    async def test_metrics_middleware_collects_duration(self):
+        """Test that MetricsMiddleware collects step duration."""
+        from flowforge.middleware import MetricsMiddleware
+
+        forge = FlowForge(name="test")
+        metrics = MetricsMiddleware()
+        forge.use(metrics)
+
+        @forge.step(name="timed_step")
+        async def timed_step(ctx):
+            await asyncio.sleep(0.05)  # 50ms
+            return {"done": True}
+
+        @forge.chain(name="metrics_chain")
+        class MetricsChain:
+            steps = ["timed_step"]
+
+        await forge.run("metrics_chain")
+
+        stats = metrics.get_stats()
+        assert "histograms" in stats
+        assert "flowforge.step.duration_ms" in stats["histograms"]
+
+        duration_stats = stats["histograms"]["flowforge.step.duration_ms"]
+        assert duration_stats["count"] >= 1
+        assert duration_stats["min"] >= 40  # At least 40ms
+
+    @pytest.mark.asyncio
+    async def test_metrics_middleware_counts_successes_and_failures(self):
+        """Test that MetricsMiddleware tracks success/failure counts."""
+        from flowforge.middleware import MetricsMiddleware
+
+        forge = FlowForge(name="test")
+        metrics = MetricsMiddleware()
+        forge.use(metrics)
+
+        @forge.step(name="success_step")
+        async def success_step(ctx):
+            return {"done": True}
+
+        @forge.step(name="fail_step")
+        async def fail_step(ctx):
+            raise ValueError("Fails")
+
+        @forge.chain(name="mixed_chain")
+        class MixedChain:
+            steps = ["success_step", "fail_step"]
+            error_handling = "continue"
+
+        await forge.run("mixed_chain")
+
+        stats = metrics.get_stats()
+        assert "counters" in stats
+        # Should have counted both executions
+        assert stats["counters"].get("flowforge.step.executions_total", 0) >= 2
+
+
+class TestLLMGatewayRetryConfig:
+    """Tests for LLM Gateway retry configuration."""
+
+    def test_llm_client_uses_instance_retry_config(self):
+        """Test that LLMGatewayClient uses instance-level retry config."""
+        from flowforge.services.llm_gateway import LLMGatewayClient
+
+        # Create client with custom retry config
+        client = LLMGatewayClient(
+            server_url="https://test.example.com/v1",
+            model_name="test-model",
+            api_key="test-key",
+            max_retries=5,
+            retry_delay_ms=2000,
+        )
+
+        assert client.max_retries == 5
+        assert client.retry_delay_ms == 2000
+
+    def test_async_client_lock_exists(self):
+        """Test that LLMGatewayClient has async client lock for thread safety."""
+        from flowforge.services.llm_gateway import LLMGatewayClient
+
+        client = LLMGatewayClient(
+            server_url="https://test.example.com/v1",
+            model_name="test-model",
+            api_key="test-key",
+        )
+
+        # Should have the async client lock attribute
+        assert hasattr(client, "_async_client_lock")
+
+    @pytest.mark.asyncio
+    async def test_get_async_client_is_thread_safe(self):
+        """Test that _get_async_client uses proper locking."""
+        from flowforge.services.llm_gateway import LLMGatewayClient
+
+        client = LLMGatewayClient(
+            server_url="https://test.example.com/v1",
+            model_name="test-model",
+            api_key="test-key",
+        )
+
+        # Call _get_async_client multiple times concurrently
+        async def get_client():
+            return await client._get_async_client()
+
+        # Run multiple concurrent accesses
+        clients = await asyncio.gather(*[get_client() for _ in range(10)])
+
+        # All should return the same client instance
+        assert all(c is clients[0] for c in clients)
+
+        # Clean up
+        await client.close()
 
 
 # Run tests

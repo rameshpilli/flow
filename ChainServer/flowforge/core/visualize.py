@@ -26,12 +26,23 @@ class DAGVisualizer:
         viz = DAGVisualizer()
         print(viz.to_ascii("meeting_prep_chain"))
         print(viz.to_mermaid("meeting_prep_chain"))
+
+        # With custom registries (for isolated forge instances)
+        viz = DAGVisualizer(
+            step_registry=forge._step_registry,
+            chain_registry=forge._chain_registry
+        )
     """
 
-    def __init__(self, style: NodeStyle | None = None):
+    def __init__(
+        self,
+        style: NodeStyle | None = None,
+        step_registry=None,
+        chain_registry=None,
+    ):
         self.style = style or NodeStyle()
-        self.step_registry = get_step_registry()
-        self.chain_registry = get_chain_registry()
+        self.step_registry = step_registry or get_step_registry()
+        self.chain_registry = chain_registry or get_chain_registry()
 
     def to_ascii(self, chain_name: str) -> str:
         """Generate ASCII visualization of a chain DAG"""
@@ -43,8 +54,13 @@ class DAGVisualizer:
         lines.append(self._box(f"Chain: {chain_name}", width=60))
         lines.append("")
 
-        # Group steps by dependency level
-        levels = self._compute_levels(chain_spec.steps)
+        # Use explicit parallel groups if defined, otherwise compute from deps
+        if chain_spec.parallel_groups:
+            levels = chain_spec.parallel_groups
+            lines.append(self._center("(using explicit parallel_groups)", 60))
+            lines.append("")
+        else:
+            levels = self._compute_levels(chain_spec.steps)
 
         for level_idx, level_steps in enumerate(levels):
             is_parallel = len(level_steps) > 1
@@ -95,6 +111,17 @@ class DAGVisualizer:
             if step_spec and step_spec.dependencies:
                 for dep in step_spec.dependencies:
                     lines.append(f"    {dep} --> {step_name}")
+
+        # Add subgraphs for explicit parallel groups
+        if chain_spec.parallel_groups:
+            lines.append("")
+            lines.append("    %% Explicit parallel groups")
+            for idx, group in enumerate(chain_spec.parallel_groups):
+                if len(group) > 1:
+                    lines.append(f"    subgraph parallel_group_{idx}[Parallel Group {idx + 1}]")
+                    for step in group:
+                        lines.append(f"        {step}")
+                    lines.append("    end")
 
         return "\n".join(lines)
 

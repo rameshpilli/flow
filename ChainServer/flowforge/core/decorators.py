@@ -2,20 +2,12 @@
 FlowForge Decorators
 
 Provides decorator-based registration for agents, steps, chains, and middleware.
-This is the primary user-facing API for building chains.
+These decorators delegate to the global FlowForge instance for unified behavior.
 """
 
-import inspect
 import logging
 from collections.abc import Callable
-from functools import wraps
 from typing import Any, TypeVar
-
-from flowforge.core.registry import (
-    get_agent_registry,
-    get_chain_registry,
-    get_step_registry,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -23,202 +15,156 @@ T = TypeVar("T")
 F = TypeVar("F", bound=Callable[..., Any])
 
 
+def _get_forge():
+    """Get the global forge instance (lazy import to avoid circular deps)"""
+    from flowforge.core.forge import get_forge
+    return get_forge()
+
+
 def agent(
+    cls: type[T] | None = None,
+    *,
     name: str | None = None,
-    version: str = "1.0.0",
     description: str = "",
+    group: str | None = None,
+    version: str | None = None,
     capabilities: list[str] | None = None,
-    config: dict[str, Any] | None = None,
-    aliases: list[str] | None = None,
-) -> Callable[[type[T]], type[T]]:
+) -> type[T] | Callable[[type[T]], type[T]]:
     """
     Decorator to register a class as a data agent.
 
+    Delegates to the global FlowForge instance for unified behavior.
+
     Usage:
-        @agent(name="news_agent", version="1.0", capabilities=["fetch_news", "search"])
+        @agent
         class NewsAgent:
+            async def fetch(self, query: str) -> dict:
+                ...
+
+        @agent(name="sec_agent", group="financial", version="1.0.0")
+        class SECFilingAgent:
             async def fetch(self, query: str) -> dict:
                 ...
 
     Args:
         name: Agent name (defaults to class name)
-        version: Semantic version
         description: Human-readable description
-        capabilities: List of agent capabilities
-        config: Default configuration
-        aliases: Alternative names for the agent
+        group: Agent group for organization
+        version: Agent version string
+        capabilities: List of capabilities this agent provides
     """
-
     def decorator(cls: type[T]) -> type[T]:
-        agent_name = name or cls.__name__
-        registry = get_agent_registry()
-
-        registry.register_agent(
-            name=agent_name,
-            agent_class=cls,
-            version=version,
-            description=description or cls.__doc__ or "",
-            capabilities=capabilities,
-            config=config,
-            aliases=aliases,
+        # Store version and capabilities on class for introspection
+        if version:
+            cls._fg_version = version
+        if capabilities:
+            cls._fg_capabilities = capabilities
+        return _get_forge().agent(
+            cls,
+            name=name,
+            description=description,
+            group=group,
         )
 
-        # Add metadata to class
-        cls._flowforge_agent = True
-        cls._flowforge_name = agent_name
-        cls._flowforge_version = version
-
-        logger.debug(f"Agent registered: {agent_name} v{version}")
-        return cls
-
+    if cls is not None:
+        return decorator(cls)
     return decorator
 
 
 def step(
+    func: F | None = None,
+    *,
     name: str | None = None,
-    dependencies: list[str] | None = None,
+    deps: list[Any] | None = None,
     produces: list[str] | None = None,
-    version: str = "1.0.0",
+    resources: list[str] | None = None,
     description: str = "",
+    group: str | None = None,
     timeout_ms: int = 30000,
-    retry_count: int = 0,
-    retry_delay_ms: int = 1000,
-    aliases: list[str] | None = None,
-) -> Callable[[F], F]:
+    retry: int = 0,
+    max_concurrency: int | None = None,
+) -> F | Callable[[F], F]:
     """
     Decorator to register a function as a chain step.
 
-    Usage:
-        @step(name="context_builder", produces=["context"])
-        async def build_context(ctx: ChainContext) -> dict:
-            ...
+    Delegates to the global FlowForge instance for unified behavior.
 
-        @step(name="prioritizer", dependencies=["context_builder"])
-        async def prioritize_content(ctx: ChainContext) -> dict:
-            ...
+    Usage:
+        @step
+        async def extract_company(ctx): ...
+
+        @step(deps=[extract_company], produces=["company_data"])
+        async def process_data(ctx): ...
+
+        @step(max_concurrency=2)
+        async def call_external_api(ctx): ...
 
     Args:
         name: Step name (defaults to function name)
-        dependencies: Steps that must complete before this one
+        deps: Steps that must complete before this one
         produces: Context keys this step produces
-        version: Semantic version
+        resources: Resource names to inject
         description: Human-readable description
+        group: Step group for organization
         timeout_ms: Execution timeout
-        retry_count: Number of retries on failure
-        retry_delay_ms: Delay between retries
-        aliases: Alternative names for the step
+        retry: Number of retries on failure
+        max_concurrency: Max parallel instances (None = unlimited)
     """
-
     def decorator(func: F) -> F:
-        step_name = name or func.__name__
-        registry = get_step_registry()
-
-        retry_config = (
-            {
-                "count": retry_count,
-                "delay_ms": retry_delay_ms,
-            }
-            if retry_count > 0
-            else {}
-        )
-
-        registry.register_step(
-            name=step_name,
-            handler=func,
-            dependencies=dependencies,
+        return _get_forge().step(
+            func,
+            name=name,
+            deps=deps,
             produces=produces,
-            version=version,
-            description=description or func.__doc__ or "",
+            resources=resources,
+            description=description,
+            group=group,
             timeout_ms=timeout_ms,
-            retry_config=retry_config,
-            aliases=aliases,
+            retry=retry,
+            max_concurrency=max_concurrency,
         )
 
-        # Add metadata to function
-        func._flowforge_step = True
-        func._flowforge_name = step_name
-        func._flowforge_dependencies = dependencies or []
-        func._flowforge_produces = produces or []
-
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            return await func(*args, **kwargs)
-
-        # Preserve attributes on wrapper
-        wrapper._flowforge_step = True
-        wrapper._flowforge_name = step_name
-        wrapper._flowforge_dependencies = dependencies or []
-        wrapper._flowforge_produces = produces or []
-
-        logger.debug(f"Step registered: {step_name} v{version}")
-
-        # Return original if already async, wrapper if not
-        if inspect.iscoroutinefunction(func):
-            func._flowforge_step = True
-            return func
-        return wrapper
-
+    if func is not None:
+        return decorator(func)
     return decorator
 
 
 def chain(
+    cls: type[T] | None = None,
+    *,
     name: str | None = None,
-    steps: list[str] | None = None,
-    parallel_groups: list[list[str]] | None = None,
-    error_handling: str = "fail_fast",
-    version: str = "1.0.0",
     description: str = "",
-    aliases: list[str] | None = None,
-) -> Callable[[type[T]], type[T]]:
+    group: str | None = None,
+) -> type[T] | Callable[[type[T]], type[T]]:
     """
     Decorator to register a class as a chain definition.
 
+    Delegates to the global FlowForge instance for unified behavior.
+
     Usage:
-        @chain(name="meeting_prep", steps=["context_builder", "prioritizer", "generator"])
+        @chain
         class MeetingPrepChain:
-            # Optional: override step execution
-            async def before_step(self, step_name: str, ctx: ChainContext):
-                ...
+            steps = ["extract_company", "fetch_data", "build_response"]
+
+        @chain(name="my_chain", group="workflows")
+        class MyChain:
+            steps = [extract_company, fetch_data]
 
     Args:
         name: Chain name (defaults to class name)
-        steps: Ordered list of step names (or use class attribute)
-        parallel_groups: Groups of steps to run in parallel
-        error_handling: How to handle errors ("fail_fast", "continue", "retry")
-        version: Semantic version
         description: Human-readable description
-        aliases: Alternative names for the chain
+        group: Chain group for organization
     """
-
     def decorator(cls: type[T]) -> type[T]:
-        chain_name = name or cls.__name__
-
-        # Get steps from decorator arg or class attribute
-        chain_steps = steps or getattr(cls, "steps", [])
-        if not chain_steps:
-            raise ValueError(f"Chain {chain_name} must define steps")
-
-        registry = get_chain_registry()
-
-        registry.register_chain(
-            name=chain_name,
-            steps=chain_steps,
-            chain_class=cls,
-            parallel_groups=parallel_groups,
-            error_handling=error_handling,
-            version=version,
-            description=description or cls.__doc__ or "",
-            aliases=aliases,
+        return _get_forge().chain(
+            cls,
+            name=name,
+            description=description,
+            group=group,
         )
 
-        # Add metadata to class
-        cls._flowforge_chain = True
-        cls._flowforge_name = chain_name
-        cls._flowforge_steps = chain_steps
-
-        logger.debug(f"Chain registered: {chain_name} v{version} with {len(chain_steps)} steps")
-        return cls
-
+    if cls is not None:
+        return decorator(cls)
     return decorator
 
 

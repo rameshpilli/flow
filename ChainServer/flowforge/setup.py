@@ -10,15 +10,32 @@ setup(
     packages=find_packages(),
     python_requires=">=3.9",
     install_requires=[
-        # Core dependencies only - minimal footprint
+        "httpx>=0.24.0",
     ],
     extras_require={
         "dev": [
             "pytest",
             "pytest-asyncio",
+            "watchdog",  # For hot reloading in dev mode
         ],
         "http": [
             "aiohttp",
+        ],
+        "observability": [
+            "structlog",
+            "opentelemetry-api",
+            "opentelemetry-sdk",
+        ],
+        "all": [
+            "structlog",
+            "opentelemetry-api",
+            "opentelemetry-sdk",
+            "watchdog",
+        ],
+    },
+    entry_points={
+        "console_scripts": [
+            "flowforge=flowforge.cli:main",
         ],
     },
     classifiers=[
@@ -27,5 +44,7 @@ setup(
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
     ],
 )

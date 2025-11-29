@@ -7,7 +7,7 @@ automatic dependency resolution, and clean validation/execution APIs.
 Usage:
     import flowforge as fg
 
-    # Create instance
+    # Create instance (isolated by default)
     forge = fg.FlowForge(name="my_app")
 
     # Define agents (data sources)
@@ -32,6 +32,15 @@ Usage:
     forge.list_defs()                       # List all definitions
     forge.graph("MeetingPrepChain")         # Show DAG visualization
     result = await forge.launch("MeetingPrepChain")  # Execute
+
+CLI Usage:
+    flowforge run cmpt_chain --company "Apple"
+    flowforge check
+    flowforge list
+    flowforge graph cmpt_chain --format mermaid
+    flowforge new agent MyAgent
+    flowforge new chain MyChain
+    flowforge dev --watch
 
 CMPT Chain Usage:
     from flowforge.chains import CMPTChain
@@ -63,6 +72,8 @@ from flowforge.core.registry import (
     get_agent_registry,
     get_chain_registry,
     get_step_registry,
+    create_isolated_registries,
+    reset_global_registries,
 )
 from flowforge.middleware.base import Middleware
 from flowforge.middleware.cache import CacheMiddleware
@@ -79,6 +90,15 @@ from flowforge.middleware.summarizer import (
 )
 from flowforge.middleware.token_manager import TokenManagerMiddleware
 
+# Resources
+from flowforge.core.resources import (
+    Resource,
+    ResourceManager,
+    ResourceScope,
+    get_resource_manager,
+    reset_resource_manager,
+)
+
 # Services (for direct usage)
 from flowforge.services import (
     ChainRequest,
@@ -89,6 +109,33 @@ from flowforge.services import (
     LLMGatewayClient,
     ResponseBuilderService,
     get_llm_client,
+    create_managed_client,
+)
+
+# Utilities
+from flowforge.utils import (
+    # Timing
+    timed,
+    async_timed,
+    # Retry
+    retry,
+    async_retry,
+    RetryPolicy,
+    # Circuit breaker
+    CircuitBreaker,
+    CircuitBreakerConfig,
+    CircuitBreakerError,
+    get_circuit_breaker,
+    # Logging
+    configure_logging,
+    get_logger,
+    LogContext,
+    ChainLogger,
+    # Tracing
+    configure_tracing,
+    get_tracer,
+    trace_span,
+    ChainTracer,
 )
 
 __version__ = "0.1.0"
@@ -113,6 +160,8 @@ __all__ = [
     "get_agent_registry",
     "get_step_registry",
     "get_chain_registry",
+    "create_isolated_registries",
+    "reset_global_registries",
     # Middleware
     "Middleware",
     "SummarizerMiddleware",
@@ -144,4 +193,33 @@ __all__ = [
     # LLM Gateway
     "LLMGatewayClient",
     "get_llm_client",
+    "create_managed_client",
+    # Resources
+    "Resource",
+    "ResourceManager",
+    "ResourceScope",
+    "get_resource_manager",
+    "reset_resource_manager",
+    # Utilities - Timing
+    "timed",
+    "async_timed",
+    # Utilities - Retry
+    "retry",
+    "async_retry",
+    "RetryPolicy",
+    # Utilities - Circuit Breaker
+    "CircuitBreaker",
+    "CircuitBreakerConfig",
+    "CircuitBreakerError",
+    "get_circuit_breaker",
+    # Utilities - Logging
+    "configure_logging",
+    "get_logger",
+    "LogContext",
+    "ChainLogger",
+    # Utilities - Tracing
+    "configure_tracing",
+    "get_tracer",
+    "trace_span",
+    "ChainTracer",
 ]

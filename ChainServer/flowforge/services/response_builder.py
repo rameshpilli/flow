@@ -12,6 +12,9 @@ This is the third stage of the CMPT chain.
 import asyncio
 import json
 import logging
+import time
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -25,6 +28,425 @@ from flowforge.services.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#                           AGENT PROVIDER INTERFACE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class AgentExecutionConfig:
+    """Configuration for agent execution"""
+
+    timeout_ms: int = 30000
+    retry_count: int = 2
+    retry_delay_ms: int = 1000
+    retry_backoff: float = 2.0
+    circuit_breaker_enabled: bool = True
+
+
+@dataclass
+class AgentExecutionMetrics:
+    """Metrics collected during agent execution"""
+
+    agent_name: str
+    query: str
+    success: bool
+    duration_ms: float
+    retry_count: int = 0
+    error: str | None = None
+    error_type: str | None = None
+    items_returned: int = 0
+
+
+class AgentProvider(ABC):
+    """
+    Abstract interface for agent providers.
+
+    Implement this to swap between mock data, registered agents, or external services.
+
+    Usage:
+        # Use mock provider for testing
+        provider = MockAgentProvider()
+        service = ResponseBuilderService(agent_provider=provider)
+
+        # Use registry provider for production
+        provider = RegistryAgentProvider(forge=my_forge)
+        service = ResponseBuilderService(agent_provider=provider)
+
+        # With per-agent configuration
+        provider = RegistryAgentProvider(
+            agent_configs={
+                "news": AgentExecutionConfig(timeout_ms=10000, retry_count=3),
+                "earnings": AgentExecutionConfig(timeout_ms=5000, retry_count=1),
+            }
+        )
+    """
+
+    @abstractmethod
+    async def execute(
+        self,
+        agent_name: str,
+        query: str,
+        config: AgentExecutionConfig | None = None,
+        **kwargs,
+    ) -> AgentResult:
+        """
+        Execute an agent with the given query.
+
+        Args:
+            agent_name: Name of the agent (e.g., "news", "sec_filing", "earnings")
+            query: Query to execute
+            config: Execution configuration (timeout, retry, etc.)
+            **kwargs: Additional agent-specific parameters
+
+        Returns:
+            AgentResult with fetched data
+        """
+        pass
+
+    def get_metrics(self) -> list[AgentExecutionMetrics]:
+        """Get collected execution metrics"""
+        return []
+
+    def clear_metrics(self) -> None:
+        """Clear collected metrics"""
+        pass
+
+    def get_metrics_summary(self) -> dict[str, Any]:
+        """Get summary statistics of agent execution metrics"""
+        metrics = self.get_metrics()
+        if not metrics:
+            return {"total_executions": 0}
+
+        by_agent: dict[str, list[AgentExecutionMetrics]] = {}
+        for m in metrics:
+            by_agent.setdefault(m.agent_name, []).append(m)
+
+        summary = {
+            "total_executions": len(metrics),
+            "total_successes": sum(1 for m in metrics if m.success),
+            "total_failures": sum(1 for m in metrics if not m.success),
+            "avg_duration_ms": sum(m.duration_ms for m in metrics) / len(metrics),
+            "by_agent": {},
+        }
+
+        for agent_name, agent_metrics in by_agent.items():
+            successes = [m for m in agent_metrics if m.success]
+            failures = [m for m in agent_metrics if not m.success]
+            summary["by_agent"][agent_name] = {
+                "executions": len(agent_metrics),
+                "successes": len(successes),
+                "failures": len(failures),
+                "success_rate": len(successes) / len(agent_metrics) if agent_metrics else 0,
+                "avg_duration_ms": sum(m.duration_ms for m in agent_metrics) / len(agent_metrics),
+                "avg_items_returned": sum(m.items_returned for m in successes) / len(successes) if successes else 0,
+                "retry_count": sum(m.retry_count for m in agent_metrics),
+            }
+
+        return summary
+
+
+class RegistryAgentProvider(AgentProvider):
+    """
+    Agent provider that uses registered agents from the FlowForge registry.
+
+    This is the production implementation that uses real agent instances.
+    Supports per-agent timeout/retry configuration and collects execution metrics.
+    """
+
+    # Mapping from subquery agent names to registered agent names
+    AGENT_NAME_MAPPING = {
+        "sec_filing": "sec_filing_agent",
+        "news": "news_agent",
+        "earnings": "earnings_agent",
+        "transcripts": "transcripts_agent",
+    }
+
+    def __init__(
+        self,
+        forge: Any | None = None,
+        default_config: AgentExecutionConfig | None = None,
+        agent_configs: dict[str, AgentExecutionConfig] | None = None,
+    ):
+        """
+        Initialize the registry-based agent provider.
+
+        Args:
+            forge: FlowForge instance (uses global if not provided)
+            default_config: Default execution config for all agents
+            agent_configs: Per-agent execution configurations
+        """
+        self._forge = forge
+        self._default_config = default_config or AgentExecutionConfig()
+        self._agent_configs = agent_configs or {}
+        self._metrics: list[AgentExecutionMetrics] = []
+        self._agent_instances: dict[str, Any] = {}
+
+    def _get_forge(self):
+        """Get FlowForge instance (lazy initialization)"""
+        if self._forge is None:
+            from flowforge.core.forge import get_forge
+
+            self._forge = get_forge()
+        return self._forge
+
+    def _get_config(self, agent_name: str) -> AgentExecutionConfig:
+        """Get execution config for an agent"""
+        return self._agent_configs.get(agent_name, self._default_config)
+
+    def _get_agent_instance(self, agent_name: str) -> Any | None:
+        """Get or create an agent instance"""
+        # Map subquery agent name to registered agent name
+        registered_name = self.AGENT_NAME_MAPPING.get(agent_name, agent_name)
+
+        if registered_name not in self._agent_instances:
+            forge = self._get_forge()
+            agent = forge.get_agent(registered_name)
+            if agent:
+                self._agent_instances[registered_name] = agent
+                logger.debug(f"Instantiated agent: {registered_name}")
+
+        return self._agent_instances.get(registered_name)
+
+    async def execute(
+        self,
+        agent_name: str,
+        query: str,
+        config: AgentExecutionConfig | None = None,
+        **kwargs,
+    ) -> AgentResult:
+        """Execute an agent with retry and timeout handling"""
+        exec_config = config or self._get_config(agent_name)
+        start_time = time.perf_counter()
+        last_error: Exception | None = None
+        retry_count = 0
+
+        for attempt in range(1 + exec_config.retry_count):
+            if attempt > 0:
+                retry_count = attempt
+                delay_ms = exec_config.retry_delay_ms * (
+                    exec_config.retry_backoff ** (attempt - 1)
+                )
+                logger.info(
+                    f"Retrying agent {agent_name} (attempt {attempt + 1}/"
+                    f"{exec_config.retry_count + 1})"
+                )
+                await asyncio.sleep(delay_ms / 1000)
+
+            try:
+                # Get agent instance
+                agent = self._get_agent_instance(agent_name)
+
+                if agent is None:
+                    raise ValueError(
+                        f"Agent '{agent_name}' not found in registry. "
+                        f"Available mappings: {list(self.AGENT_NAME_MAPPING.keys())}"
+                    )
+
+                # Execute with timeout
+                timeout_seconds = exec_config.timeout_ms / 1000
+                result = await asyncio.wait_for(
+                    agent.fetch(query, **kwargs),
+                    timeout=timeout_seconds,
+                )
+
+                duration_ms = (time.perf_counter() - start_time) * 1000
+
+                # Extract items from result
+                items = []
+                if isinstance(result.data, dict):
+                    items = result.data.get("items", [])
+
+                # Record metrics
+                self._metrics.append(
+                    AgentExecutionMetrics(
+                        agent_name=agent_name,
+                        query=query,
+                        success=result.success,
+                        duration_ms=duration_ms,
+                        retry_count=retry_count,
+                        error=result.error,
+                        items_returned=len(items),
+                    )
+                )
+
+                # Convert to service AgentResult format
+                return AgentResult(
+                    agent=agent_name,
+                    success=result.success,
+                    data=result.data,
+                    items=items,
+                    item_count=len(items),
+                    query=query,
+                    source=result.source,
+                    duration_ms=duration_ms,
+                    error=result.error,
+                )
+
+            except asyncio.TimeoutError:
+                last_error = TimeoutError(
+                    f"Agent {agent_name} timed out after {exec_config.timeout_ms}ms"
+                )
+                logger.warning(f"Agent {agent_name} timed out (attempt {attempt + 1})")
+
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    f"Agent {agent_name} failed (attempt {attempt + 1}): {e}"
+                )
+
+        # All retries exhausted
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        error_str = str(last_error) if last_error else "Unknown error"
+
+        # Record failure metrics
+        self._metrics.append(
+            AgentExecutionMetrics(
+                agent_name=agent_name,
+                query=query,
+                success=False,
+                duration_ms=duration_ms,
+                retry_count=retry_count,
+                error=error_str,
+                error_type=type(last_error).__name__ if last_error else None,
+            )
+        )
+
+        return AgentResult(
+            agent=agent_name,
+            success=False,
+            error=error_str,
+            query=query,
+            duration_ms=duration_ms,
+        )
+
+    def get_metrics(self) -> list[AgentExecutionMetrics]:
+        """Get collected execution metrics"""
+        return self._metrics.copy()
+
+    def clear_metrics(self) -> None:
+        """Clear collected metrics"""
+        self._metrics.clear()
+
+
+class MockAgentProvider(AgentProvider):
+    """
+    Mock agent provider for testing and development.
+
+    Returns mock data without calling real agents.
+    """
+
+    def __init__(self, default_config: AgentExecutionConfig | None = None):
+        self._default_config = default_config or AgentExecutionConfig()
+        self._metrics: list[AgentExecutionMetrics] = []
+
+    async def execute(
+        self,
+        agent_name: str,
+        query: str,
+        config: AgentExecutionConfig | None = None,
+        **kwargs,
+    ) -> AgentResult:
+        """Return mock data based on agent type"""
+        start_time = time.perf_counter()
+
+        # Simulate some latency
+        await asyncio.sleep(0.01)
+
+        items = self._get_mock_data(agent_name, query)
+        duration_ms = (time.perf_counter() - start_time) * 1000
+
+        # Record metrics
+        self._metrics.append(
+            AgentExecutionMetrics(
+                agent_name=agent_name,
+                query=query,
+                success=True,
+                duration_ms=duration_ms,
+                items_returned=len(items),
+            )
+        )
+
+        return AgentResult(
+            agent=agent_name,
+            success=True,
+            data={"items": items},
+            items=items,
+            item_count=len(items),
+            query=query,
+            source=agent_name,
+            duration_ms=duration_ms,
+        )
+
+    def _get_mock_data(self, agent_name: str, query: str) -> list[dict[str, Any]]:
+        """Generate mock data for testing"""
+        if agent_name == "sec_filing":
+            return [
+                {
+                    "type": "10-K",
+                    "filing_date": "2024-10-30",
+                    "period": "FY2024",
+                    "title": f"{query} Annual Report",
+                    "url": f"https://sec.gov/filings/{query}/10-K",
+                },
+                {
+                    "type": "10-Q",
+                    "filing_date": "2024-07-30",
+                    "period": "Q3 2024",
+                    "title": f"{query} Quarterly Report",
+                    "url": f"https://sec.gov/filings/{query}/10-Q",
+                },
+            ]
+
+        elif agent_name == "news":
+            return [
+                {
+                    "title": f"{query} Reports Strong Quarterly Results",
+                    "source": "Reuters",
+                    "date": "2024-11-15",
+                    "sentiment": "positive",
+                    "summary": f"Summary of news about {query}...",
+                },
+                {
+                    "title": f"{query} Announces New Product Line",
+                    "source": "Bloomberg",
+                    "date": "2024-11-10",
+                    "sentiment": "neutral",
+                    "summary": f"Product announcement for {query}...",
+                },
+            ]
+
+        elif agent_name == "earnings":
+            return [
+                {
+                    "quarter": "Q3 2024",
+                    "eps_actual": 1.25,
+                    "eps_estimate": 1.20,
+                    "beat": True,
+                    "revenue_actual": "25.5B",
+                    "revenue_estimate": "25.0B",
+                },
+            ]
+
+        elif agent_name == "transcripts":
+            return [
+                {
+                    "type": "earnings_call",
+                    "date": "2024-10-30",
+                    "quarter": "Q3 2024",
+                    "summary": f"Key highlights from {query} earnings call...",
+                },
+            ]
+
+        return []
+
+    def get_metrics(self) -> list[AgentExecutionMetrics]:
+        return self._metrics.copy()
+
+    def clear_metrics(self) -> None:
+        self._metrics.clear()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -115,25 +537,51 @@ class ResponseBuilderService:
     Service for executing agents and building the final response.
 
     Usage:
-        # Without LLM (mock/fallback mode)
+        # Default: uses MockAgentProvider (for testing/development)
         service = ResponseBuilderService()
         output = await service.execute(context_output, prioritization_output)
+
+        # Production: use RegistryAgentProvider with real agents
+        provider = RegistryAgentProvider(forge=my_forge)
+        service = ResponseBuilderService(agent_provider=provider)
+        output = await service.execute(context_output, prioritization_output)
+
+        # With per-agent configuration
+        provider = RegistryAgentProvider(
+            agent_configs={
+                "news": AgentExecutionConfig(timeout_ms=10000, retry_count=3),
+                "earnings": AgentExecutionConfig(timeout_ms=5000, retry_count=1),
+            }
+        )
+        service = ResponseBuilderService(agent_provider=provider)
 
         # With LLM gateway
         from flowforge.services.llm_gateway import get_llm_client
         llm_client = get_llm_client()
-        service = ResponseBuilderService(llm_client=llm_client)
+        service = ResponseBuilderService(
+            agent_provider=provider,
+            llm_client=llm_client,
+        )
         output = await service.execute(context_output, prioritization_output)
+
+        # Get per-agent metrics after execution
+        metrics = service.get_agent_metrics_summary()
+        print(f"News agent success rate: {metrics['by_agent']['news']['success_rate']}")
 
     Or as a step in FlowForge:
         @forge.step(deps=[content_prioritization], produces=["response_builder_output"])
         async def response_builder(ctx):
-            service = ResponseBuilderService(llm_client=ctx.get("llm_client"))
+            provider = RegistryAgentProvider(forge=ctx.get("forge"))
+            service = ResponseBuilderService(
+                agent_provider=provider,
+                llm_client=ctx.get("llm_client"),
+            )
             output = await service.execute(
                 ctx.get("context_builder_output"),
                 ctx.get("content_prioritization_output"),
             )
             ctx.set("response_builder_output", output)
+            ctx.set("agent_metrics", service.get_agent_metrics_summary())
             return output.model_dump()
     """
 
@@ -141,11 +589,13 @@ class ResponseBuilderService:
         self,
         max_parallel_agents: int = 5,
         collect_errors: bool = True,
-        forge: Any | None = None,
+        agent_provider: AgentProvider | None = None,
         llm_client: Any | None = None,
         use_llm_for_metrics: bool = True,
         use_llm_for_analysis: bool = True,
         use_llm_for_content: bool = True,
+        # Legacy parameters (deprecated, use agent_provider instead)
+        forge: Any | None = None,
     ):
         """
         Initialize the Response Builder service.
@@ -153,19 +603,45 @@ class ResponseBuilderService:
         Args:
             max_parallel_agents: Maximum agents to run in parallel
             collect_errors: Whether to collect errors instead of failing fast
-            forge: FlowForge instance for getting agent references
+            agent_provider: Provider for agent execution (default: MockAgentProvider)
             llm_client: LLMGatewayClient instance for LLM calls
             use_llm_for_metrics: Use LLM for financial metrics extraction
             use_llm_for_analysis: Use LLM for strategic analysis generation
             use_llm_for_content: Use LLM for final content generation
+            forge: (Deprecated) Use agent_provider=RegistryAgentProvider(forge=...) instead
         """
         self.max_parallel_agents = max_parallel_agents
         self.collect_errors = collect_errors
-        self.forge = forge
         self.llm_client = llm_client
         self.use_llm_for_metrics = use_llm_for_metrics
         self.use_llm_for_analysis = use_llm_for_analysis
         self.use_llm_for_content = use_llm_for_content
+
+        # Set up agent provider
+        if agent_provider is not None:
+            self._agent_provider = agent_provider
+        elif forge is not None:
+            # Legacy support: create RegistryAgentProvider from forge
+            logger.warning(
+                "Using 'forge' parameter is deprecated. "
+                "Use agent_provider=RegistryAgentProvider(forge=...) instead."
+            )
+            self._agent_provider = RegistryAgentProvider(forge=forge)
+        else:
+            # Default to mock provider for testing/development
+            self._agent_provider = MockAgentProvider()
+
+    def get_agent_metrics(self) -> list[AgentExecutionMetrics]:
+        """Get raw agent execution metrics"""
+        return self._agent_provider.get_metrics()
+
+    def get_agent_metrics_summary(self) -> dict[str, Any]:
+        """Get summarized agent execution metrics (latency, error rates, etc.)"""
+        return self._agent_provider.get_metrics_summary()
+
+    def clear_agent_metrics(self) -> None:
+        """Clear collected agent metrics"""
+        self._agent_provider.clear_metrics()
 
     async def execute(
         self,
@@ -315,105 +791,21 @@ class ResponseBuilderService:
         self,
         subquery: Subquery,
     ) -> AgentResult:
-        """Execute a single subquery against an agent"""
-        start = datetime.now()
+        """
+        Execute a single subquery against an agent using the configured provider.
 
-        try:
-            logger.info(f"Executing agent {subquery.agent}: {subquery.query}")
+        The provider handles:
+        - Registry lookup (RegistryAgentProvider) or mock data (MockAgentProvider)
+        - Per-agent timeout and retry configuration
+        - Metrics collection for latency and error rates
+        """
+        logger.info(f"Executing agent {subquery.agent}: {subquery.query}")
 
-            # In production, this would call the actual agent
-            # For now, return mock data based on agent type
-            items = self._get_mock_agent_data(subquery)
-
-            duration = (datetime.now() - start).total_seconds() * 1000
-
-            return AgentResult(
-                agent=subquery.agent,
-                success=True,
-                data={"items": items},
-                items=items,
-                item_count=len(items),
-                query=subquery.query,
-                source=subquery.agent,
-                duration_ms=duration,
-            )
-
-        except Exception as e:
-            duration = (datetime.now() - start).total_seconds() * 1000
-            logger.error(f"Agent {subquery.agent} failed: {e}")
-
-            return AgentResult(
-                agent=subquery.agent,
-                success=False,
-                error=str(e),
-                query=subquery.query,
-                duration_ms=duration,
-            )
-
-    def _get_mock_agent_data(self, subquery: Subquery) -> list[dict[str, Any]]:
-        """Generate mock data for testing - replace with actual agent calls"""
-        agent = subquery.agent
-        query = subquery.query
-
-        if agent == "sec_filing":
-            return [
-                {
-                    "type": "10-K",
-                    "filing_date": "2024-10-30",
-                    "period": "FY2024",
-                    "title": f"{query} Annual Report",
-                    "url": f"https://sec.gov/filings/{query}/10-K",
-                },
-                {
-                    "type": "10-Q",
-                    "filing_date": "2024-07-30",
-                    "period": "Q3 2024",
-                    "title": f"{query} Quarterly Report",
-                    "url": f"https://sec.gov/filings/{query}/10-Q",
-                },
-            ]
-
-        elif agent == "news":
-            return [
-                {
-                    "title": f"{query} Reports Strong Quarterly Results",
-                    "source": "Reuters",
-                    "date": "2024-11-15",
-                    "sentiment": "positive",
-                    "summary": f"Summary of news about {query}...",
-                },
-                {
-                    "title": f"{query} Announces New Product Line",
-                    "source": "Bloomberg",
-                    "date": "2024-11-10",
-                    "sentiment": "neutral",
-                    "summary": f"Product announcement for {query}...",
-                },
-            ]
-
-        elif agent == "earnings":
-            return [
-                {
-                    "quarter": "Q3 2024",
-                    "eps_actual": 1.25,
-                    "eps_estimate": 1.20,
-                    "beat": True,
-                    "revenue_actual": "25.5B",
-                    "revenue_estimate": "25.0B",
-                },
-            ]
-
-        elif agent == "transcripts":
-            return [
-                {
-                    "type": "earnings_call",
-                    "date": "2024-10-30",
-                    "quarter": "Q3 2024",
-                    "summary": f"Key highlights from {query} earnings call...",
-                },
-            ]
-
-        return []
+        # Delegate to the agent provider
+        return await self._agent_provider.execute(
+            agent_name=subquery.agent,
+            query=subquery.query,
+        )
 
     async def _extract_financial_metrics(
         self,

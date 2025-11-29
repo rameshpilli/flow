@@ -3,6 +3,13 @@
 from flowforge.middleware.base import Middleware
 from flowforge.middleware.cache import CacheMiddleware
 from flowforge.middleware.logger import LoggerMiddleware
+from flowforge.middleware.metrics import (
+    InMemoryMetricsBackend,
+    MetricsBackend,
+    MetricsMiddleware,
+    OTelMetricsBackend,
+    create_metrics_middleware,
+)
 from flowforge.middleware.summarizer import (
     DOMAIN_PROMPTS,
     LangChainSummarizer,
@@ -20,6 +27,12 @@ from flowforge.middleware.token_manager import TokenManagerMiddleware
 __all__ = [
     # Base
     "Middleware",
+    # Metrics/Instrumentation
+    "MetricsMiddleware",
+    "MetricsBackend",
+    "InMemoryMetricsBackend",
+    "OTelMetricsBackend",
+    "create_metrics_middleware",
     # Summarization (LangChain-powered)
     "SummarizerMiddleware",
     "LangChainSummarizer",

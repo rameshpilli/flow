@@ -15,6 +15,7 @@ from flowforge.services.context_builder import ContextBuilderService
 from flowforge.services.llm_gateway import (
     LLMGatewayClient,
     OAuthTokenManager,
+    create_managed_client,
     get_default_llm_client,
     get_llm_client,
     init_default_llm_client,
@@ -72,5 +73,6 @@ __all__ = [
     "get_default_llm_client",
     "set_default_llm_client",
     "init_default_llm_client",
+    "create_managed_client",
     "timed_lru_cache",
 ]

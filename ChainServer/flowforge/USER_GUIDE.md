@@ -9,15 +9,20 @@ A comprehensive guide to building data pipelines and AI chains with FlowForge.
 1. [Introduction](#introduction)
 2. [Installation](#installation)
 3. [Quick Start](#quick-start)
-4. [Core Concepts](#core-concepts)
-5. [Building Your First Chain](#building-your-first-chain)
-6. [Working with Agents](#working-with-agents)
-7. [Middleware System](#middleware-system)
-8. [Domain-Specific Summarization](#domain-specific-summarization)
-9. [Using the Built-in CMPT Chain](#using-the-built-in-cmpt-chain)
-10. [Adding Custom Agents (CapIQ Example)](#adding-custom-agents-capiq-example)
-11. [API Reference](#api-reference)
-12. [Best Practices](#best-practices)
+4. [CLI Usage](#cli-usage)
+5. [Core Concepts](#core-concepts)
+6. [Building Your First Chain](#building-your-first-chain)
+7. [Working with Agents](#working-with-agents)
+8. [Middleware System](#middleware-system)
+9. [Domain-Specific Summarization](#domain-specific-summarization)
+10. [Production Features](#production-features)
+11. [Configuration Management](#configuration-management)
+12. [Health Checks and Monitoring](#health-checks-and-monitoring)
+13. [Using the Built-in CMPT Chain](#using-the-built-in-cmpt-chain)
+14. [Adding Custom Agents (CapIQ Example)](#adding-custom-agents-capiq-example)
+15. [API Reference](#api-reference)
+16. [Best Practices](#best-practices)
+17. [Testing](#testing)
 
 ---
 
@@ -28,9 +33,18 @@ FlowForge is a DAG-based chain orchestration framework inspired by Dagster patte
 - **Decorator-driven registration** - Define agents, steps, and chains with simple decorators
 - **Automatic dependency resolution** - Dependencies are resolved and executed in the optimal order
 - **Parallel execution** - Independent steps run concurrently for maximum performance
+- **Explicit parallel groups** - Define custom execution ordering with `parallel_groups`
+- **Per-step concurrency limits** - Control parallelism with `max_concurrency`
 - **Middleware system** - Plug in caching, logging, summarization, and token management
 - **Domain-aware summarization** - Smart content reduction for different data types
 - **Clean validation APIs** - Validate your definitions before running
+- **CLI tool** - Run chains, validate, visualize DAGs from command line
+- **Production resilience** - Circuit breakers, retry, connection pooling
+- **Observability** - OTel-compliant structured logging, distributed tracing
+- **Resource management** - Dependency injection with lifecycle management
+- **True fail-fast** - Immediate task cancellation on first failure
+- **Typed configuration** - Environment variable validation with secret masking
+- **Health endpoints** - Built-in health checks and version info
 
 ### Who Is This For?
 
@@ -60,7 +74,7 @@ pip install -e .
 ```txt
 # Core
 pydantic>=2.0
-asyncio
+httpx
 
 # LangChain (for summarization)
 langchain-core
@@ -70,6 +84,17 @@ langchain-anthropic   # Optional: for Claude summarization
 
 # Token counting
 tiktoken
+
+# Optional: Observability
+structlog             # For structured logging
+opentelemetry-api     # For distributed tracing
+opentelemetry-sdk
+opentelemetry-exporter-otlp
+
+# Optional: Development
+watchdog              # For hot reload dev mode
+pytest
+pytest-asyncio
 ```
 
 ---
@@ -123,6 +148,129 @@ Output: Transformed: Hello
 
 ---
 
+## CLI Usage
+
+FlowForge includes a command-line interface for common operations.
+
+### Running Chains
+
+```bash
+# Run a chain with initial data
+flowforge run my_pipeline --data '{"company": "Apple"}'
+
+# Run with a specific module
+flowforge run my_pipeline --module myapp.chains
+
+# Run with verbose output
+flowforge run my_pipeline --verbose
+```
+
+### Debug Mode
+
+Debug mode runs a chain with context snapshots after each step, making it easy to troubleshoot issues:
+
+```bash
+# Run in debug mode with context snapshots
+flowforge debug my_pipeline --data '{"company": "Apple"}'
+
+# Specify custom snapshot directory
+flowforge debug my_pipeline --snapshot-dir ./debug_output
+
+# Snapshots are saved as JSON files:
+# ./snapshots/my_pipeline_20250128_143022/
+#   ├── 00_summary.json      # Final execution summary
+#   ├── 01_step_extract.json # Context after extract step
+#   ├── 02_step_transform.json
+#   └── 03_step_load.json
+```
+
+Each snapshot includes:
+- Step name and execution status
+- Context data at that point
+- Timing information
+- Error details (if any)
+
+### Validation
+
+```bash
+# Check all definitions for errors
+flowforge check
+
+# Check a specific module
+flowforge check --module myapp.chains
+```
+
+### Listing Definitions
+
+```bash
+# List all registered agents, steps, and chains
+flowforge list
+
+# Show detailed information
+flowforge list --verbose
+```
+
+### DAG Visualization
+
+```bash
+# Show ASCII visualization
+flowforge graph my_pipeline
+
+# Generate Mermaid diagram syntax
+flowforge graph my_pipeline --format mermaid
+
+# Output to file
+flowforge graph my_pipeline --format mermaid --output dag.md
+```
+
+### Scaffolding
+
+Generate new agents and chains from templates:
+
+```bash
+# Create a new agent
+flowforge new agent MyCustomAgent
+
+# Create a new chain
+flowforge new chain MyPipeline
+
+# Specify output directory
+flowforge new agent MyAgent --output ./myapp/agents/
+```
+
+### Development Mode
+
+Hot reload mode for development:
+
+```bash
+# Watch for file changes and auto-restart
+flowforge dev --watch
+
+# Specify port for dev server
+flowforge dev --watch --port 8000
+
+# Watch specific directory
+flowforge dev --watch --path ./myapp/
+```
+
+### Health and Configuration
+
+```bash
+# Health check (returns exit code 1 if unhealthy)
+flowforge health
+flowforge health --json
+
+# Version info
+flowforge version
+flowforge version --json
+
+# Show configuration (secrets masked)
+flowforge config
+flowforge config --json
+```
+
+---
+
 ## Core Concepts
 
 ### The FlowForge Instance
@@ -132,6 +280,7 @@ The `FlowForge` class is your entry point. It manages:
 - Step registration
 - Chain registration
 - Middleware
+- Resource management and cleanup
 - Execution
 
 ```python
@@ -142,7 +291,41 @@ forge = FlowForge(
     version="1.0.0",
     max_parallel=5,           # Max concurrent steps
     default_timeout_ms=60000, # 60 second timeout
+    isolated=True,            # Isolated registries (default)
 )
+
+# Note: By default, FlowForge uses isolated registries to prevent
+# state bleed between different instances or tests.
+
+# Resource cleanup with timeout (prevents hanging)
+async with forge:
+    result = await forge.run("my_chain")
+# Resources automatically cleaned up with 30s timeout
+```
+
+### Module-Level Decorators
+
+For quick scripts, you can use module-level decorators that delegate to a global forge instance:
+
+```python
+from flowforge.core.decorators import agent, step, chain
+
+# These register to the global FlowForge instance
+@step
+async def my_step(ctx):
+    return {"done": True}
+
+@step(name="custom_step", deps=[my_step], produces=["output"])
+async def another_step(ctx):
+    return {"output": "result"}
+
+@chain
+class MyChain:
+    steps = ["my_step", "custom_step"]
+
+# Access the global forge to run
+from flowforge.core.forge import get_forge
+result = await get_forge().run("mychain")
 ```
 
 ### Context (ChainContext)
@@ -176,9 +359,11 @@ Steps are the building blocks of your chain:
     dependencies=["previous_step"],    # Steps that must run first
     produces=["output_key"],           # Keys this step writes to context
     timeout_ms=30000,                  # Optional: step-specific timeout
+    max_concurrency=5,                 # Optional: max parallel instances
+    resources=["db", "llm"],           # Optional: resources to inject
 )
-async def my_step(ctx: ChainContext):
-    # Your logic here
+async def my_step(ctx: ChainContext, db=None, llm=None):
+    # Your logic here (resources injected if specified)
     return {"output_key": result}
 ```
 
@@ -195,6 +380,28 @@ Chains group steps together:
 class MyChain:
     steps = ["step_a", "step_b", "step_c"]
 ```
+
+### Explicit Parallel Groups
+
+Override automatic dependency-based ordering with explicit parallel groups:
+
+```python
+@forge.chain(
+    name="my_pipeline",
+    parallel_groups=[
+        ["extract"],                              # Group 1: runs first
+        ["fetch_news", "fetch_filings"],          # Group 2: runs in parallel
+        ["combine"],                              # Group 3: runs after group 2
+    ]
+)
+class MyPipeline:
+    steps = ["extract", "fetch_news", "fetch_filings", "combine"]
+```
+
+When `parallel_groups` is specified:
+- Steps within each group run in parallel
+- Groups execute sequentially in order
+- Dependencies are still validated (a step's deps must be in previous groups)
 
 ### Agents
 
@@ -569,6 +776,682 @@ summary = await summarizer.summarize(
     max_tokens=3000,
     content_type="sec_filing"  # Uses SEC-specific extraction prompts
 )
+```
+
+---
+
+## Production Features
+
+FlowForge includes enterprise-grade features for production deployments.
+
+### Circuit Breaker
+
+Protect your chain from cascading failures when external services are down:
+
+```python
+from flowforge import CircuitBreaker, CircuitBreakerConfig, get_circuit_breaker
+
+# Get or create a named circuit breaker
+breaker = get_circuit_breaker("external_api")
+
+# Or create with custom config
+config = CircuitBreakerConfig(
+    failure_threshold=5,      # Open after 5 consecutive failures
+    recovery_timeout=30.0,    # Wait 30s before trying again
+    half_open_max_calls=3,    # Allow 3 test calls in half-open state
+)
+breaker = CircuitBreaker("my_service", config)
+
+# Use as decorator
+@breaker
+async def call_api():
+    return await httpx.get("https://api.example.com/data")
+
+# Use as context manager
+async with breaker:
+    result = await call_api()
+
+# Check state
+print(breaker.state)  # CircuitState.CLOSED, OPEN, or HALF_OPEN
+```
+
+**Circuit Breaker States:**
+- **CLOSED**: Normal operation, requests pass through
+- **OPEN**: After threshold failures, all requests fail immediately
+- **HALF_OPEN**: After recovery timeout, limited test requests allowed
+
+### Retry with Backoff
+
+Configure automatic retries with exponential backoff:
+
+```python
+from flowforge import retry, async_retry, RetryPolicy
+
+# Simple retry decorator
+@async_retry(max_attempts=3, delay=1.0, backoff=2.0)
+async def fetch_data():
+    return await api_call()
+
+# Or use RetryPolicy for more control
+policy = RetryPolicy(
+    max_attempts=5,
+    initial_delay=0.5,
+    max_delay=30.0,
+    backoff_multiplier=2.0,
+    retryable_exceptions=(httpx.HTTPError, TimeoutError),
+)
+
+@async_retry(policy=policy)
+async def resilient_fetch():
+    return await api_call()
+```
+
+### Resource Management
+
+Register resources with automatic lifecycle management and dependency injection:
+
+```python
+from flowforge import FlowForge, ResourceScope
+
+forge = FlowForge(name="my_app")
+
+# Register a singleton resource (one instance for app lifetime)
+forge.register_resource(
+    "config",
+    resource=load_config(),  # Pass instance directly
+)
+
+# Register with factory and cleanup
+forge.register_resource(
+    "db",
+    factory=lambda: create_db_pool(),
+    cleanup=lambda pool: pool.close(),
+    scope=ResourceScope.SINGLETON,
+)
+
+# Register async resource
+forge.register_resource(
+    "cache",
+    factory=create_redis_client,  # async factory auto-detected
+    cleanup=lambda c: c.close(),
+)
+
+# Register with dependencies
+forge.register_resource(
+    "user_service",
+    factory=lambda: UserService(),
+    dependencies=["db", "cache"],  # Initialized first
+)
+
+# Inject into steps
+@forge.step(name="process", resources=["db", "cache"])
+async def process(ctx, db, cache):
+    data = await db.query("SELECT ...")
+    await cache.set("key", data)
+    return {"processed": True}
+```
+
+**Resource Scopes:**
+- `SINGLETON`: One instance for entire app lifetime
+- `CHAIN`: New instance per chain execution
+- `STEP`: New instance per step execution
+
+### Structured Logging
+
+Configure structured logging with optional JSON output:
+
+```python
+from flowforge import configure_logging, get_logger, LogContext, ChainLogger
+
+# Configure at startup
+configure_logging(
+    level="INFO",      # DEBUG, INFO, WARNING, ERROR
+    json_output=False, # Set True for production JSON logs
+)
+
+# Get a logger
+logger = get_logger("my_module")
+
+# Log with structured context
+logger.info("Processing started", company="Apple", step="extract")
+logger.error("API failed", error=str(e), retry_count=3)
+
+# Use LogContext for request-scoped logging
+with LogContext(request_id="req-123", chain="cmpt"):
+    logger.info("Inside context")  # Includes request_id, chain
+
+# Use ChainLogger for chain execution
+chain_logger = ChainLogger("my_chain", "request-123")
+chain_logger.chain_start()
+chain_logger.step_start("fetch_data")
+chain_logger.step_complete("fetch_data", duration_ms=150.5)
+chain_logger.step_error("transform", error=str(e))
+chain_logger.chain_complete(total_ms=1250.0, success=True)
+```
+
+### Distributed Tracing
+
+FlowForge includes built-in OpenTelemetry tracing that's automatically integrated at the DAG executor layer:
+
+```python
+from flowforge import FlowForge, configure_tracing, get_tracer, trace_span, ChainTracer
+
+# Configure at startup (requires opentelemetry packages)
+configure_tracing(
+    service_name="my-service",
+    endpoint="http://jaeger:4317",  # OTLP endpoint
+)
+
+# Tracing is automatic for all chain executions
+# Each chain creates a parent span with child spans for each step
+forge = FlowForge(name="my_app")
+result = await forge.run("my_chain")  # Automatically traced
+
+# Get a tracer for custom operations
+tracer = get_tracer("my_module")
+
+# Create spans with context manager
+with trace_span("my_operation", {"key": "value"}):
+    result = do_something()
+
+# Use ChainTracer for custom chain execution
+chain_tracer = ChainTracer("my_chain", "request-123")
+with chain_tracer.chain_span(total_steps=3):
+    with chain_tracer.step_span("step1", agent="news"):
+        # step execution with automatic timing
+        pass
+```
+
+### Debug Callbacks
+
+Debug callbacks let you inspect context state after each step, useful for troubleshooting and development:
+
+```python
+from flowforge import FlowForge, ChainContext
+
+forge = FlowForge(name="my_app")
+
+# Define a debug callback
+def on_step_complete(ctx: ChainContext, step_name: str, result: dict):
+    print(f"Step {step_name}:")
+    print(f"  Success: {result['success']}")
+    print(f"  Duration: {result['duration_ms']:.2f}ms")
+    if result.get('error'):
+        print(f"  Error: {result['error']}")
+
+    # Save context snapshot
+    import json
+    snapshot = {
+        "step": step_name,
+        "result": result,
+        "context_keys": list(ctx.to_dict().get("data", {}).keys()),
+    }
+    with open(f"debug_{step_name}.json", "w") as f:
+        json.dump(snapshot, f, indent=2, default=str)
+
+# Pass callback when running chains
+result = await forge.launch(
+    "my_chain",
+    data={"company": "Apple"},
+    debug_callback=on_step_complete,
+)
+
+# The CLI debug command uses this feature internally:
+# flowforge debug my_chain --company "Apple" --snapshot-dir ./debug_output
+```
+
+**Debug callback signature:**
+```python
+def callback(ctx: ChainContext, step_name: str, result: dict) -> None:
+    # result contains:
+    # - success: bool
+    # - output: dict | None
+    # - duration_ms: float
+    # - error: str | None
+    # - error_type: str | None
+    # - retry_count: int
+    pass
+```
+
+### LLM Gateway with Resilience
+
+The LLM Gateway includes built-in resilience features:
+
+```python
+from flowforge import LLMGatewayClient, create_managed_client
+
+# Create a managed client (auto-cleanup on process exit)
+client = create_managed_client(
+    base_url="https://api.openai.com/v1",
+    api_key="sk-...",
+    timeout=30.0,
+    max_retries=3,
+    circuit_breaker_enabled=True,  # Built-in circuit breaker
+)
+
+# Use as context manager (recommended)
+async with client:
+    # Synchronous completion
+    response = client.complete("Summarize this: ...")
+
+    # Async completion
+    response = await client.complete_async("Hello, world!")
+
+    # Streaming response
+    async for chunk in client.stream_async("Tell me a story"):
+        print(chunk, end="", flush=True)
+
+# Connection pooling is automatic
+# - Shared httpx clients with keepalive
+# - Configurable connection limits
+# - Automatic cleanup on process exit
+```
+
+### Testing with Isolated Registries
+
+Use isolated registries for testing:
+
+```python
+import pytest
+from flowforge import FlowForge
+
+def test_my_chain():
+    # Use temp_registries for fully isolated test
+    with FlowForge.temp_registries("test") as forge:
+        @forge.step(name="test_step")
+        async def test_step(ctx):
+            return {"result": "ok"}
+
+        @forge.chain(name="test_chain")
+        class TestChain:
+            steps = ["test_step"]
+
+        # Run test
+        import asyncio
+        result = asyncio.run(forge.run("test_chain"))
+        assert result["success"]
+
+    # Registries automatically cleaned up after context exit
+```
+
+### Registry Strict Mode
+
+Prevent accidental component overwrites:
+
+```python
+from flowforge.core.registry import get_step_registry
+
+registry = get_step_registry()
+
+# Default: silently overwrites
+registry.register_step("my_step", handler1)
+registry.register_step("my_step", handler2)  # Overwrites
+
+# Strict mode: raises error if exists
+registry.register_step("my_step", handler3, strict=True)
+# ValueError: Component 'my_step' already registered. Use strict=False to overwrite.
+```
+
+### Resource Cleanup with Timeout
+
+Prevent indefinite hanging during cleanup:
+
+```python
+from flowforge import FlowForge
+
+forge = FlowForge(name="my_app")
+
+# Register resource with potentially slow cleanup
+forge.register_resource(
+    "db_pool",
+    factory=create_db_pool,
+    cleanup=lambda pool: pool.close(),
+)
+
+# Async context manager uses 30s default timeout
+async with forge:
+    result = await forge.run("my_chain")
+# Cleanup runs with timeout
+
+# Manual cleanup with custom timeout
+await forge.cleanup_resources(timeout_seconds=60.0)
+
+# Handle timeout explicitly
+try:
+    await forge.cleanup_resources(timeout_seconds=5.0)
+except asyncio.TimeoutError:
+    logger.error("Cleanup timed out - some resources may not be freed")
+```
+
+### True Fail-Fast Execution
+
+FlowForge implements true fail-fast behavior - when one task fails, all pending tasks are **immediately cancelled**:
+
+```python
+# OLD behavior (most frameworks):
+# asyncio.gather(..., return_exceptions=True) waits for ALL tasks
+# Even if task 1 fails in 100ms, you wait for tasks 2-5 (maybe 30s each)
+# Side effects keep running!
+
+# NEW behavior (FlowForge):
+# - Task 1 fails after 100ms
+# - Tasks 2, 3, 4, 5 are CANCELLED immediately
+# - Total time: ~100ms, not 30+ seconds
+# - No unwanted side effects
+
+@forge.chain(name="my_chain", error_handling="fail_fast")
+class MyChain:
+    steps = ["step_a", "step_b", "step_c", "step_d"]
+```
+
+**Why this matters:**
+- API calls stop immediately (no wasted quota)
+- Database writes don't continue after failure
+- You get errors faster in CI/CD pipelines
+- Resource cleanup happens promptly
+
+### Graceful Degradation (Continue Mode)
+
+For multi-agent workflows where partial success is acceptable, use continue mode:
+
+```python
+@forge.chain(name="data_pipeline", error_handling="continue")
+class DataPipeline:
+    steps = ["fetch_news", "fetch_sec", "fetch_earnings", "aggregate"]
+
+# Run the chain
+result = await forge.run("data_pipeline", {"company": "Apple"})
+
+# Check partial success
+if result["success"]:
+    print("All steps succeeded!")
+elif result.get("partial_success"):
+    print(f"Partial success: {result['completion_rate']}% completed")
+
+    # Examine individual step results
+    for step_result in result["results"]:
+        if step_result["error"]:
+            print(f"  {step_result['step_name']}: FAILED - {step_result['error']}")
+        elif step_result.get("skipped_reason"):
+            print(f"  {step_result['step_name']}: SKIPPED - {step_result['skipped_reason']}")
+        else:
+            print(f"  {step_result['step_name']}: SUCCESS")
+```
+
+### Rich Error Metadata
+
+Each step result includes detailed error information for debugging:
+
+```python
+from flowforge.core.context import StepResult, ExecutionSummary
+
+# StepResult includes:
+# - step_name: str
+# - output: Any
+# - duration_ms: float
+# - error: Exception | None
+# - error_type: str | None (e.g., "ValueError", "TimeoutError")
+# - error_traceback: str | None (full stack trace)
+# - retry_count: int (how many retries were attempted)
+# - skipped_reason: str | None (why the step was skipped)
+
+# ExecutionSummary provides aggregate stats:
+summary = ExecutionSummary(
+    chain_name="my_chain",
+    request_id="req-123",
+    total_steps=4,
+)
+
+# After execution:
+print(summary.completed_steps)   # 2
+print(summary.failed_steps)      # 1
+print(summary.skipped_steps)     # 1
+print(summary.completion_rate)   # 50.0
+
+# Helper methods
+successful = summary.get_successful_steps()  # List[StepResult]
+failed = summary.get_failed_steps()          # List[StepResult]
+skipped = summary.get_skipped_steps()        # List[StepResult]
+```
+
+---
+
+## Configuration Management
+
+FlowForge provides a typed configuration system with automatic validation and secret masking.
+
+### Loading Configuration
+
+```python
+from flowforge.utils import FlowForgeConfig, get_config, set_config
+
+# Load from environment variables (lazy, cached)
+config = get_config()
+
+# Access typed values
+print(config.llm_model)           # "gpt-4"
+print(config.max_parallel)        # 10
+print(config.llm_timeout_ms)      # 30000
+print(config.environment)         # "development"
+
+# Secrets are automatically masked
+print(config.llm_api_key)         # ***REDACTED***
+print(config.llm_api_key.get_masked(4))  # ***sk-1234
+
+# Get actual value when needed (for API calls)
+actual_key = str(config.llm_api_key)
+
+# Access nested configuration
+print(config.cache.ttl_seconds)       # 300
+print(config.rate_limit.enabled)      # False
+print(config.retry_policy.max_retries)  # 3
+```
+
+### External Secret Backends
+
+For production deployments, use external secret backends instead of environment variables:
+
+```python
+from flowforge.utils import (
+    FlowForgeConfig,
+    AWSSecretsManagerBackend,
+    VaultSecretBackend,
+    EnvSecretBackend,
+)
+
+# AWS Secrets Manager
+aws_backend = AWSSecretsManagerBackend(
+    secret_name="flowforge/prod",
+    region_name="us-east-1",
+    cache_ttl_seconds=300,  # Cache secrets for 5 minutes
+)
+config = FlowForgeConfig.from_env(secret_backend=aws_backend)
+
+# HashiCorp Vault
+vault_backend = VaultSecretBackend(
+    url="https://vault.example.com",
+    token="hvs.xxxxx",  # Or use VAULT_TOKEN env var
+    path="secret/data/flowforge",
+)
+config = FlowForgeConfig.from_env(secret_backend=vault_backend)
+
+# Environment variables (default)
+env_backend = EnvSecretBackend()
+config = FlowForgeConfig.from_env(secret_backend=env_backend)
+```
+
+The secret backend is used to resolve any `ConfigField` marked as `secret=True`:
+
+```python
+# LLM_API_KEY will be fetched from the secret backend
+print(config.llm_api_key)  # ***REDACTED*** (masked in logs)
+actual = str(config.llm_api_key)  # Actual value for API calls
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FLOWFORGE_SERVICE_NAME` | `flowforge` | Service name for telemetry |
+| `FLOWFORGE_VERSION` | `1.0.0` | Service version |
+| `FLOWFORGE_ENV` | `development` | Environment (dev/staging/prod) |
+| `LLM_API_KEY` | - | LLM API key (secret, masked) |
+| `LLM_BASE_URL` | `http://localhost:8000` | LLM service URL |
+| `LLM_MODEL` | `gpt-4` | Default LLM model |
+| `LLM_TIMEOUT_MS` | `30000` | LLM request timeout |
+| `LLM_MAX_RETRIES` | `3` | Max retry attempts |
+| `FLOWFORGE_MAX_PARALLEL` | `10` | Max parallel steps |
+| `FLOWFORGE_DEFAULT_TIMEOUT_MS` | `30000` | Default step timeout |
+| `OTEL_ENABLED` | `false` | Enable OpenTelemetry |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | - | OTLP endpoint URL |
+| `OTEL_SERVICE_NAME` | - | OTel service name |
+| `LOG_LEVEL` | `INFO` | Logging level |
+| `LOG_FORMAT` | `text` | Log format (text/json) |
+| `FLOWFORGE_DEBUG` | `false` | Debug mode |
+
+### Secret Masking
+
+The `SecretString` class automatically masks secrets in logs and repr:
+
+```python
+from flowforge.utils import SecretString
+
+api_key = SecretString("sk-1234567890abcdef")
+
+# Safe for logging
+print(api_key)              # ***REDACTED***
+print(repr(api_key))        # ***REDACTED***
+print(f"Key: {api_key}")    # Key: ***REDACTED***
+
+# Show last N chars for debugging
+print(api_key.get_masked(4))  # ***cdef
+
+# Get actual value when needed
+actual = str(api_key)       # "sk-1234567890abcdef"
+actual = api_key.value      # "sk-1234567890abcdef"
+```
+
+### Safe Configuration Export
+
+```python
+# Get config as dict with all secrets masked (safe for logging)
+safe_dict = config.to_safe_dict()
+print(safe_dict)
+# {
+#     "service_name": "flowforge",
+#     "llm_api_key": "***REDACTED***",
+#     "llm_base_url": "http://localhost:8000",
+#     ...
+# }
+
+# Use in health endpoints, logs, etc.
+logger.info("Starting with config", extra=safe_dict)
+```
+
+### Fail-Fast Validation
+
+Configuration errors are caught early:
+
+```python
+from flowforge.utils import FlowForgeConfig, ConfigError
+
+try:
+    config = FlowForgeConfig.from_env()
+except ConfigError as e:
+    print(f"Configuration error: {e}")
+    # Configuration validation failed:
+    #   - Required configuration 'LLM_API_KEY' is missing
+```
+
+---
+
+## Health Checks and Monitoring
+
+FlowForge provides built-in health checks for operational visibility.
+
+### Health Status API
+
+```python
+from flowforge.utils import get_health, get_version, HealthStatus
+
+# Get health status
+health = get_health()
+
+print(health.status)       # "healthy", "degraded", or "unhealthy"
+print(health.version)      # "1.0.0"
+print(health.environment)  # "development"
+print(health.checks)       # {"config_loaded": True, "llm_configured": True}
+
+# As dict (for JSON APIs)
+health_dict = health.to_dict()
+```
+
+### Version Info
+
+```python
+version = get_version()
+print(version)
+# {
+#     "name": "flowforge",
+#     "version": "1.0.0",
+#     "environment": "development"
+# }
+```
+
+### CLI Health Check
+
+Use in CI/CD pipelines or container health probes:
+
+```bash
+# Returns exit code 0 if healthy, 1 otherwise
+flowforge health
+
+# JSON output for parsing
+flowforge health --json
+
+# Example in Dockerfile
+HEALTHCHECK --interval=30s --timeout=3s \
+  CMD flowforge health || exit 1
+```
+
+### Health Check Statuses
+
+| Status | Meaning |
+|--------|---------|
+| `healthy` | All checks passed |
+| `degraded` | Some non-critical checks failed |
+| `unhealthy` | Critical checks failed |
+
+### Built-in Checks
+
+| Check | What it validates |
+|-------|-------------------|
+| `config_loaded` | Configuration loaded successfully |
+| `llm_configured` | LLM API key is set |
+| `otel_configured` | OTel endpoint set (if enabled) |
+
+### Custom Health Checks
+
+Add custom checks for your services:
+
+```python
+from flowforge.utils import get_health, HealthStatus
+
+def get_app_health() -> HealthStatus:
+    health = get_health()
+
+    # Add custom checks
+    health.checks["database"] = check_database_connection()
+    health.checks["redis"] = check_redis_connection()
+    health.checks["external_api"] = check_external_api()
+
+    # Recalculate status
+    if not health.checks["database"]:
+        health.status = "unhealthy"
+    elif not all(health.checks.values()):
+        health.status = "degraded"
+
+    return health
 ```
 
 ---
@@ -1118,12 +2001,13 @@ class FlowForge:
         version: str = "0.1.0",
         max_parallel: int = 10,
         default_timeout_ms: int = 30000,
+        isolated: bool = True,  # Use isolated registries (default)
     )
 
     # Decorators
     def agent(name, version, capabilities, description) -> Decorator
-    def step(name, dependencies, produces, timeout_ms) -> Decorator
-    def chain(name, version, description) -> Decorator
+    def step(name, dependencies, produces, timeout_ms, max_concurrency, resources) -> Decorator
+    def chain(name, version, description, parallel_groups) -> Decorator
 
     # Management
     def use_middleware(middleware: Middleware) -> None
@@ -1132,12 +2016,22 @@ class FlowForge:
     def list_chains() -> List[str]
     def get_agent(name: str) -> BaseAgent
 
+    # Resources
+    def register_resource(name, resource=None, factory=None, cleanup=None, dependencies=None) -> None
+    async def get_resource(name: str) -> Any
+
     # Validation
     def check() -> None  # Raises on invalid definitions
     def visualize_chain(name: str) -> str  # ASCII DAG
 
     # Execution
     async def run(chain_name: str, initial_data: dict = None) -> dict
+
+    # Context managers
+    @classmethod
+    def temp_registries(cls, name: str) -> FlowForge  # For isolated testing
+    def __enter__(self) -> FlowForge
+    async def __aenter__(self) -> FlowForge
 ```
 
 ### ChainContext Class
@@ -1152,8 +2046,8 @@ class ChainContext:
     def to_dict() -> dict
 
     # Step lifecycle
-    def enter_step(step_name: str) -> None
-    def exit_step() -> None
+    def enter_step(step_name: str) -> Token  # Returns contextvar token
+    def exit_step(token: Token = None) -> None  # Pass token for proper cleanup
 
     # Results
     def add_result(result: StepResult) -> None
