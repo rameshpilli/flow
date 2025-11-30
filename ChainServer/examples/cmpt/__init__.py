@@ -20,7 +20,6 @@ FOLDER STRUCTURE:
     │   ├── content_prioritization.py  # Stage 2: Prioritize sources
     │   ├── response_builder.py  # Stage 3: Build response
     │   └── llm_gateway.py       # LLM client with OAuth
-    ├── standalone_example.py    # Alternative: All-in-one implementation
     ├── 02_cmpt_tutorial.ipynb   # Interactive tutorial notebook
     └── 03_cmpt_tests.py         # Test examples
 

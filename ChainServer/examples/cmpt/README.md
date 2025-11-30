@@ -42,7 +42,7 @@ cmpt/
 │   ├── response_builder.py       # Stage 3 implementation
 │   └── llm_gateway.py            # LLM client with OAuth support
 │
-├── standalone_example.py         # Self-contained reference (all-in-one)
+├── 02_cmpt_tutorial.ipynb        # Interactive Jupyter notebook tutorial
 └── 03_cmpt_tests.py              # Test examples
 ```
 
@@ -51,8 +51,9 @@ cmpt/
 | File | Purpose | When to Use |
 |------|---------|-------------|
 | `run.py` | Main entry point using services | **Start here** - Production use |
-| `standalone_example.py` | Self-contained implementation | Learning/reference - All code in one file |
 | `services/` | Modular business logic | Production - Maintainable, testable |
+| `02_cmpt_tutorial.ipynb` | Interactive tutorial | Learning - Step-by-step walkthrough |
+| `03_cmpt_tests.py` | Test examples | Testing - Validate your setup |
 
 ## Usage Options
 

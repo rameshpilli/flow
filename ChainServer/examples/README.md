@@ -47,17 +47,22 @@ The `cmpt/` folder is a complete production example:
 
 ```
 cmpt/
-├── 01_cmpt_chain_full.py     # Complete implementation
+├── run.py                    # 👈 Main entry point
+├── __init__.py               # Package exports
+├── README.md                 # CMPT documentation
 ├── 02_cmpt_tutorial.ipynb    # Interactive notebook
 ├── 03_cmpt_tests.py          # Test examples
-├── chains/
-│   └── cmpt.py               # Chain definition
 └── services/
+    ├── models.py             # Pydantic models
     ├── context_builder.py    # Stage 1: Extract context
     ├── content_prioritization.py  # Stage 2: Prioritize
     ├── response_builder.py   # Stage 3: Generate response
-    ├── llm_gateway.py        # LLM client with OAuth
-    └── models.py             # Pydantic models
+    └── llm_gateway.py        # LLM client with OAuth
+```
+
+Run the CMPT example:
+```bash
+python examples/cmpt/run.py --company "Apple Inc"
 ```
 
 ## Key Concepts by Example
