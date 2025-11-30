@@ -28,7 +28,7 @@ Architecture:
     └─────────────────────────────────────────────────────────────────────┘
 
 Usage:
-    from flowforge.examples.cmpt_chain import forge, CMPTRequest
+    from examples.cmpt.cmpt_chain import forge, CMPTRequest
 
     # Run the chain
     result = await forge.launch(

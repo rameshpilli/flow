@@ -14,7 +14,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from flowforge.services.models import (
+from examples.cmpt.services.models import (
     ContentPrioritizationOutput,
     ContextBuilderOutput,
     DataSource,

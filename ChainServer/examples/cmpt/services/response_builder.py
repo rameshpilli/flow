@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from flowforge.services.models import (
+from examples.cmpt.services.models import (
     AgentResult,
     ContentPrioritizationOutput,
     ContextBuilderOutput,

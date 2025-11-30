@@ -28,11 +28,6 @@ For middleware, testing, and advanced features, import from submodules:
 # CORE - The essentials (what 90% of users need)
 # =============================================================================
 
-# =============================================================================
-# CHAINS - Pre-built chains
-# =============================================================================
-from flowforge.chains import CMPTChain
-
 # Configuration
 from flowforge.config import Config, get_config
 from flowforge.core.context import ChainContext
@@ -100,8 +95,6 @@ __all__ = [
     "CircuitBreakerConfig",
     "configure_logging",
     "get_logger",
-    # Pre-built chains
-    "CMPTChain",
 ]
 
 
@@ -146,14 +139,6 @@ def __getattr__(name: str):
         from flowforge.core import resources
         return getattr(resources, name)
 
-    # Services
-    if name in ("ChainRequest", "ChainRequestOverrides", "ChainResponse",
-                "ContextBuilderService", "ContentPrioritizationService",
-                "ResponseBuilderService", "LLMGatewayClient",
-                "get_llm_client", "create_managed_client"):
-        from flowforge import services
-        return getattr(services, name)
-
     # Testing extras
     if name in ("MockMiddleware", "mock_step", "mock_chain",
                 "assert_step_completed", "assert_chain_valid"):
@@ -167,10 +152,5 @@ def __getattr__(name: str):
                 "configure_tracing", "get_tracer", "trace_span", "ChainTracer"):
         from flowforge import utils
         return getattr(utils, name)
-
-    # CMPT extras
-    if name == "create_cmpt_chain":
-        from flowforge import chains
-        return getattr(chains, name)
 
     raise AttributeError(f"module 'flowforge' has no attribute '{name}'")

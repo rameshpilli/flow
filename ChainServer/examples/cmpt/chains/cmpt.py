@@ -33,14 +33,15 @@ import logging
 from typing import Any
 
 from flowforge.core.forge import FlowForge
-from flowforge.services import (
+from flowforge.utils.tracing import trace_span
+
+from examples.cmpt.services import (
     ChainRequest,
     ChainResponse,
     ContentPrioritizationService,
     ContextBuilderService,
     ResponseBuilderService,
 )
-from flowforge.utils.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 

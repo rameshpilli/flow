@@ -16,7 +16,7 @@ from datetime import date, datetime
 from difflib import SequenceMatcher
 from typing import Any
 
-from flowforge.services.models import (
+from examples.cmpt.services.models import (
     ChainRequest,
     ChainRequestOverrides,
     CompanyInfo,

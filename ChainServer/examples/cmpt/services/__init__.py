@@ -1,5 +1,5 @@
 """
-FlowForge Services
+CMPT Services
 
 Modular, Pydantic-based services for the Client Meeting Prep Chain.
 
@@ -10,9 +10,9 @@ Services:
 - LLMGateway: Enterprise LLM client with OAuth support
 """
 
-from flowforge.services.content_prioritization import ContentPrioritizationService
-from flowforge.services.context_builder import ContextBuilderService
-from flowforge.services.llm_gateway import (
+from examples.cmpt.services.content_prioritization import ContentPrioritizationService
+from examples.cmpt.services.context_builder import ContextBuilderService
+from examples.cmpt.services.llm_gateway import (
     LLMGatewayClient,
     OAuthTokenManager,
     create_managed_client,
@@ -22,28 +22,24 @@ from flowforge.services.llm_gateway import (
     set_default_llm_client,
     timed_lru_cache,
 )
-from flowforge.services.models import (
-    # Response Builder Models
+from examples.cmpt.services.models import (
     AgentResult,
-    # Request/Response Models
     ChainRequest,
     ChainRequestOverrides,
     ChainResponse,
-    # Context Builder Models
     CompanyInfo,
     ContentPrioritizationInput,
     ContentPrioritizationOutput,
     ContextBuilderInput,
     ContextBuilderOutput,
     PersonaInfo,
-    # Content Prioritization Models
     PrioritizedSource,
     ResponseBuilderInput,
     ResponseBuilderOutput,
     Subquery,
     TemporalContext,
 )
-from flowforge.services.response_builder import ResponseBuilderService
+from examples.cmpt.services.response_builder import ResponseBuilderService
 
 __all__ = [
     # Models
