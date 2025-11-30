@@ -11,14 +11,12 @@ End-to-end tests for:
 """
 
 import asyncio
-from typing import Any
 
 import pytest
 
-from flowforge import ChainContext, FlowForge
-from flowforge.core.context import ContextScope, StepResult
+from flowforge import FlowForge
+from flowforge.core.context import ContextScope
 from flowforge.middleware.base import Middleware
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 #                           Basic Chain Execution Tests
@@ -432,7 +430,7 @@ class TestResumability:
 
         # First run - should fail but first step should have succeeded
         try:
-            result1 = await forge.launch_resumable("partial_chain")
+            await forge.launch_resumable("partial_chain")
         except RuntimeError:
             # Expected - the chain failed
             pass

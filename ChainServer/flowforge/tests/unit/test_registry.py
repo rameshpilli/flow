@@ -9,29 +9,24 @@ Tests for:
 - Isolated registries for test isolation
 """
 
-import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
 from flowforge.core.registry import (
     AgentRegistry,
-    AgentSpec,
     BaseRegistry,
     ChainRegistry,
-    ChainSpec,
     ComponentMetadata,
     ComponentStatus,
     RetryConfig,
     StepRegistry,
-    StepSpec,
     create_isolated_registries,
     get_agent_registry,
     get_chain_registry,
     get_step_registry,
     reset_global_registries,
 )
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 #                           BaseRegistry Tests

@@ -9,15 +9,12 @@ Tests for:
 - Middleware priority and application
 """
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from flowforge import ChainContext, FlowForge
 from flowforge.core.context import ContextScope, StepResult
 from flowforge.middleware.base import CompositeMiddleware, Middleware
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 #                           Base Middleware Tests
@@ -529,6 +526,6 @@ class TestMultipleMiddleware:
         assert result1["results"][0]["output"]["count"] == 1
 
         # Second call - should use cache
-        result2 = await forge.launch("cache_chain", data={"query": "test"})
+        await forge.launch("cache_chain", data={"query": "test"})
         # The step still runs but can use cached data
         assert "expensive_step" in cache_hits

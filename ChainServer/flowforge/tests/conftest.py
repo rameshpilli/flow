@@ -5,7 +5,8 @@ Shared fixtures for all FlowForge tests.
 """
 
 import asyncio
-from typing import Any, AsyncGenerator, Generator
+from collections.abc import Generator
+from typing import Any
 
 import pytest
 
@@ -20,7 +21,6 @@ from flowforge.core.registry import (
     reset_global_registries,
 )
 from flowforge.middleware.base import Middleware
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 #                           CORE FIXTURES

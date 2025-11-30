@@ -12,9 +12,8 @@ import asyncio
 
 import pytest
 
-from flowforge import ChainContext, FlowForge
+from flowforge import FlowForge
 from flowforge.core.context import ContextScope
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 #                           Basic Chain Composition Tests
