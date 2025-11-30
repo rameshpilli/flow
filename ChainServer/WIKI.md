@@ -42,6 +42,7 @@
   - [Plugin System](#plugin-system)
 - [Middleware Reference](#middleware-reference)
 - [CLI Reference](#cli-reference)
+  - [Scaffolding Commands](#scaffolding-commands)
 - [API Reference](#api-reference)
 - [Examples](#examples)
 - [Configuration](#configuration)
@@ -1843,6 +1844,178 @@ ao new project my-app
 
 # Version
 ao version
+```
+
+### Scaffolding Commands
+
+Generate ready-to-use templates for agents, chains, and full projects:
+
+#### Create a New Agent
+
+```bash
+# Basic agent
+ao new agent MyCustomAgent
+
+# Specify output directory
+ao new agent MyCustomAgent --output ./src/agents/
+
+# Overwrite existing file
+ao new agent MyCustomAgent --force
+```
+
+**Generated file (`mycustomagent_agent.py`):**
+
+```python
+"""
+MyCustomAgent Agent
+
+Custom data agent for fetching mycustomagent data.
+"""
+
+from agentorchestrator.agents.base import BaseAgent, AgentResult
+
+
+class MyCustomAgentAgent(BaseAgent):
+    """
+    Agent for fetching mycustomagent data.
+
+    Usage:
+        agent = MyCustomAgentAgent()
+        result = await agent.fetch(query="search term")
+    """
+
+    def __init__(self, config: dict | None = None):
+        super().__init__(config)
+        # Add your initialization here
+
+    async def fetch(self, query: str, **kwargs) -> AgentResult:
+        """Fetch data based on query."""
+        # TODO: Implement your data fetching logic here
+        data = {
+            "query": query,
+            "results": [],
+        }
+
+        return AgentResult(
+            data=data,
+            metadata={
+                "source": "mycustomagent",
+                "query": query,
+            }
+        )
+
+    async def health_check(self) -> bool:
+        """Check if agent is healthy."""
+        return True
+
+
+# Register with AgentOrchestrator
+def register(forge):
+    """Register this agent with AgentOrchestrator instance."""
+    forge.register_agent("mycustomagent", MyCustomAgentAgent)
+```
+
+#### Create a New Chain
+
+```bash
+# Basic chain
+ao new chain DataPipeline
+
+# Specify output directory
+ao new chain DataPipeline --output ./src/chains/
+```
+
+**Generated file (`datapipeline_chain.py`):**
+
+```python
+"""
+DataPipeline Chain
+
+Custom chain for datapipeline workflow.
+"""
+
+from agentorchestrator import AgentOrchestrator, ChainContext
+
+
+# Create AgentOrchestrator instance (isolated for this chain)
+forge = AgentOrchestrator(name="datapipeline", isolated=True)
+
+
+# Define steps
+@forge.step
+async def step_1(ctx: ChainContext) -> dict:
+    """First step: Initialize and prepare data."""
+    initial_data = ctx.initial_data or {}
+    result = {"status": "initialized", "input": initial_data}
+    ctx.set("step_1_result", result)
+    return result
+
+
+@forge.step(deps=[step_1])
+async def step_2(ctx: ChainContext) -> dict:
+    """Second step: Process data from step 1."""
+    step_1_result = ctx.get("step_1_result")
+    result = {"status": "processed", "previous": step_1_result}
+    ctx.set("step_2_result", result)
+    return result
+
+
+@forge.step(deps=[step_2])
+async def step_3(ctx: ChainContext) -> dict:
+    """Final step: Generate output."""
+    step_2_result = ctx.get("step_2_result")
+    return {"status": "completed", "output": step_2_result}
+
+
+# Define chain
+@forge.chain
+class DataPipelineChain:
+    """DataPipeline workflow chain."""
+    steps = [step_1, step_2, step_3]
+
+
+# Run if executed directly
+if __name__ == "__main__":
+    import asyncio
+
+    async def main():
+        result = await forge.launch("DataPipelineChain", {"input": "test"})
+        print(result)
+
+    asyncio.run(main())
+```
+
+#### Create a New Project
+
+```bash
+# Full project with structure
+ao new project my-app
+
+# With API support
+ao new project my-app --with-api
+
+# Without Docker files
+ao new project my-app --no-docker
+```
+
+**Generated project structure:**
+
+```
+my-app/
+├── src/
+│   └── my_app/
+│       ├── __init__.py
+│       ├── chains/
+│       │   └── __init__.py
+│       ├── agents/
+│       │   └── __init__.py
+│       └── config.py
+├── tests/
+│   └── __init__.py
+├── pyproject.toml
+├── README.md
+├── .env.example
+└── docker-compose.yml  (if --no-docker not specified)
 ```
 
 **Example Output:**
