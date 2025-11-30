@@ -1064,7 +1064,7 @@ class TestConfig:
         config_module._config = None
 
     def test_config_exports_from_main_module(self):
-        """Test config exports are available from main flowforge module"""
+        """Test config exports are available from main agentorchestrator module"""
         from agentorchestrator import Config, get_config, set_config, reload_config
 
         assert Config is not None

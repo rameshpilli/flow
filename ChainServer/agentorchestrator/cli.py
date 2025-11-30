@@ -949,8 +949,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     env_vars = [
         ("LLM_API_KEY", True, "LLM API authentication"),
         ("LLM_BASE_URL", False, "LLM endpoint URL"),
-        ("FLOWFORGE_ENV", False, "Environment name"),
-        ("FLOWFORGE_DEBUG", False, "Debug mode"),
+        ("AO_ENV", False, "Environment name"),
+        ("AO_DEBUG", False, "Debug mode"),
     ]
 
     for var_name, required, desc in env_vars:

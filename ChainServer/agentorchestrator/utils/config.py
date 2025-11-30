@@ -418,9 +418,9 @@ class AgentOrchestratorConfig:
         """
         fields = [
             # Service
-            ConfigField("FLOWFORGE_SERVICE_NAME", default="agentorchestrator"),
-            ConfigField("FLOWFORGE_VERSION", default="1.0.0"),
-            ConfigField("FLOWFORGE_ENV", default="development"),
+            ConfigField("AO_SERVICE_NAME", default="agentorchestrator"),
+            ConfigField("AO_VERSION", default="1.0.0"),
+            ConfigField("AO_ENV", default="development"),
 
             # LLM (API key loaded via secret backend)
             ConfigField(
@@ -434,25 +434,25 @@ class AgentOrchestratorConfig:
             ConfigField("LLM_MAX_RETRIES", default="3"),
 
             # Execution
-            ConfigField("FLOWFORGE_MAX_PARALLEL", default="10"),
-            ConfigField("FLOWFORGE_DEFAULT_TIMEOUT_MS", default="30000"),
+            ConfigField("AO_MAX_PARALLEL", default="10"),
+            ConfigField("AO_DEFAULT_TIMEOUT_MS", default="30000"),
 
             # Cache
-            ConfigField("FLOWFORGE_CACHE_ENABLED", default="true"),
-            ConfigField("FLOWFORGE_CACHE_TTL_SECONDS", default="300"),
-            ConfigField("FLOWFORGE_CACHE_MAX_SIZE", default="1000"),
-            ConfigField("FLOWFORGE_CACHE_STRATEGY", default="lru"),
+            ConfigField("AO_CACHE_ENABLED", default="true"),
+            ConfigField("AO_CACHE_TTL_SECONDS", default="300"),
+            ConfigField("AO_CACHE_MAX_SIZE", default="1000"),
+            ConfigField("AO_CACHE_STRATEGY", default="lru"),
 
             # Rate Limit
-            ConfigField("FLOWFORGE_RATE_LIMIT_ENABLED", default="false"),
-            ConfigField("FLOWFORGE_RATE_LIMIT_RPS", default="10.0"),
-            ConfigField("FLOWFORGE_RATE_LIMIT_BURST", default="20"),
+            ConfigField("AO_RATE_LIMIT_ENABLED", default="false"),
+            ConfigField("AO_RATE_LIMIT_RPS", default="10.0"),
+            ConfigField("AO_RATE_LIMIT_BURST", default="20"),
 
             # Retry
-            ConfigField("FLOWFORGE_RETRY_MAX", default="3"),
-            ConfigField("FLOWFORGE_RETRY_BASE_DELAY_MS", default="1000"),
-            ConfigField("FLOWFORGE_RETRY_MAX_DELAY_MS", default="30000"),
-            ConfigField("FLOWFORGE_RETRY_BACKOFF", default="2.0"),
+            ConfigField("AO_RETRY_MAX", default="3"),
+            ConfigField("AO_RETRY_BASE_DELAY_MS", default="1000"),
+            ConfigField("AO_RETRY_MAX_DELAY_MS", default="30000"),
+            ConfigField("AO_RETRY_BACKOFF", default="2.0"),
 
             # Observability
             ConfigField("OTEL_ENABLED", default="false"),
@@ -462,8 +462,8 @@ class AgentOrchestratorConfig:
             ConfigField("LOG_FORMAT", default="text"),
 
             # Debug
-            ConfigField("FLOWFORGE_DEBUG", default="false"),
-            ConfigField("FLOWFORGE_DEBUG_SNAPSHOT_DIR", default=".agentorchestrator/snapshots"),
+            ConfigField("AO_DEBUG", default="false"),
+            ConfigField("AO_DEBUG_SNAPSHOT_DIR", default=".agentorchestrator/snapshots"),
         ]
 
         # Load all fields
@@ -484,36 +484,36 @@ class AgentOrchestratorConfig:
 
         # Build nested config objects
         cache_config = CacheConfig(
-            enabled=values.get("FLOWFORGE_CACHE_ENABLED", "true").lower() == "true",
-            ttl_seconds=int(values.get("FLOWFORGE_CACHE_TTL_SECONDS", "300")),
-            max_size=int(values.get("FLOWFORGE_CACHE_MAX_SIZE", "1000")),
-            strategy=values.get("FLOWFORGE_CACHE_STRATEGY", "lru"),
+            enabled=values.get("AO_CACHE_ENABLED", "true").lower() == "true",
+            ttl_seconds=int(values.get("AO_CACHE_TTL_SECONDS", "300")),
+            max_size=int(values.get("AO_CACHE_MAX_SIZE", "1000")),
+            strategy=values.get("AO_CACHE_STRATEGY", "lru"),
         )
 
         rate_limit_config = RateLimitConfig(
-            enabled=values.get("FLOWFORGE_RATE_LIMIT_ENABLED", "false").lower() == "true",
-            requests_per_second=float(values.get("FLOWFORGE_RATE_LIMIT_RPS", "10.0")),
-            burst_size=int(values.get("FLOWFORGE_RATE_LIMIT_BURST", "20")),
+            enabled=values.get("AO_RATE_LIMIT_ENABLED", "false").lower() == "true",
+            requests_per_second=float(values.get("AO_RATE_LIMIT_RPS", "10.0")),
+            burst_size=int(values.get("AO_RATE_LIMIT_BURST", "20")),
         )
 
         retry_config = RetryPolicyConfig(
-            max_retries=int(values.get("FLOWFORGE_RETRY_MAX", "3")),
-            base_delay_ms=int(values.get("FLOWFORGE_RETRY_BASE_DELAY_MS", "1000")),
-            max_delay_ms=int(values.get("FLOWFORGE_RETRY_MAX_DELAY_MS", "30000")),
-            backoff_multiplier=float(values.get("FLOWFORGE_RETRY_BACKOFF", "2.0")),
+            max_retries=int(values.get("AO_RETRY_MAX", "3")),
+            base_delay_ms=int(values.get("AO_RETRY_BASE_DELAY_MS", "1000")),
+            max_delay_ms=int(values.get("AO_RETRY_MAX_DELAY_MS", "30000")),
+            backoff_multiplier=float(values.get("AO_RETRY_BACKOFF", "2.0")),
         )
 
         return cls(
-            service_name=values.get("FLOWFORGE_SERVICE_NAME", "agentorchestrator"),
-            service_version=values.get("FLOWFORGE_VERSION", "1.0.0"),
-            environment=values.get("FLOWFORGE_ENV", "development"),
+            service_name=values.get("AO_SERVICE_NAME", "agentorchestrator"),
+            service_version=values.get("AO_VERSION", "1.0.0"),
+            environment=values.get("AO_ENV", "development"),
             llm_api_key=values.get("LLM_API_KEY"),
             llm_base_url=values.get("LLM_BASE_URL", "http://localhost:8000"),
             llm_model=values.get("LLM_MODEL", "gpt-4"),
             llm_timeout_ms=int(values.get("LLM_TIMEOUT_MS", "30000")),
             llm_max_retries=int(values.get("LLM_MAX_RETRIES", "3")),
-            max_parallel=int(values.get("FLOWFORGE_MAX_PARALLEL", "10")),
-            default_timeout_ms=int(values.get("FLOWFORGE_DEFAULT_TIMEOUT_MS", "30000")),
+            max_parallel=int(values.get("AO_MAX_PARALLEL", "10")),
+            default_timeout_ms=int(values.get("AO_DEFAULT_TIMEOUT_MS", "30000")),
             cache=cache_config,
             rate_limit=rate_limit_config,
             retry=retry_config,
@@ -522,8 +522,8 @@ class AgentOrchestratorConfig:
             otel_service_name=values.get("OTEL_SERVICE_NAME", ""),
             log_level=values.get("LOG_LEVEL", "INFO"),
             log_format=values.get("LOG_FORMAT", "text"),
-            debug_mode=values.get("FLOWFORGE_DEBUG", "false").lower() == "true",
-            debug_snapshot_dir=values.get("FLOWFORGE_DEBUG_SNAPSHOT_DIR", ".agentorchestrator/snapshots"),
+            debug_mode=values.get("AO_DEBUG", "false").lower() == "true",
+            debug_snapshot_dir=values.get("AO_DEBUG_SNAPSHOT_DIR", ".agentorchestrator/snapshots"),
         )
 
     def to_safe_dict(self) -> dict[str, Any]:

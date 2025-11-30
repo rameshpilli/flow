@@ -1,5 +1,5 @@
 # ============================================================
-# FlowForge - Makefile
+# AgentOrchestrator - Makefile
 # ============================================================
 #
 # Usage:
@@ -58,17 +58,17 @@ install-editable:
 
 lint:
 	@echo "Running linters..."
-	$(PYTHON) -m ruff check flowforge tests examples
-	$(PYTHON) -m black --check flowforge tests examples
+	$(PYTHON) -m ruff check agentorchestrator tests examples
+	$(PYTHON) -m black --check agentorchestrator tests examples
 
 format:
 	@echo "Formatting code..."
-	$(PYTHON) -m ruff check --fix flowforge tests examples
-	$(PYTHON) -m black flowforge tests examples
+	$(PYTHON) -m ruff check --fix agentorchestrator tests examples
+	$(PYTHON) -m black agentorchestrator tests examples
 
 type-check:
 	@echo "Running type checker..."
-	$(PYTHON) -m mypy flowforge
+	$(PYTHON) -m mypy agentorchestrator
 
 # ============================================================
 # TESTING
@@ -84,7 +84,7 @@ test-verbose:
 
 test-cov:
 	@echo "Running tests with coverage..."
-	$(PYTHON) -m pytest --cov=flowforge --cov-report=html --cov-report=term-missing
+	$(PYTHON) -m pytest --cov=agentorchestrator --cov-report=html --cov-report=term-missing
 
 test-fast:
 	@echo "Running tests (excluding slow)..."
@@ -106,7 +106,7 @@ ci: lint type-check test
 
 run:
 	@echo "Running CMPT chain test..."
-	$(PYTHON) -m flowforge.test_cmpt_chain
+	$(PYTHON) -m agentorchestrator.test_cmpt_chain
 
 run-quickstart:
 	@echo "Running quickstart example..."
@@ -282,8 +282,8 @@ upgrade:
 
 help:
 	@echo ""
-	@echo "FlowForge - DAG-based Chain Orchestration Framework"
-	@echo "===================================================="
+	@echo "AgentOrchestrator - DAG-based Chain Orchestration Framework"
+	@echo "============================================================"
 	@echo ""
 	@echo "Installation (using uv pip):"
 	@echo "  make install       Install production dependencies"
