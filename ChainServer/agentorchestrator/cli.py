@@ -89,6 +89,12 @@ def _import_module_from_path(module_name: str, file_path: Path) -> None:
         print(f"Warning: Could not import {file_path}: {e}")
 
 
+# =============================================================================
+# CHAIN EXECUTION COMMANDS
+# Commands: run, resume, runs, run-info, run-output
+# =============================================================================
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Run a chain with optional input data."""
     forge = get_orchestrator()
@@ -362,6 +368,12 @@ def cmd_run_output(args: argparse.Namespace) -> int:
         return 1
 
 
+# =============================================================================
+# INSPECTION & VALIDATION COMMANDS
+# Commands: check, list, graph, validate
+# =============================================================================
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     """Validate chain definitions."""
     forge = get_orchestrator()
@@ -390,6 +402,12 @@ def cmd_graph(args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"Error: {e}")
         return 1
+
+
+# =============================================================================
+# SCAFFOLDING & CODE GENERATION COMMANDS
+# Commands: new agent, new chain, new project
+# =============================================================================
 
 
 def cmd_new_agent(args: argparse.Namespace) -> int:
@@ -710,6 +728,12 @@ def cmd_new_project(args: argparse.Namespace) -> int:
         return 1
 
 
+# =============================================================================
+# HEALTH, DIAGNOSTICS & CONFIGURATION COMMANDS
+# Commands: health, doctor, version, config
+# =============================================================================
+
+
 def cmd_health(args: argparse.Namespace) -> int:
     """Check health status of AgentOrchestrator."""
     detailed = getattr(args, 'detailed', False)
@@ -886,7 +910,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     required_deps = [
         ("pydantic", "Data validation"),
         ("httpx", "HTTP client"),
-        ("aiohttp", "Async HTTP"),
     ]
 
     for dep_name, dep_desc in required_deps:
@@ -902,6 +925,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     # 3. Optional dependencies
     optional_deps = [
+        ("aiohttp", "Async HTTP client"),
         ("tiktoken", "Token counting"),
         ("langchain", "LLM chains"),
         ("opentelemetry", "Distributed tracing"),
@@ -959,7 +983,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     checks_total += 1
     try:
         from agentorchestrator.agents import base as agent_base  # noqa: F401
-        from agentorchestrator.core import context, dag, forge, registry  # noqa: F401
+        from agentorchestrator.core import context, dag, orchestrator, registry  # noqa: F401
         from agentorchestrator.middleware import base as mw_base  # noqa: F401
         print("  ✅ No circular import issues detected")
         checks_passed += 1
@@ -1052,6 +1076,12 @@ def cmd_config(args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"Error loading config: {e}")
         return 1
+
+
+# =============================================================================
+# DEVELOPMENT & DEBUGGING COMMANDS
+# Commands: dev, debug
+# =============================================================================
 
 
 def cmd_dev(args: argparse.Namespace) -> int:
@@ -1287,6 +1317,11 @@ def cmd_debug(args: argparse.Namespace) -> int:
 
         print(f"\n  Error snapshot saved: {error_file}")
         return 1
+
+
+# =============================================================================
+# CLI ARGUMENT PARSER & ENTRY POINT
+# =============================================================================
 
 
 def main():

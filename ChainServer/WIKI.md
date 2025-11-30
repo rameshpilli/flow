@@ -2321,7 +2321,10 @@ agentorchestrator/
 │
 ├── agents/
 │   ├── base.py              # BaseAgent, ResilientAgent
-│   └── data_agents.py       # Pre-built agents
+│   ├── sec_agent.py         # SECFilingAgent
+│   ├── news_agent.py        # NewsAgent
+│   ├── earnings_agent.py    # EarningsAgent
+│   └── data_agents.py       # Re-exports (backward compat)
 │
 ├── utils/
 │   ├── circuit_breaker.py   # Circuit breaker
