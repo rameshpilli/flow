@@ -27,6 +27,13 @@ from flowforge.core.registry import (
     get_chain_registry,
     get_step_registry,
 )
+from flowforge.core.validation import (
+    ContractValidationError,
+    is_pydantic_model,
+    validate_chain_input,
+    validate_input,
+    validate_output,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -678,6 +685,20 @@ class DAGExecutor:
                         else:
                             result = handler(ctx)
 
+                        # ══════════════════════════════════════════════════════
+                        #              OUTPUT CONTRACT VALIDATION
+                        # ══════════════════════════════════════════════════════
+                        if (
+                            node.spec.output_model
+                            and node.spec.validate_output
+                            and is_pydantic_model(node.spec.output_model)
+                        ):
+                            result = validate_output(
+                                step_name=node.name,
+                                output_model=node.spec.output_model,
+                                value=result,
+                            )
+
                         duration_ms = (time.perf_counter() - start_time) * 1000
 
                         step_result = StepResult(
@@ -909,9 +930,15 @@ class ChainRunner:
 
         request_id = request_id or str(uuid.uuid4())
 
+        # ══════════════════════════════════════════════════════════════════
+        #                    FAIL-FAST INPUT VALIDATION
+        # ══════════════════════════════════════════════════════════════════
+        # Validate input data against first step's input_model BEFORE execution
+        validated_data = self._validate_chain_input(chain_name, initial_data)
+
         ctx = ChainContext(
             request_id=request_id,
-            initial_data=initial_data,
+            initial_data=validated_data,
         )
 
         start_time = time.perf_counter()
@@ -925,6 +952,32 @@ class ChainRunner:
             # Check if any step failed (even in continue mode)
             if any(not r.success for r in ctx.results):
                 success = False
+        except ContractValidationError as e:
+            # Special handling for validation errors - more user-friendly
+            success = False
+            error_info = {
+                "type": "ContractValidationError",
+                "message": str(e),
+                "step_name": e.step_name,
+                "contract_type": e.contract_type,
+                "model_name": e.model_name,
+                "errors": e.errors,
+                "chain": chain_name,
+                "request_id": request_id,
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            }
+            logger.error(
+                f"Contract validation failed: {chain_name}",
+                extra={
+                    "otel.status_code": "ERROR",
+                    "exception.type": "ContractValidationError",
+                    "exception.message": str(e),
+                    "chain.name": chain_name,
+                    "request.id": request_id,
+                    "validation.step": e.step_name,
+                    "validation.contract_type": e.contract_type,
+                },
+            )
         except Exception as e:
             success = False
             # Capture structured error information for production debugging
@@ -985,6 +1038,54 @@ class ChainRunner:
 
         return result
 
+    def _validate_chain_input(
+        self,
+        chain_name: str,
+        initial_data: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """
+        Validate chain input against first step's input_model (fail-fast).
+
+        Looks at the first step in the chain that has an input_model defined,
+        and validates initial_data against it BEFORE execution starts.
+
+        Args:
+            chain_name: Name of the chain
+            initial_data: Initial data passed to launch()
+
+        Returns:
+            Validated/updated initial_data (may contain Pydantic model instances)
+
+        Raises:
+            ContractValidationError: If validation fails
+        """
+        # Get chain spec and find first step with input_model
+        chain_spec = self.executor.chain_registry.get_spec(chain_name)
+        if not chain_spec:
+            return initial_data
+
+        step_registry = self.executor.builder.step_registry
+
+        for step_name in chain_spec.steps:
+            step_spec = step_registry.get_spec(step_name)
+            if step_spec and step_spec.input_model and is_pydantic_model(step_spec.input_model):
+                # Found first step with input contract
+                input_key = step_spec.input_key or "request"
+                logger.debug(
+                    f"Validating chain input against {step_spec.input_model.__name__} "
+                    f"(step: {step_name}, key: {input_key})"
+                )
+                return validate_chain_input(
+                    chain_name=chain_name,
+                    first_step_name=step_name,
+                    input_model=step_spec.input_model,
+                    initial_data=initial_data,
+                    input_key=input_key,
+                )
+
+        # No input validation required
+        return initial_data
+
     def _capture_error(
         self,
         exception: Exception,
@@ -1001,6 +1102,10 @@ class ChainRunner:
         - Timestamp for correlation
         """
         import traceback as tb
+
+        # Special handling for ContractValidationError
+        if isinstance(exception, ContractValidationError):
+            return exception.to_dict()
 
         return {
             # OTel semantic conventions for exceptions

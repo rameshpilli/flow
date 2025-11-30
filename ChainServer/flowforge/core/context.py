@@ -523,14 +523,37 @@ class ChainContext:
         finally:
             self.exit_step(token)
 
-    def to_dict(self) -> dict[str, Any]:
-        """Export context as dictionary (for serialization)"""
+    def to_dict(
+        self,
+        serializer: "ContextSerializer | None" = None,
+        include_data: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Export context as dictionary (for serialization).
+
+        Args:
+            serializer: Optional serializer for redacting/truncating large fields.
+                       If None, uses default serialization (may be large!).
+            include_data: Whether to include context data (False for lightweight summary)
+
+        Returns:
+            JSON-serializable dictionary
+
+        Usage:
+            # Default (may include huge payloads)
+            ctx.to_dict()
+
+            # With serializer for safe logging/API responses
+            ctx.to_dict(serializer=TruncatingSerializer(max_size=1000))
+
+            # Lightweight summary only
+            ctx.to_dict(include_data=False)
+        """
         with self._sync_lock:
-            return {
+            result = {
                 "request_id": self.request_id,
                 "created_at": self.created_at.isoformat(),
                 "total_tokens": self.total_tokens,
-                "data": {k: v.value for k, v in self._store.items()},
                 "results": [
                     {
                         "step": r.step_name,
@@ -540,6 +563,16 @@ class ChainContext:
                     for r in self._results
                 ],
             }
+
+            if include_data:
+                if serializer:
+                    result["data"] = serializer.serialize_context_data(
+                        {k: v.value for k, v in self._store.items()}
+                    )
+                else:
+                    result["data"] = {k: v.value for k, v in self._store.items()}
+
+            return result
 
     def clone(self) -> "ChainContext":
         """Create a deep copy of the context (thread-safe)"""

@@ -12,17 +12,21 @@ A comprehensive guide to building data pipelines and AI chains with FlowForge.
 4. [CLI Usage](#cli-usage)
 5. [Core Concepts](#core-concepts)
 6. [Building Your First Chain](#building-your-first-chain)
-7. [Working with Agents](#working-with-agents)
-8. [Middleware System](#middleware-system)
-9. [Domain-Specific Summarization](#domain-specific-summarization)
-10. [Production Features](#production-features)
-11. [Configuration Management](#configuration-management)
-12. [Health Checks and Monitoring](#health-checks-and-monitoring)
-13. [Using the Built-in CMPT Chain](#using-the-built-in-cmpt-chain)
-14. [Adding Custom Agents (CapIQ Example)](#adding-custom-agents-capiq-example)
-15. [API Reference](#api-reference)
-16. [Best Practices](#best-practices)
-17. [Testing](#testing)
+7. [Chain Composition](#chain-composition)
+8. [Working with Agents](#working-with-agents)
+9. [Middleware System](#middleware-system)
+10. [Domain-Specific Summarization](#domain-specific-summarization)
+11. [Context Management (Large Payloads)](#context-management-large-payloads)
+12. [Input/Output Contracts](#inputoutput-contracts)
+13. [Resumability](#resumability)
+14. [Production Features](#production-features)
+15. [Configuration Management](#configuration-management)
+16. [Health Checks and Monitoring](#health-checks-and-monitoring)
+17. [Using the Built-in CMPT Chain](#using-the-built-in-cmpt-chain)
+18. [Adding Custom Agents (CapIQ Example)](#adding-custom-agents-capiq-example)
+19. [API Reference](#api-reference)
+20. [Best Practices](#best-practices)
+21. [Testing](#testing)
 
 ---
 
@@ -539,6 +543,136 @@ asyncio.run(main())
 
 ---
 
+## Chain Composition
+
+Chain composition allows you to use chains as steps in other chains, enabling modular and reusable pipeline design. This is powerful for building complex workflows from smaller, tested components.
+
+### Basic Composition
+
+Simply include a chain name in another chain's steps list:
+
+```python
+from flowforge import FlowForge, ChainContext
+from flowforge.core.context import ContextScope
+
+forge = FlowForge(name="composed_app")
+
+# ═══════════════════════════════════════════════════════════════════
+# Define reusable subchains
+# ═══════════════════════════════════════════════════════════════════
+
+# Data fetching chain
+@forge.step(name="fetch_users")
+async def fetch_users(ctx: ChainContext):
+    ctx.set("users", [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}], scope=ContextScope.CHAIN)
+    return {"fetched": 2}
+
+@forge.step(name="fetch_orders")
+async def fetch_orders(ctx: ChainContext):
+    ctx.set("orders", [{"user_id": 1, "amount": 100}], scope=ContextScope.CHAIN)
+    return {"fetched": 1}
+
+@forge.chain(name="data_fetching")
+class DataFetching:
+    steps = ["fetch_users", "fetch_orders"]
+
+# Data processing chain
+@forge.step(name="join_data")
+async def join_data(ctx: ChainContext):
+    users = ctx.get("users", [])
+    orders = ctx.get("orders", [])
+    # Join logic here
+    ctx.set("joined_data", {"users": len(users), "orders": len(orders)}, scope=ContextScope.CHAIN)
+    return {"joined": True}
+
+@forge.chain(name="data_processing")
+class DataProcessing:
+    steps = ["join_data"]
+
+# ═══════════════════════════════════════════════════════════════════
+# Compose into parent pipeline
+# ═══════════════════════════════════════════════════════════════════
+
+@forge.step(name="initialize")
+async def initialize(ctx: ChainContext):
+    ctx.set("config", {"mode": "production"}, scope=ContextScope.CHAIN)
+    return {"initialized": True}
+
+@forge.step(name="generate_report", deps=["__subchain__data_processing"])
+async def generate_report(ctx: ChainContext):
+    joined = ctx.get("joined_data")
+    return {"report": f"Processed {joined['users']} users with {joined['orders']} orders"}
+
+@forge.chain(name="full_etl_pipeline")
+class FullETLPipeline:
+    steps = [
+        "initialize",
+        "data_fetching",     # ← Subchain: runs fetch_users and fetch_orders
+        "data_processing",   # ← Subchain: runs join_data
+        "generate_report",
+    ]
+
+# Run the composed pipeline
+async def main():
+    result = await forge.launch("full_etl_pipeline")
+    print(result)
+
+asyncio.run(main())
+```
+
+### How Chain Composition Works
+
+1. **Automatic Detection**: When you include a chain name in the `steps` list, FlowForge automatically detects it and wraps it as a subchain step
+2. **Data Flow**: Parent context data flows into the subchain, and subchain outputs merge back into the parent
+3. **Error Propagation**: If a subchain fails, the error propagates to the parent chain
+4. **Dependency Handling**: Subchain wrapper steps are named `__subchain__<chain_name>` for dependency references
+
+### Explicit Subchain References
+
+For more control over subchain dependencies, use `forge.subchain()`:
+
+```python
+# Create explicit subchain reference with dependencies
+@forge.chain(name="controlled_pipeline")
+class ControlledPipeline:
+    steps = [
+        "init",
+        forge.subchain("data_fetching", deps=["init"]),
+        forge.subchain("data_processing", deps=["__subchain__data_fetching"]),
+        "finalize",
+    ]
+```
+
+### Nested Composition
+
+Chains can be nested multiple levels deep:
+
+```python
+# Level 3 (deepest)
+@forge.chain(name="inner_most")
+class InnerMost:
+    steps = ["step_a", "step_b"]
+
+# Level 2
+@forge.chain(name="middle")
+class Middle:
+    steps = ["setup", "inner_most", "teardown"]
+
+# Level 1 (top)
+@forge.chain(name="outer")
+class Outer:
+    steps = ["init", "middle", "report"]
+```
+
+### Use Cases
+
+- **ETL Pipelines**: Compose extraction, transformation, and loading phases
+- **Validation Workflows**: Run validation chains before processing
+- **Multi-Stage Processing**: Break complex workflows into manageable chunks
+- **Reusable Components**: Build a library of common chains to compose
+
+---
+
 ## Working with Agents
 
 ### Built-in Agent Types
@@ -776,6 +910,432 @@ summary = await summarizer.summarize(
     max_tokens=3000,
     content_type="sec_filing"  # Uses SEC-specific extraction prompts
 )
+```
+
+---
+
+## Context Management (Large Payloads)
+
+When processing financial data (SEC filings, news articles, earnings transcripts), individual step outputs can be massive (1-5MB+). FlowForge provides a **Redis Context Store** to keep chain context lightweight while **NEVER losing data**.
+
+### The Problem
+
+```
+Without Context Store:
+┌─────────────────────────────────────────────────────────────┐
+│  Chain Context (in-memory)                                   │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │  "sec_data" → 1.2MB of SEC filing data                  │ │
+│  │  "news_data" → 800KB of news articles                   │ │
+│  │  "earnings_data" → 500KB of earnings transcripts        │ │
+│  │  Total: 2.5MB in Python memory per request!             │ │
+│  └─────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### The Solution: Redis Context Store
+
+```
+With Context Store:
+┌─────────────────────────────────────────────────────────────┐
+│  Chain Context (lightweight, ~2KB)                           │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │  "sec_data" → ContextRef(                               │ │
+│  │      ref_id="ctx_abc", size=1.2MB, hash="a1b2c3",      │ │
+│  │      summary="10-K filing for AAPL, FY2024...",        │ │
+│  │      key_fields={revenue: 394B, net_income: 97B}       │ │
+│  │  )                                                      │ │
+│  └─────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Redis (same container, port 6380)               │
+│  ctx_abc → <1.2MB of SEC filing data - NEVER truncated>     │
+│  ctx_xyz → <800KB of news articles - FULL data preserved>   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Key Principles
+
+1. **NEVER lose data** - Full payloads preserved in Redis
+2. **NEVER blind-truncate** - Always keep hashes, sizes, and retrieval links
+3. **Context stays lightweight** - Only refs in ChainContext
+4. **Redis in same container** - Low latency, same network (different port)
+
+### Setting Up Redis Context Store
+
+```python
+from flowforge.core import RedisContextStore, ContextRef
+
+# Initialize store (Redis in same container, different port)
+store = RedisContextStore(
+    host="localhost",
+    port=6380,           # Different port than main Redis
+    key_prefix="flowforge:ctx:",
+    max_connections=10,
+)
+
+# Store large payload, get lightweight reference
+ref = await store.store(
+    key="sec_filing_aapl",
+    data=large_filing_data,
+    ttl_seconds=3600,
+    summary="10-K Annual Report for Apple Inc., FY2024",
+    key_fields={"revenue": "394.3B", "net_income": "97.0B", "ticker": "AAPL"},
+)
+
+# ref is ~500 bytes instead of 1.2MB
+# Contains: ref_id, size, hash, summary, key_fields
+
+# Later, retrieve full data (NEVER lost)
+full_data = await store.retrieve(ref)
+```
+
+### ContextRef Structure
+
+The `ContextRef` contains enough information for LLM context without retrieving full data:
+
+```python
+@dataclass
+class ContextRef:
+    ref_id: str              # Unique identifier for retrieval
+    size_bytes: int          # Exact size of stored data
+    content_hash: str        # SHA256 for integrity/dedup
+    summary: str             # Human-readable summary
+    key_fields: dict         # Critical extracted fields (numbers, dates)
+    item_count: int          # For lists: how many items
+    omitted_count: int       # If capped: how many omitted
+    source_step: str         # Which step produced this
+    source_agent: str        # Which agent fetched this
+```
+
+### Using the Offload Helper
+
+Conditionally offload based on size threshold:
+
+```python
+from flowforge.core import offload_to_redis
+
+@forge.step(name="fetch_sec_data")
+async def fetch_sec_data(ctx):
+    raw_filings = await fetch_large_filings()  # Could be 1.2MB
+
+    # Offload if large (>100KB), else keep in context
+    result = await offload_to_redis(
+        ctx,
+        key="sec_filings",
+        data=raw_filings,
+        store=ctx.get("_context_store"),
+        threshold_bytes=100_000,
+        summary="SEC 10-K filings for AAPL",
+        key_fields={"ticker": "AAPL", "filing_type": "10-K"},
+    )
+
+    ctx.set("sec_data", result)  # ContextRef or raw data
+    return {"sec_data": result}
+```
+
+### Offload Middleware (Automatic)
+
+For automatic offloading without manual code:
+
+```python
+from flowforge.middleware import OffloadMiddleware
+from flowforge.core import RedisContextStore
+
+store = RedisContextStore(host="localhost", port=6380)
+
+# Auto-offload large outputs to Redis
+forge.use_middleware(OffloadMiddleware(
+    store=store,
+    default_threshold_bytes=100_000,  # 100KB default
+    step_thresholds={
+        "fetch_sec_data": 50_000,     # More aggressive for SEC
+        "fetch_news_data": 100_000,
+    },
+    ttl_seconds=3600,
+))
+```
+
+The middleware automatically:
+- Checks step output size after each step
+- Extracts domain-aware key fields (SEC: ticker, revenue; News: sentiment, sources)
+- Generates domain-aware summaries
+- Stores large outputs in Redis
+- Replaces step output with ContextRef
+
+### Domain-Aware Key Field Extraction
+
+Built-in extractors for financial data types:
+
+| Data Type | Key Fields Extracted |
+|-----------|---------------------|
+| SEC Filings | ticker, cik, filing_type, filing_date, fiscal_year, revenue, net_income |
+| News | article_count, sentiment_distribution, sources, topics |
+| Earnings | ticker, eps, eps_surprise, revenue, fiscal_quarter, quarters_covered |
+
+### Token Manager with Auto-Offloading
+
+The TokenManager can automatically offload when token limits are exceeded:
+
+```python
+from flowforge.middleware import TokenManagerMiddleware, LangChainSummarizer
+from flowforge.core import RedisContextStore
+
+store = RedisContextStore(port=6380)
+summarizer = LangChainSummarizer(llm=my_llm)
+
+forge.use_middleware(TokenManagerMiddleware(
+    max_total_tokens=100000,
+    warning_threshold=0.8,
+    # Auto-summarize oldest steps when over limit
+    auto_summarize=True,
+    summarizer=summarizer,
+    summarize_oldest_first=True,
+    # Auto-offload large payloads when over limit
+    auto_offload=True,
+    context_store=store,
+    offload_threshold_bytes=50000,
+))
+```
+
+When token limit is exceeded:
+1. Large payloads are offloaded to Redis (oldest first)
+2. Oldest steps are summarized to reduce token count
+3. Original data preserved in Redis, only refs in context
+
+### Per-Source Caps with Metadata
+
+When combining data from multiple agents, cap per-source while tracking what was omitted:
+
+```python
+from flowforge.middleware import cap_items_with_metadata, cap_per_source
+
+# Cap items while preserving metadata
+articles, meta = cap_items_with_metadata(
+    news_articles,
+    max_items=10,
+    sort_key=lambda x: x.get("relevance_score", 0),
+    sort_reverse=True,  # Keep highest relevance
+)
+# meta = {
+#     "original_count": 150,
+#     "kept_count": 10,
+#     "omitted_count": 140,
+#     "was_capped": True,
+#     "omitted_sample_keys": ["title", "date", "source"],
+#     "omitted_date_range": {"earliest": "2024-01-01", "latest": "2024-12-31"}
+# }
+
+# Cap per source for balanced representation
+articles, meta = cap_per_source(
+    all_articles,
+    source_field="agent",
+    max_per_source=10,
+    total_max=30,
+)
+# meta = {
+#     "original_count": 100,
+#     "kept_count": 30,
+#     "sources": ["news_agent", "sec_agent", "earnings_agent"],
+#     "per_source_counts": {"news_agent": 50, "sec_agent": 30, "earnings_agent": 20},
+#     "omitted_per_source": {"news_agent": 40, "sec_agent": 20, "earnings_agent": 10}
+# }
+```
+
+### Context Serializers
+
+Safe serialization for logs and API responses:
+
+```python
+from flowforge.core import (
+    TruncatingSerializer,
+    RedactingSerializer,
+    ContextRefSerializer,
+    CompositeSerializer,
+    create_safe_serializer,
+)
+
+# For API responses (truncate large fields, preserve refs)
+serializer = TruncatingSerializer(max_field_size=1000, preserve_context_refs=True)
+safe_output = ctx.to_dict(serializer=serializer)
+
+# For logs (redact secrets + truncate)
+serializer = CompositeSerializer([
+    RedactingSerializer(patterns=["password", "token", "api_key"]),
+    TruncatingSerializer(max_field_size=500),
+])
+log_safe = ctx.to_dict(serializer=serializer)
+
+# Built-in safe serializer
+serializer = create_safe_serializer(max_field_size=1000, redact_sensitive=True)
+```
+
+---
+
+## Input/Output Contracts
+
+FlowForge supports Pydantic model validation for fail-fast type checking.
+
+### Defining Contracts
+
+```python
+from pydantic import BaseModel, Field
+from typing import Optional
+
+class CompanyInfoInput(BaseModel):
+    """Input contract for company analysis steps"""
+    ticker: str = Field(..., min_length=1, max_length=10)
+    fiscal_year: int = Field(..., ge=2000, le=2100)
+    include_estimates: bool = True
+
+class FinancialMetricsOutput(BaseModel):
+    """Output contract for financial metrics"""
+    revenue: float = Field(..., ge=0)
+    net_income: float
+    eps: float
+    pe_ratio: Optional[float] = None
+
+@forge.step(
+    name="analyze_financials",
+    input_model=CompanyInfoInput,
+    input_key="company_info",      # Key in context to validate
+    output_model=FinancialMetricsOutput,
+    validate_output=True,          # Enable output validation
+)
+async def analyze_financials(ctx):
+    # Input is validated BEFORE step runs
+    # If validation fails, ContractValidationError is raised
+    company = ctx.get("company_info")
+
+    # Process...
+    result = {
+        "revenue": 394.3e9,
+        "net_income": 97.0e9,
+        "eps": 6.13,
+        "pe_ratio": 28.5,
+    }
+
+    # Output is validated AFTER step completes
+    return result
+```
+
+### Handling Validation Errors
+
+```python
+from flowforge.core import ContractValidationError
+
+try:
+    result = await forge.run("my_chain", initial_data={
+        "company_info": {"ticker": "", "fiscal_year": 2024}  # Invalid: empty ticker
+    })
+except ContractValidationError as e:
+    print(f"Validation failed at step: {e.step_name}")
+    print(f"Contract type: {e.contract_type}")  # "input" or "output"
+    print(f"Model: {e.model_name}")
+    print(f"Errors: {e.errors}")
+    # [{"loc": ["ticker"], "msg": "String should have at least 1 character", ...}]
+```
+
+### Chain-Level Input Validation
+
+Validate chain inputs before any step runs:
+
+```python
+from pydantic import BaseModel
+
+class ChainInput(BaseModel):
+    corporate_company_name: str
+    meeting_datetime: str
+    rbc_employee_email: str
+
+@forge.chain(
+    name="cmpt_chain",
+    input_model=ChainInput,  # Validated before chain starts
+)
+class CMPTChain:
+    steps = ["context_builder", "content_prioritization", "response_builder"]
+```
+
+---
+
+## Resumability
+
+FlowForge supports checkpointing and resuming chains for fault tolerance.
+
+### Setting Up Run Store
+
+```python
+from flowforge.core import FileRunStore, InMemoryRunStore, ResumableChainRunner
+
+# For development (in-memory, lost on restart)
+run_store = InMemoryRunStore()
+
+# For production (persists to disk)
+run_store = FileRunStore(base_dir="./checkpoints")
+
+# Create resumable runner
+runner = ResumableChainRunner(forge, run_store)
+```
+
+### Running with Checkpoints
+
+```python
+# Run chain with automatic checkpointing
+result = await runner.run(
+    "my_chain",
+    initial_data={"company": "Apple"},
+)
+
+# Each step completion creates a checkpoint
+# Checkpoints include: step results, context state, metadata
+```
+
+### Resuming from Failure
+
+```python
+# If chain fails at step 3...
+run_id = result["run_id"]
+
+# Resume from the failed step
+result = await runner.resume(run_id=run_id)
+
+# Or retry a specific step
+result = await runner.retry_step(run_id=run_id, step_name="fetch_sec_data")
+```
+
+### Checkpoint Structure
+
+```python
+@dataclass
+class RunCheckpoint:
+    run_id: str
+    chain_name: str
+    status: str  # "running", "completed", "failed", "cancelled"
+    current_step: Optional[str]
+    completed_steps: List[str]
+    step_results: Dict[str, StepCheckpoint]
+    context_snapshot: Dict[str, Any]
+    started_at: datetime
+    updated_at: datetime
+    error: Optional[str]
+```
+
+### Listing and Managing Runs
+
+```python
+# List all runs
+runs = await run_store.list_runs()
+
+# List runs for a specific chain
+runs = await run_store.list_runs(chain_name="my_chain")
+
+# Get a specific run
+checkpoint = await run_store.get_run(run_id)
+
+# Delete old runs
+await run_store.delete_run(run_id)
 ```
 
 ---
@@ -2147,6 +2707,124 @@ forge.check()  # Raises if issues found
 
 # Then run
 result = await forge.run("my_chain")
+```
+
+---
+
+## Testing
+
+FlowForge includes a comprehensive test suite and utilities for testing your own chains.
+
+### Running the Test Suite
+
+```bash
+# Install test dependencies
+pip install pytest pytest-asyncio
+
+# Run all tests
+pytest tests/ -v
+
+# Run specific test categories
+pytest tests/unit/ -v           # Unit tests
+pytest tests/integration/ -v    # Integration tests
+
+# Run with coverage
+pytest tests/ --cov=flowforge --cov-report=html
+```
+
+### Test Suite Structure
+
+```
+flowforge/tests/
+├── conftest.py                      # Shared fixtures
+├── unit/
+│   ├── test_dag.py                  # DAG builder & executor tests
+│   ├── test_context.py              # Context & scope tests
+│   ├── test_registry.py             # Registry tests
+│   ├── test_middleware.py           # Middleware tests
+│   └── test_chain_composition.py    # Chain composition tests
+└── integration/
+    └── test_chains.py               # End-to-end chain tests
+```
+
+### Testing with Isolated Registries
+
+Always use isolated registries for testing to prevent cross-test contamination:
+
+```python
+import pytest
+from flowforge import FlowForge, ChainContext
+
+class TestMyChain:
+    @pytest.fixture
+    def forge(self):
+        """Create an isolated forge for each test."""
+        return FlowForge.temp_registries("test")
+
+    @pytest.mark.asyncio
+    async def test_chain_execution(self, forge):
+        @forge.step(name="step1")
+        async def step1(ctx):
+            return {"result": "ok"}
+
+        @forge.chain(name="test_chain")
+        class TestChain:
+            steps = ["step1"]
+
+        result = await forge.launch("test_chain")
+        assert result["success"] is True
+```
+
+### Testing Chain Composition
+
+```python
+@pytest.mark.asyncio
+async def test_composed_chain(self, forge):
+    # Define inner chain
+    @forge.step(name="inner")
+    async def inner(ctx):
+        ctx.set("inner_ran", True)
+        return {"inner": True}
+
+    @forge.chain(name="inner_chain")
+    class InnerChain:
+        steps = ["inner"]
+
+    # Define outer chain that uses inner
+    @forge.step(name="outer", deps=["__subchain__inner_chain"])
+    async def outer(ctx):
+        return {"saw_inner": ctx.get("inner_ran")}
+
+    @forge.chain(name="outer_chain")
+    class OuterChain:
+        steps = ["inner_chain", "outer"]
+
+    result = await forge.launch("outer_chain")
+    assert result["success"] is True
+```
+
+### Using Test Fixtures
+
+The `conftest.py` provides useful fixtures:
+
+```python
+from flowforge.tests.conftest import (
+    MockAgent,
+    FailingAgent,
+    TrackingMiddleware,
+    create_simple_step,
+    create_failing_step,
+)
+
+def test_with_mock_agent(forge, mock_agent):
+    # mock_agent.fetch_count tracks calls
+    result = await mock_agent.fetch("test query")
+    assert mock_agent.fetch_count == 1
+
+def test_middleware_tracking(forge, tracking_middleware):
+    forge.use(tracking_middleware)
+    # tracking_middleware.before_calls contains step names
+    # tracking_middleware.after_calls contains (step_name, success) tuples
 ```
 
 ---

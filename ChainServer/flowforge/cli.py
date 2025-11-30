@@ -6,13 +6,20 @@ Command-line interface for running chains, validating definitions, and scaffoldi
 
 Usage:
     flowforge run <chain_name> [--company "Apple"] [--data '{"key": "value"}']
+    flowforge run <chain_name> --resumable  # Run with checkpointing
+    flowforge resume <run_id>               # Resume failed run
+    flowforge runs [--chain <name>] [--status failed]  # List runs
+    flowforge run-info <run_id>             # Show run details
+    flowforge run-output <run_id>           # Get partial outputs
     flowforge check [<chain_name>]
     flowforge list
     flowforge graph <chain_name> [--format mermaid]
     flowforge new agent <name>
     flowforge new chain <name>
     flowforge dev [--watch]
-    flowforge health
+    flowforge debug <chain_name>            # Debug with snapshots
+    flowforge health                        # Basic health check
+    flowforge health --detailed             # Full dependency health check
     flowforge version
 """
 
@@ -109,20 +116,38 @@ def cmd_run(args: argparse.Namespace) -> int:
                 key, value = item.split("=", 1)
                 data[key] = value
 
+    # Check if resumable mode requested
+    resumable = getattr(args, 'resumable', False)
+    run_id = getattr(args, 'run_id', None)
+
     print(f"\n{'═' * 60}")
     print(f"  Running: {args.chain_name}")
+    if resumable:
+        print(f"  Mode: Resumable (checkpoints enabled)")
+        if run_id:
+            print(f"  Run ID: {run_id}")
     print(f"  Input: {json.dumps(data, indent=2) if data else '{}'}")
     print(f"{'═' * 60}\n")
 
     start_time = time.perf_counter()
 
     try:
-        result = asyncio.run(forge.launch(args.chain_name, data))
+        if resumable:
+            # Run with checkpointing
+            result = asyncio.run(forge.launch_resumable(args.chain_name, data, run_id))
+            run_id = result.get("run_id", "unknown")
+        else:
+            result = asyncio.run(forge.launch(args.chain_name, data))
+
         duration = (time.perf_counter() - start_time) * 1000
 
         print(f"\n{'═' * 60}")
         print(f"  Result: {'SUCCESS' if result.get('success') else 'FAILED'}")
         print(f"  Duration: {duration:.2f}ms")
+        if resumable:
+            print(f"  Run ID: {result.get('run_id', 'unknown')}")
+            if not result.get('success'):
+                print(f"  Resume with: flowforge resume {result.get('run_id')}")
         print(f"{'═' * 60}\n")
 
         if args.output:
@@ -139,6 +164,202 @@ def cmd_run(args: argparse.Namespace) -> int:
         if args.verbose:
             import traceback
             traceback.print_exc()
+        return 1
+
+
+def cmd_resume(args: argparse.Namespace) -> int:
+    """Resume a failed or partial chain run."""
+    forge = get_forge()
+
+    print(f"\n{'═' * 60}")
+    print(f"  Resuming Run: {args.run_id}")
+    print(f"{'═' * 60}\n")
+
+    start_time = time.perf_counter()
+
+    try:
+        result = asyncio.run(forge.resume(args.run_id, skip_completed=not args.rerun_all))
+        duration = (time.perf_counter() - start_time) * 1000
+
+        print(f"\n{'═' * 60}")
+        print(f"  Result: {'SUCCESS' if result.get('success') else 'FAILED'}")
+        print(f"  Duration: {duration:.2f}ms")
+        print(f"  Chain: {result.get('chain_name', 'unknown')}")
+        print(f"{'═' * 60}\n")
+
+        if args.output:
+            with open(args.output, "w") as f:
+                json.dump(result, f, indent=2, default=str)
+            print(f"Output saved to: {args.output}")
+        elif args.verbose:
+            print(json.dumps(result, indent=2, default=str))
+
+        return 0 if result.get("success") else 1
+
+    except ValueError as e:
+        print(f"\nError: {e}")
+        return 1
+    except Exception as e:
+        print(f"\nError: {e}")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        return 1
+
+
+def cmd_runs(args: argparse.Namespace) -> int:
+    """List chain runs with optional filters."""
+    forge = get_forge()
+
+    chain_name = getattr(args, 'chain_name', None)
+    status = getattr(args, 'status', None)
+    limit = getattr(args, 'limit', 20)
+
+    try:
+        runs = asyncio.run(forge.list_runs(
+            chain_name=chain_name,
+            status=status,
+            limit=limit,
+        ))
+
+        if not runs:
+            print("\nNo runs found matching criteria.\n")
+            return 0
+
+        print(f"\n{'═' * 80}")
+        print(f"  Chain Runs" + (f" ({chain_name})" if chain_name else ""))
+        print(f"{'═' * 80}\n")
+
+        # Header
+        print(f"  {'Run ID':<20} {'Chain':<20} {'Status':<10} {'Steps':<12} {'Created':<20}")
+        print(f"  {'-' * 20} {'-' * 20} {'-' * 10} {'-' * 12} {'-' * 20}")
+
+        for run in runs:
+            run_id = run.run_id[:18] if len(run.run_id) > 18 else run.run_id
+            chain = run.chain_name[:18] if len(run.chain_name) > 18 else run.chain_name
+            steps = f"{run.completed_steps}/{run.total_steps}"
+            created = run.created_at[:19] if run.created_at else "unknown"
+
+            # Status coloring
+            status_colors = {
+                "completed": "\033[92m",  # Green
+                "partial": "\033[93m",     # Yellow
+                "failed": "\033[91m",      # Red
+                "running": "\033[94m",     # Blue
+            }
+            reset = "\033[0m"
+            color = status_colors.get(run.status, "")
+
+            print(f"  {run_id:<20} {chain:<20} {color}{run.status:<10}{reset} {steps:<12} {created:<20}")
+
+        print(f"\n{'═' * 80}")
+        print(f"  Total: {len(runs)} runs")
+        if args.resumable_only:
+            print(f"  (showing resumable runs only)")
+        print(f"{'═' * 80}\n")
+
+        return 0
+
+    except Exception as e:
+        print(f"\nError listing runs: {e}")
+        if getattr(args, 'verbose', False):
+            import traceback
+            traceback.print_exc()
+        return 1
+
+
+def cmd_run_info(args: argparse.Namespace) -> int:
+    """Show detailed information about a specific run."""
+    forge = get_forge()
+
+    try:
+        run = asyncio.run(forge.get_run(args.run_id))
+
+        if run is None:
+            print(f"\nRun not found: {args.run_id}\n")
+            return 1
+
+        print(f"\n{'═' * 60}")
+        print(f"  Run Details: {run.run_id}")
+        print(f"{'═' * 60}\n")
+
+        print(f"  Chain: {run.chain_name}")
+        print(f"  Status: {run.status}")
+        print(f"  Created: {run.created_at}")
+        print(f"  Updated: {run.updated_at}")
+        if run.completed_at:
+            print(f"  Completed: {run.completed_at}")
+        print(f"  Duration: {run.total_duration_ms:.2f}ms")
+        print(f"  Steps: {run.completed_steps}/{run.total_steps}")
+        if run.resumable:
+            print(f"  Resumable: Yes")
+            print(f"  Last Completed: {run.last_completed_step or 'None'}")
+
+        if run.steps:
+            print(f"\n  Steps:")
+            for step in run.steps:
+                status_icon = {
+                    "completed": "✓",
+                    "failed": "✗",
+                    "skipped": "○",
+                    "pending": "·",
+                    "running": "▸",
+                }.get(step.status, "?")
+                print(f"    {status_icon} {step.step_name}: {step.status} ({step.duration_ms:.2f}ms)")
+                if step.error:
+                    print(f"      Error: {step.error}")
+
+        print(f"\n{'═' * 60}\n")
+
+        if args.json:
+            print(json.dumps(run.to_dict(), indent=2, default=str))
+
+        return 0
+
+    except Exception as e:
+        print(f"\nError getting run info: {e}")
+        return 1
+
+
+def cmd_run_output(args: argparse.Namespace) -> int:
+    """Get partial outputs from a run."""
+    forge = get_forge()
+
+    try:
+        result = asyncio.run(forge.get_partial_output(args.run_id))
+
+        if not result:
+            print(f"\nNo outputs found for run: {args.run_id}\n")
+            return 1
+
+        print(f"\n{'═' * 60}")
+        print(f"  Partial Outputs: {result.get('run_id', args.run_id)}")
+        print(f"  Chain: {result.get('chain_name', 'unknown')}")
+        print(f"  Status: {result.get('status', 'unknown')}")
+        print(f"  Completed: {result.get('completed_steps', 0)}/{result.get('total_steps', 0)} steps")
+        print(f"{'═' * 60}\n")
+
+        outputs = result.get("outputs", {})
+        for step_name, output in outputs.items():
+            print(f"  {step_name}:")
+            if isinstance(output, dict):
+                for key, value in list(output.items())[:5]:  # Show first 5 keys
+                    value_str = str(value)[:80] + "..." if len(str(value)) > 80 else str(value)
+                    print(f"    {key}: {value_str}")
+            else:
+                print(f"    {str(output)[:100]}...")
+            print()
+
+        if args.json:
+            print(json.dumps(result, indent=2, default=str))
+
+        return 0
+
+    except ValueError as e:
+        print(f"\nError: {e}")
+        return 1
+    except Exception as e:
+        print(f"\nError getting outputs: {e}")
         return 1
 
 
@@ -371,8 +592,194 @@ if __name__ == "__main__":
     return 0
 
 
+def cmd_validate(args: argparse.Namespace) -> int:
+    """Validate chain definition (dry-run mode)."""
+    from flowforge.core.versioning import validate_chain
+
+    chain_name = args.chain_name
+    dry_run = not getattr(args, "execute", False)
+
+    # Parse sample data if provided
+    sample_data = None
+    if args.data:
+        try:
+            sample_data = json.loads(args.data)
+        except json.JSONDecodeError as e:
+            print(f"Error parsing --data JSON: {e}")
+            return 1
+
+    print(f"\n{'=' * 60}")
+    print(f"  Validating: {chain_name}")
+    print(f"  Mode: {'Dry Run' if dry_run else 'Full Validation'}")
+    print(f"{'=' * 60}\n")
+
+    try:
+        result = asyncio.run(validate_chain(
+            chain_name,
+            dry_run=dry_run,
+            check_agents=args.check_agents,
+            check_resources=args.check_resources,
+            sample_data=sample_data,
+        ))
+
+        # Print results
+        status_color = "\033[92m" if result.valid else "\033[91m"
+        reset = "\033[0m"
+
+        print(f"  Status: {status_color}{'VALID' if result.valid else 'INVALID'}{reset}")
+        print(f"  Steps validated: {result.steps_validated}")
+        print(f"  Agents checked: {len(result.agents_checked)}")
+        print(f"  Resources checked: {len(result.resources_checked)}")
+
+        if result.errors:
+            print(f"\n  \033[91mErrors:\033[0m")
+            for error in result.errors:
+                print(f"    - {error}")
+
+        if result.warnings:
+            print(f"\n  \033[93mWarnings:\033[0m")
+            for warning in result.warnings:
+                print(f"    - {warning}")
+
+        print(f"\n{'=' * 60}\n")
+
+        if args.json:
+            print(json.dumps(result.to_dict(), indent=2))
+
+        return 0 if result.valid else 1
+
+    except Exception as e:
+        print(f"Error during validation: {e}")
+        return 1
+
+
+def cmd_new_project(args: argparse.Namespace) -> int:
+    """Generate a complete FlowForge project."""
+    from flowforge.templates.scaffolding import generate_project, to_snake_case
+
+    name = args.name
+    output_dir = Path(args.output_dir or ".")
+    description = args.description or ""
+    snake_name = to_snake_case(name)
+
+    print(f"\n{'=' * 60}")
+    print(f"  Creating FlowForge Project: {name}")
+    print(f"{'=' * 60}\n")
+
+    try:
+        created_files = generate_project(
+            name=name,
+            output_dir=output_dir,
+            description=description,
+            with_api=not args.no_api,
+            with_docker=not args.no_docker,
+            with_ci=not args.no_ci,
+            template=args.template,
+        )
+
+        print(f"  Created {len(created_files)} files:\n")
+        for f in created_files[:15]:
+            print(f"    {f}")
+        if len(created_files) > 15:
+            print(f"    ... and {len(created_files) - 15} more")
+
+        print(f"\n{'=' * 60}")
+        print(f"  Project created at: {output_dir / snake_name}")
+        print(f"{'=' * 60}\n")
+
+        print("  Next steps:\n")
+        print(f"    cd {snake_name}")
+        print("    pip install -e '.[dev]'")
+        print("    flowforge check")
+        print("    flowforge run hello_chain --data '{\"message\": \"Hello\"}'\n")
+
+        if not args.no_api:
+            print("  To start the API server:\n")
+            print("    pip install -e '.[api]'")
+            print(f"    uvicorn src.{snake_name}.api:app --reload\n")
+
+        if not args.no_docker:
+            print("  To run with Docker:\n")
+            print("    docker-compose up\n")
+
+        return 0
+
+    except Exception as e:
+        print(f"Error creating project: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
 def cmd_health(args: argparse.Namespace) -> int:
     """Check health status of FlowForge."""
+    detailed = getattr(args, 'detailed', False)
+
+    # Use the comprehensive health aggregator for detailed checks
+    if detailed:
+        from flowforge.utils.health import run_health_checks, HealthStatus
+
+        try:
+            result = asyncio.run(run_health_checks(
+                include_external=True,
+                timeout_seconds=getattr(args, 'timeout', 10.0),
+            ))
+
+            # Colorize status
+            status_colors = {
+                HealthStatus.HEALTHY: "\033[92m",    # Green
+                HealthStatus.DEGRADED: "\033[93m",   # Yellow
+                HealthStatus.UNHEALTHY: "\033[91m",  # Red
+                HealthStatus.UNKNOWN: "\033[90m",    # Gray
+            }
+            reset = "\033[0m"
+            color = status_colors.get(result.status, "")
+
+            print(f"\n{'═' * 60}")
+            print(f"  FlowForge Health Check (Detailed)")
+            print(f"{'═' * 60}\n")
+
+            print(f"  Status: {color}{result.status.value.upper()}{reset}")
+            print(f"  Version: {result.version}")
+            print(f"  Environment: {result.environment}")
+            print(f"  Total Latency: {result.total_latency_ms:.2f}ms")
+
+            print(f"\n  Summary:")
+            print(f"    Healthy:   {result.healthy_count}")
+            print(f"    Degraded:  {result.degraded_count}")
+            print(f"    Unhealthy: {result.unhealthy_count}")
+
+            print(f"\n  Components:")
+            for comp in result.components:
+                comp_color = status_colors.get(comp.status, "")
+                icon = {
+                    HealthStatus.HEALTHY: "✓",
+                    HealthStatus.DEGRADED: "!",
+                    HealthStatus.UNHEALTHY: "✗",
+                    HealthStatus.UNKNOWN: "?",
+                }.get(comp.status, "?")
+                print(f"    {comp_color}{icon}{reset} {comp.name}: {comp.status.value} ({comp.latency_ms:.1f}ms)")
+                if comp.message:
+                    print(f"      {comp.message}")
+                if args.verbose and comp.details:
+                    for key, value in comp.details.items():
+                        print(f"      {key}: {value}")
+
+            print(f"\n{'═' * 60}\n")
+
+            if args.json:
+                print(json.dumps(result.to_dict(), indent=2, default=str))
+
+            return 0 if result.status == HealthStatus.HEALTHY else 1
+
+        except Exception as e:
+            print(f"Error running detailed health check: {e}")
+            if getattr(args, 'verbose', False):
+                import traceback
+                traceback.print_exc()
+            return 1
+
+    # Basic health check (quick, no external dependencies)
     from flowforge.utils.config import get_health
 
     try:
@@ -402,7 +809,9 @@ def cmd_health(args: argparse.Namespace) -> int:
                 check_color = "\033[92m" if passed else "\033[91m"
                 print(f"    {check_color}{icon}{reset} {check}")
 
-        print(f"\n{'═' * 50}\n")
+        print(f"\n{'═' * 50}")
+        print(f"  Tip: Use --detailed for full dependency checks")
+        print(f"{'═' * 50}\n")
 
         if args.json:
             print(json.dumps(health.to_dict(), indent=2))
@@ -709,12 +1118,18 @@ def main():
         epilog="""
 Examples:
   flowforge run cmpt_chain --company "Apple Inc"
+  flowforge run cmpt_chain --resumable --company "Apple Inc"  # With checkpointing
+  flowforge resume run_abc123                                  # Resume failed run
+  flowforge runs --status failed                               # List failed runs
+  flowforge run-info run_abc123                                # Show run details
+  flowforge run-output run_abc123                              # Get partial outputs
   flowforge check
   flowforge list
   flowforge graph cmpt_chain --format mermaid
   flowforge new agent MyCustomAgent
   flowforge new chain DataPipeline
   flowforge dev --watch
+  flowforge debug cmpt_chain --company "Apple Inc"
         """,
     )
 
@@ -740,9 +1155,73 @@ Examples:
         "--verbose", "-v", action="store_true", help="Verbose output"
     )
     run_parser.add_argument(
+        "--resumable", "-r", action="store_true",
+        help="Enable checkpointing for resume capability"
+    )
+    run_parser.add_argument(
+        "--run-id", help="Custom run ID (for resumable runs)"
+    )
+    run_parser.add_argument(
         "extra", nargs="*", help="Additional key=value pairs"
     )
     run_parser.set_defaults(func=cmd_run)
+
+    # resume command
+    resume_parser = subparsers.add_parser("resume", help="Resume a failed or partial run")
+    resume_parser.add_argument("run_id", help="ID of the run to resume")
+    resume_parser.add_argument(
+        "--rerun-all", action="store_true",
+        help="Rerun all steps (don't skip completed)"
+    )
+    resume_parser.add_argument(
+        "--output", "-o", help="Output file for results (JSON)"
+    )
+    resume_parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Verbose output"
+    )
+    resume_parser.set_defaults(func=cmd_resume)
+
+    # runs command (list runs)
+    runs_parser = subparsers.add_parser("runs", help="List chain runs")
+    runs_parser.add_argument(
+        "--chain", "-c", dest="chain_name",
+        help="Filter by chain name"
+    )
+    runs_parser.add_argument(
+        "--status", "-s",
+        choices=["completed", "failed", "partial", "running"],
+        help="Filter by status"
+    )
+    runs_parser.add_argument(
+        "--limit", "-n", type=int, default=20,
+        help="Maximum runs to show (default: 20)"
+    )
+    runs_parser.add_argument(
+        "--resumable-only", action="store_true",
+        help="Show only resumable runs"
+    )
+    runs_parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Verbose output"
+    )
+    runs_parser.set_defaults(func=cmd_runs)
+
+    # run-info command
+    run_info_parser = subparsers.add_parser("run-info", help="Show details of a specific run")
+    run_info_parser.add_argument("run_id", help="ID of the run")
+    run_info_parser.add_argument(
+        "--json", "-j", action="store_true", help="Output as JSON"
+    )
+    run_info_parser.set_defaults(func=cmd_run_info)
+
+    # run-output command
+    run_output_parser = subparsers.add_parser(
+        "run-output", help="Get partial outputs from a run"
+    )
+    run_output_parser.add_argument("run_id", help="ID of the run")
+    run_output_parser.add_argument(
+        "--json", "-j", action="store_true", help="Output as JSON"
+    )
+    run_output_parser.set_defaults(func=cmd_run_output)
 
     # check command
     check_parser = subparsers.add_parser("check", help="Validate definitions")
@@ -790,6 +1269,40 @@ Examples:
     )
     new_chain_parser.set_defaults(func=cmd_new_chain)
 
+    # new project
+    new_project_parser = new_subparsers.add_parser(
+        "project",
+        help="Create a complete FlowForge project"
+    )
+    new_project_parser.add_argument("name", help="Project name (e.g., my_app)")
+    new_project_parser.add_argument(
+        "--output-dir", "-o",
+        help="Output directory (default: current)"
+    )
+    new_project_parser.add_argument(
+        "--description", "-d",
+        help="Project description"
+    )
+    new_project_parser.add_argument(
+        "--no-api", action="store_true",
+        help="Skip FastAPI server"
+    )
+    new_project_parser.add_argument(
+        "--no-docker", action="store_true",
+        help="Skip Docker files"
+    )
+    new_project_parser.add_argument(
+        "--no-ci", action="store_true",
+        help="Skip CI/CD configuration"
+    )
+    new_project_parser.add_argument(
+        "--template", "-t",
+        choices=["default", "cmpt"],
+        default="default",
+        help="Project template (default: default)"
+    )
+    new_project_parser.set_defaults(func=cmd_new_project)
+
     # dev command
     dev_parser = subparsers.add_parser("dev", help="Development mode with hot reload")
     dev_parser.add_argument(
@@ -797,10 +1310,48 @@ Examples:
     )
     dev_parser.set_defaults(func=cmd_dev)
 
+    # validate command (dry-run mode)
+    validate_parser = subparsers.add_parser(
+        "validate",
+        help="Validate chain (dry-run mode)"
+    )
+    validate_parser.add_argument("chain_name", help="Chain to validate")
+    validate_parser.add_argument(
+        "--execute", "-e", action="store_true",
+        help="Actually execute validation (not just dry-run)"
+    )
+    validate_parser.add_argument(
+        "--check-agents", action="store_true", default=True,
+        help="Check agent availability"
+    )
+    validate_parser.add_argument(
+        "--check-resources", action="store_true", default=True,
+        help="Check resource registration"
+    )
+    validate_parser.add_argument(
+        "--data", "-d",
+        help="Sample JSON input data for contract validation"
+    )
+    validate_parser.add_argument(
+        "--json", "-j", action="store_true", help="Output as JSON"
+    )
+    validate_parser.set_defaults(func=cmd_validate)
+
     # health command
     health_parser = subparsers.add_parser("health", help="Check health status")
     health_parser.add_argument(
+        "--detailed", "-d", action="store_true",
+        help="Run detailed checks including external dependencies (Redis, LLM)"
+    )
+    health_parser.add_argument(
+        "--timeout", "-t", type=float, default=10.0,
+        help="Timeout for each health check in seconds (default: 10)"
+    )
+    health_parser.add_argument(
         "--json", "-j", action="store_true", help="Output as JSON"
+    )
+    health_parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Show detailed component info"
     )
     health_parser.set_defaults(func=cmd_health)
 

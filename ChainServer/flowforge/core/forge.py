@@ -10,8 +10,15 @@ import logging
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from flowforge.core.context import ChainContext, ContextManager
+from flowforge.core.context import ChainContext, ContextManager, ContextScope
 from flowforge.core.dag import ChainRunner, DAGExecutor, DebugCallback
+from flowforge.core.run_store import (
+    FileRunStore,
+    InMemoryRunStore,
+    ResumableChainRunner,
+    RunCheckpoint,
+    RunStore,
+)
 from flowforge.core.registry import (
     AgentRegistry,
     ChainRegistry,
@@ -100,6 +107,9 @@ class FlowForge:
         agent_registry: AgentRegistry | None = None,
         step_registry: StepRegistry | None = None,
         chain_registry: ChainRegistry | None = None,
+        # Resumability support
+        run_store: RunStore | None = None,
+        checkpoint_dir: str | None = None,
     ):
         """
         Initialize a FlowForge instance.
@@ -113,6 +123,8 @@ class FlowForge:
             agent_registry: Custom agent registry (overrides isolated flag)
             step_registry: Custom step registry (overrides isolated flag)
             chain_registry: Custom chain registry (overrides isolated flag)
+            run_store: Custom run store for checkpointing (overrides checkpoint_dir)
+            checkpoint_dir: Directory for file-based checkpoints (default: in-memory)
 
         Example:
             # Use isolated registries (default, prevents state bleed)
@@ -167,6 +179,21 @@ class FlowForge:
         self._middleware: list[Any] = []
         self._resource_manager = ResourceManager() if isolated else get_resource_manager()
         self._context_manager = ContextManager()
+
+        # Run Store for Resumability
+        if run_store:
+            self._run_store = run_store
+        elif checkpoint_dir:
+            self._run_store = FileRunStore(checkpoint_dir)
+        else:
+            self._run_store = InMemoryRunStore()
+
+        # Create resumable runner using our executor
+        self._resumable_runner = ResumableChainRunner(
+            store=self._run_store,
+            executor=self._executor,
+            auto_checkpoint=True,
+        )
 
         logger.info(f"FlowForge initialized: {name} v{version} (isolated={isolated})")
 
@@ -301,6 +328,7 @@ class FlowForge:
         *,
         name: str | None = None,
         deps: list[Any] | None = None,
+        dependencies: list[Any] | None = None,  # Alias for deps
         produces: list[str] | None = None,
         resources: list[str] | None = None,
         description: str = "",
@@ -308,6 +336,10 @@ class FlowForge:
         timeout_ms: int = 30000,
         retry: int = 0,
         max_concurrency: int | None = None,
+        input_model: type | None = None,
+        output_model: type | None = None,
+        input_key: str | None = None,
+        validate_output: bool = True,
     ) -> F | Callable[[F], F]:
         """
         Register a chain step (similar to Dagster's @asset).
@@ -317,6 +349,12 @@ class FlowForge:
         2. Function parameters (automatic resolution)
 
         Resources can be injected via the 'resources' parameter.
+
+        Input/Output Contracts:
+        - input_model: Pydantic model to validate input data (fail-fast on bad payloads)
+        - output_model: Pydantic model to validate step output
+        - input_key: Context key to validate (default: "request")
+        - validate_output: Whether to validate output (default: True)
 
         Usage:
             @fg.step
@@ -339,16 +377,30 @@ class FlowForge:
                 # db and llm are automatically injected
                 data = await db.query("...")
                 summary = await llm.generate("...")
+
+            # With input/output contracts (fail-fast validation)
+            @fg.step(
+                input_model=ChainRequest,
+                output_model=ContextBuilderOutput,
+                input_key="request",
+            )
+            async def context_builder(ctx) -> ContextBuilderOutput:
+                request = ctx.get("request")  # Already validated as ChainRequest
+                # ... process ...
+                return output  # Validated against ContextBuilderOutput
         """
         resource_manager = self._resource_manager
+
+        # Support both 'deps' and 'dependencies' (alias)
+        effective_deps = deps or dependencies
 
         def decorator(func: F) -> F:
             step_name = name or func.__name__
 
             # Resolve dependencies - can be functions or strings
             resolved_deps = []
-            if deps:
-                for dep in deps:
+            if effective_deps:
+                for dep in effective_deps:
                     if callable(dep) and hasattr(dep, "_fg_name"):
                         resolved_deps.append(dep._fg_name)
                     elif isinstance(dep, str):
@@ -394,12 +446,18 @@ class FlowForge:
                 timeout_ms=timeout_ms,
                 retry_count=retry,  # Explicit retry count
                 max_concurrency=max_concurrency,  # Dedicated concurrency field
+                input_model=input_model,  # Input contract
+                output_model=output_model,  # Output contract
+                input_key=input_key,  # Key to validate
+                validate_output=validate_output,  # Whether to validate output
             )
             func._fg_name = step_name
             func._fg_type = "step"
             func._fg_deps = resolved_deps
             func._fg_produces = produces or []
             func._fg_resources = resources or []
+            func._fg_input_model = input_model
+            func._fg_output_model = output_model
             return func
 
         if func is not None:
@@ -417,6 +475,10 @@ class FlowForge:
         """
         Register a chain (similar to Dagster's @job).
 
+        Supports chain composition - you can include other chains as steps,
+        and they will be automatically expanded into wrapper steps that
+        execute the subchain.
+
         Usage:
             @fg.chain
             class MeetingPrepChain:
@@ -426,19 +488,42 @@ class FlowForge:
             @fg.chain
             class MyChain:
                 steps = [extract_company, fetch_data]
+
+            # Chain composition - include other chains as steps
+            @fg.chain
+            class ParentChain:
+                steps = [
+                    "preprocessing_step",
+                    "child_chain",       # Another chain as a step
+                    "postprocessing_step",
+                ]
         """
 
         def decorator(cls: type[T]) -> type[T]:
             chain_name = name or cls.__name__
 
-            # Resolve steps - can be functions or strings
+            # Resolve steps - can be functions, strings, or chain references
             raw_steps = getattr(cls, "steps", [])
             resolved_steps = []
             for s in raw_steps:
                 if callable(s) and hasattr(s, "_fg_name"):
-                    resolved_steps.append(s._fg_name)
+                    # Check if it's a chain or step
+                    if getattr(s, "_fg_type", None) == "chain":
+                        # It's a chain - create a wrapper step
+                        subchain_name = s._fg_name
+                        wrapper_step_name = self._create_subchain_step(
+                            subchain_name, chain_name
+                        )
+                        resolved_steps.append(wrapper_step_name)
+                    else:
+                        resolved_steps.append(s._fg_name)
                 elif isinstance(s, str):
-                    resolved_steps.append(s)
+                    # Check if string refers to a chain
+                    if self._chain_registry.is_chain(s):
+                        wrapper_step_name = self._create_subchain_step(s, chain_name)
+                        resolved_steps.append(wrapper_step_name)
+                    else:
+                        resolved_steps.append(s)
                 else:
                     resolved_steps.append(str(s))
 
@@ -463,6 +548,166 @@ class FlowForge:
         if cls is not None:
             return decorator(cls)
         return decorator
+
+    def _create_subchain_step(
+        self,
+        subchain_name: str,
+        parent_chain_name: str,
+    ) -> str:
+        """
+        Create a wrapper step that executes a subchain.
+
+        This enables chain composition by wrapping chains as steps.
+
+        Args:
+            subchain_name: Name of the chain to execute as a step
+            parent_chain_name: Name of the parent chain (for namespacing)
+
+        Returns:
+            Name of the created wrapper step
+        """
+        wrapper_step_name = f"__subchain__{subchain_name}"
+
+        # Check if wrapper already exists
+        if self._step_registry.has(wrapper_step_name):
+            return wrapper_step_name
+
+        # Capture forge reference for closure
+        forge = self
+
+        async def subchain_handler(ctx: ChainContext) -> dict[str, Any]:
+            """
+            Execute the subchain and merge results into parent context.
+
+            The subchain receives a copy of the current context data and
+            its outputs are merged back into the parent context.
+            """
+            # Prepare data for subchain - pass current context data
+            subchain_data = {}
+            for key in ctx.keys():
+                subchain_data[key] = ctx.get(key)
+
+            # Execute the subchain
+            logger.info(f"Executing subchain '{subchain_name}' from parent '{parent_chain_name}'")
+            result = await forge.launch(
+                subchain_name,
+                data=subchain_data,
+                validate_input=False,  # Parent already validated
+            )
+
+            # Merge subchain context back into parent
+            if result.get("success") and "context" in result:
+                subchain_ctx_data = result["context"].get("data", {})
+                for key, value in subchain_ctx_data.items():
+                    # Don't overwrite keys that were in original context
+                    if not ctx.has(key) or key not in subchain_data:
+                        ctx.set(key, value, scope=ContextScope.CHAIN)
+
+            # Store subchain result for reference
+            ctx.set(
+                f"_subchain_{subchain_name}_result",
+                result,
+                scope=ContextScope.CHAIN,
+            )
+
+            if not result.get("success"):
+                error_info = result.get("error", {})
+                error_msg = error_info.get("message", "Subchain failed") if isinstance(error_info, dict) else str(error_info)
+                raise RuntimeError(f"Subchain '{subchain_name}' failed: {error_msg}")
+
+            return {
+                "subchain": subchain_name,
+                "success": result["success"],
+                "steps_executed": len(result.get("results", [])),
+            }
+
+        # Set name for debugging
+        subchain_handler.__name__ = wrapper_step_name
+        subchain_handler.__doc__ = f"Wrapper step that executes the '{subchain_name}' chain"
+
+        # Register the wrapper step
+        self._step_registry.register_step(
+            name=wrapper_step_name,
+            handler=subchain_handler,
+            description=f"Executes subchain: {subchain_name}",
+            group="__subchains__",
+        )
+
+        logger.debug(f"Created subchain wrapper step: {wrapper_step_name}")
+        return wrapper_step_name
+
+    def subchain(
+        self,
+        chain_name: str,
+        *,
+        deps: list[Any] | None = None,
+        produces: list[str] | None = None,
+    ) -> str:
+        """
+        Create a step that executes another chain (explicit subchain reference).
+
+        Use this when you want to explicitly include a chain as a step with
+        custom dependencies.
+
+        Args:
+            chain_name: Name of the chain to execute as a step
+            deps: Dependencies for this subchain step
+            produces: What this subchain produces
+
+        Returns:
+            Name of the wrapper step (for use in chain definitions)
+
+        Usage:
+            @fg.chain
+            class ParentChain:
+                steps = [
+                    "setup_step",
+                    fg.subchain("data_processing_chain", deps=["setup_step"]),
+                    "finalize_step",
+                ]
+
+        Example with dependencies:
+            # Define inner chain
+            @fg.chain
+            class DataProcessing:
+                steps = ["fetch", "transform", "validate"]
+
+            # Use in parent chain with explicit dependencies
+            @fg.chain
+            class Pipeline:
+                steps = [
+                    "init",
+                    fg.subchain("DataProcessing", deps=["init"]),
+                    "report",
+                ]
+        """
+        if not self._chain_registry.is_chain(chain_name):
+            raise ValueError(f"Chain '{chain_name}' not found. Register it first.")
+
+        # Create the wrapper step
+        wrapper_name = self._create_subchain_step(chain_name, "__explicit__")
+
+        # Update dependencies if provided
+        if deps:
+            spec = self._step_registry.get_spec(wrapper_name)
+            if spec:
+                resolved_deps = []
+                for dep in deps:
+                    if callable(dep) and hasattr(dep, "_fg_name"):
+                        resolved_deps.append(dep._fg_name)
+                    elif isinstance(dep, str):
+                        resolved_deps.append(dep)
+                    else:
+                        resolved_deps.append(str(dep))
+                spec.dependencies = resolved_deps
+
+        # Update produces if provided
+        if produces:
+            spec = self._step_registry.get_spec(wrapper_name)
+            if spec:
+                spec.produces = produces
+
+        return wrapper_name
 
     # ══════════════════════════════════════════════════════════════════
     #                    PROGRAMMATIC REGISTRATION
@@ -819,6 +1064,7 @@ class FlowForge:
         data: dict[str, Any] | None = None,
         request_id: str | None = None,
         debug_callback: DebugCallback | None = None,
+        validate_input: bool = True,
     ) -> dict[str, Any]:
         """
         Execute a chain (like 'dg launch').
@@ -830,6 +1076,8 @@ class FlowForge:
             debug_callback: Optional callback invoked after each step for debugging.
                             Receives (ctx, step_name, result_dict) arguments.
                             Useful for CLI debug mode and per-step context snapshots.
+            validate_input: If True (default), validate input against chain's
+                           input_model before execution starts (fail-fast).
 
         Usage:
             result = await fg.launch("meeting_prep", {"company": "Apple"})
@@ -838,13 +1086,83 @@ class FlowForge:
             def on_step(ctx, step_name, result):
                 print(f"Step {step_name}: {result}")
             result = await fg.launch("meeting_prep", data, debug_callback=on_step)
+
+        Raises:
+            ContractValidationError: If validate_input=True and input fails validation
         """
+        # Chain-level input validation (fail-fast)
+        if validate_input and data is not None:
+            data = self._validate_chain_input(chain_name, data)
+
         return await self._runner.run(
             chain_name=chain_name,
             initial_data=data,
             request_id=request_id,
             debug_callback=debug_callback,
         )
+
+    def _validate_chain_input(
+        self,
+        chain_name: str,
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Validate chain input data before execution starts.
+
+        Checks for input_model on:
+        1. The chain definition itself
+        2. The first step in the chain
+
+        Returns:
+            Validated data (possibly with validated model instances)
+
+        Raises:
+            ContractValidationError: If validation fails
+        """
+        from flowforge.core.validation import validate_chain_input, is_pydantic_model
+
+        # Get chain spec
+        chain_spec = self._chain_registry.get_spec(chain_name)
+        if not chain_spec:
+            return data  # No chain spec, skip validation
+
+        # Check for chain-level input_model
+        chain_input_model = getattr(chain_spec, "input_model", None)
+        chain_input_key = getattr(chain_spec, "input_key", "request")
+
+        if is_pydantic_model(chain_input_model):
+            logger.debug(f"Validating chain '{chain_name}' input against {chain_input_model.__name__}")
+            first_step = chain_spec.steps[0] if chain_spec.steps else chain_name
+            first_step_name = first_step if isinstance(first_step, str) else getattr(first_step, "_fg_name", str(first_step))
+            return validate_chain_input(
+                chain_name=chain_name,
+                first_step_name=first_step_name,
+                input_model=chain_input_model,
+                initial_data=data,
+                input_key=chain_input_key,
+            )
+
+        # Check first step for input_model
+        if chain_spec.steps:
+            first_step = chain_spec.steps[0]
+            first_step_name = first_step if isinstance(first_step, str) else getattr(first_step, "_fg_name", str(first_step))
+            step_spec = self._step_registry.get_spec(first_step_name)
+
+            if step_spec:
+                step_input_model = getattr(step_spec, "input_model", None)
+                step_input_key = getattr(step_spec, "input_key", "request")
+
+                if is_pydantic_model(step_input_model):
+                    logger.debug(f"Validating step '{first_step_name}' input against {step_input_model.__name__}")
+                    return validate_chain_input(
+                        chain_name=chain_name,
+                        first_step_name=first_step_name,
+                        input_model=step_input_model,
+                        initial_data=data,
+                        input_key=step_input_key,
+                    )
+
+        return data  # No validation configured
 
     def launch_sync(
         self,
@@ -901,6 +1219,163 @@ class FlowForge:
     ) -> dict[str, Any]:
         """Alias for launch_sync() - backward compatibility"""
         return self.launch_sync(chain_name, initial_data, cleanup=cleanup, **kwargs)
+
+    # ══════════════════════════════════════════════════════════════════
+    #                    RESUMABILITY
+    # ══════════════════════════════════════════════════════════════════
+
+    async def launch_resumable(
+        self,
+        chain_name: str,
+        data: dict[str, Any] | None = None,
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Execute a chain with automatic checkpointing for resumability.
+
+        If the chain fails partway through, you can resume it later using
+        resume() or retry_failed().
+
+        Args:
+            chain_name: Name of the chain to execute
+            data: Initial context data
+            run_id: Optional run ID (auto-generated if not provided)
+
+        Returns:
+            Result dict containing:
+            - run_id: ID for resuming this run
+            - success: Whether chain completed successfully
+            - status: "completed", "partial", or "failed"
+            - checkpoint: Full checkpoint data
+
+        Usage:
+            # Run with checkpointing
+            result = await forge.launch_resumable("my_chain", {"company": "Apple"})
+
+            # If it fails, resume later
+            result = await forge.resume(result["run_id"])
+        """
+        return await self._resumable_runner.run(
+            chain_name=chain_name,
+            initial_data=data,
+            run_id=run_id,
+        )
+
+    async def resume(
+        self,
+        run_id: str,
+        skip_completed: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Resume a failed or partial chain run.
+
+        Loads the checkpoint from run_store and continues execution
+        from where it left off.
+
+        Args:
+            run_id: ID of the run to resume
+            skip_completed: If True, skip steps that already completed
+
+        Returns:
+            Result dict with updated checkpoint
+
+        Usage:
+            # Resume a failed run
+            result = await forge.resume("run_abc123")
+        """
+        return await self._resumable_runner.resume(
+            run_id=run_id,
+            skip_completed=skip_completed,
+        )
+
+    async def retry_failed(self, run_id: str) -> dict[str, Any]:
+        """
+        Re-run only the failed steps from a previous run.
+
+        Args:
+            run_id: ID of the run with failed steps
+
+        Returns:
+            Result dict with updated checkpoint
+        """
+        return await self._resumable_runner.retry_failed(run_id)
+
+    async def get_partial_output(self, run_id: str) -> dict[str, Any]:
+        """
+        Get partial outputs from a failed or incomplete run.
+
+        Useful for retrieving results from steps that completed
+        before a failure.
+
+        Args:
+            run_id: ID of the run
+
+        Returns:
+            Dict with outputs from completed steps
+        """
+        return await self._resumable_runner.get_partial_output(run_id)
+
+    async def list_resumable_runs(
+        self,
+        chain_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        List runs that can be resumed.
+
+        Args:
+            chain_name: Filter by chain name (optional)
+
+        Returns:
+            List of resumable run summaries
+        """
+        return await self._resumable_runner.list_resumable(chain_name)
+
+    async def get_run(self, run_id: str) -> RunCheckpoint | None:
+        """
+        Get a run checkpoint by ID.
+
+        Args:
+            run_id: ID of the run
+
+        Returns:
+            RunCheckpoint or None if not found
+        """
+        return await self._run_store.load_checkpoint(run_id)
+
+    async def list_runs(
+        self,
+        chain_name: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[RunCheckpoint]:
+        """
+        List run checkpoints with optional filters.
+
+        Args:
+            chain_name: Filter by chain name
+            status: Filter by status ("completed", "failed", "partial")
+            limit: Maximum number of runs to return
+
+        Returns:
+            List of RunCheckpoint objects
+        """
+        return await self._run_store.list_runs(
+            chain_name=chain_name,
+            status=status,
+            limit=limit,
+        )
+
+    async def delete_run(self, run_id: str) -> bool:
+        """
+        Delete a run checkpoint.
+
+        Args:
+            run_id: ID of the run to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        return await self._run_store.delete_checkpoint(run_id)
 
     # ══════════════════════════════════════════════════════════════════
     #                         DISCOVERY

@@ -13,13 +13,20 @@ Usage:
     # Validate the chain
     fg.check()
 
-    # Run the chain
-    result = await fg.launch("cmpt_chain", {
+    # Run the chain (with resumability by default)
+    result = await fg.launch_resumable("cmpt_chain", {
         "request": {
             "corporate_company_name": "Apple Inc",
             "meeting_datetime": "2025-01-15T10:00:00Z",
         }
     })
+
+    # If it fails, resume from where it left off
+    if not result["success"]:
+        result = await fg.resume(result["run_id"])
+
+    # Get partial outputs from a failed run
+    partial = await fg.get_partial_output(result["run_id"])
 """
 
 import logging
@@ -33,6 +40,7 @@ from flowforge.services import (
     ContextBuilderService,
     ResponseBuilderService,
 )
+from flowforge.utils.tracing import ChainTracer, trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +104,17 @@ def create_cmpt_chain(
         else:
             request = ChainRequest(**request_data)
 
-        # Execute the service
-        svc = fg.get_resource("context_builder_service")
-        output = await svc.execute(request)
+        # Execute the service with tracing
+        with trace_span(
+            "step.context_builder",
+            attributes={
+                "chain.name": "cmpt_chain",
+                "step.name": "context_builder",
+                "company": request.corporate_company_name or "unknown",
+            },
+        ):
+            svc = fg.get_resource("context_builder_service")
+            output = await svc.execute(request)
 
         # Store output in context
         ctx.set("context_builder_output", output)
@@ -131,9 +147,17 @@ def create_cmpt_chain(
         # Get context builder output
         context_output = ctx.get("context_builder_output")
 
-        # Execute the service
-        svc = fg.get_resource("content_prioritization_service")
-        output = await svc.execute(context_output)
+        # Execute the service with tracing
+        with trace_span(
+            "step.content_prioritization",
+            attributes={
+                "chain.name": "cmpt_chain",
+                "step.name": "content_prioritization",
+                "company": getattr(context_output, "company_name", "unknown"),
+            },
+        ):
+            svc = fg.get_resource("content_prioritization_service")
+            output = await svc.execute(context_output)
 
         # Store output in context
         ctx.set("content_prioritization_output", output)
@@ -170,9 +194,18 @@ def create_cmpt_chain(
         context_output = ctx.get("context_builder_output")
         prioritization_output = ctx.get("content_prioritization_output")
 
-        # Execute the service
-        svc = fg.get_resource("response_builder_service")
-        output = await svc.execute(context_output, prioritization_output)
+        # Execute the service with tracing
+        with trace_span(
+            "step.response_builder",
+            attributes={
+                "chain.name": "cmpt_chain",
+                "step.name": "response_builder",
+                "company": getattr(context_output, "company_name", "unknown"),
+                "subquery_count": len(getattr(prioritization_output, "subqueries", [])),
+            },
+        ):
+            svc = fg.get_resource("response_builder_service")
+            output = await svc.execute(context_output, prioritization_output)
 
         # Store outputs in context
         ctx.set("response_builder_output", output)
@@ -239,11 +272,18 @@ class CMPTChain:
         # Validate
         chain.check()
 
-        # Run
+        # Run (with resumability by default)
         result = await chain.run(
             corporate_company_name="Apple Inc",
             meeting_datetime="2025-01-15T10:00:00Z",
         )
+
+        # If failed, resume from last checkpoint
+        if not result.success:
+            result = await chain.resume(chain.last_run_id)
+
+        # Get partial outputs from a failed run
+        partial = await chain.get_partial_output(chain.last_run_id)
     """
 
     def __init__(
@@ -251,15 +291,29 @@ class CMPTChain:
         context_builder_config: dict[str, Any] | None = None,
         content_prioritization_config: dict[str, Any] | None = None,
         response_builder_config: dict[str, Any] | None = None,
+        checkpoint_dir: str | None = None,
     ):
-        """Initialize the CMPT chain with FlowForge"""
-        self.fg = FlowForge(name="cmpt", version="1.0.0")
+        """
+        Initialize the CMPT chain with FlowForge.
+
+        Args:
+            context_builder_config: Config for ContextBuilderService
+            content_prioritization_config: Config for ContentPrioritizationService
+            response_builder_config: Config for ResponseBuilderService
+            checkpoint_dir: Directory for persistent checkpoints (default: in-memory)
+        """
+        self.fg = FlowForge(
+            name="cmpt",
+            version="1.0.0",
+            checkpoint_dir=checkpoint_dir,
+        )
         create_cmpt_chain(
             self.fg,
             context_builder_config,
             content_prioritization_config,
             response_builder_config,
         )
+        self.last_run_id: str | None = None
 
     def check(self) -> dict[str, Any]:
         """Validate the chain definition"""
@@ -280,10 +334,12 @@ class CMPTChain:
         rbc_employee_email: str | None = None,
         corporate_client_email: str | None = None,
         corporate_client_names: str | None = None,
+        resumable: bool = True,
+        run_id: str | None = None,
         **kwargs,
     ) -> ChainResponse:
         """
-        Run the CMPT chain.
+        Run the CMPT chain with automatic checkpointing.
 
         Args:
             corporate_company_name: Name of the company for the meeting
@@ -291,9 +347,18 @@ class CMPTChain:
             rbc_employee_email: RBC employee email
             corporate_client_email: Client email
             corporate_client_names: Comma-separated client names
+            resumable: Enable checkpointing for resume capability (default: True)
+            run_id: Optional custom run ID for tracking
 
         Returns:
             ChainResponse with prepared content
+
+        Note:
+            If the chain fails, you can resume using:
+                result = await chain.resume(chain.last_run_id)
+
+            Or get partial outputs:
+                partial = await chain.get_partial_output(chain.last_run_id)
         """
         request = ChainRequest(
             corporate_company_name=corporate_company_name,
@@ -304,7 +369,15 @@ class CMPTChain:
             **kwargs,
         )
 
-        result = await self.fg.launch("cmpt_chain", {"request": request.model_dump()})
+        if resumable:
+            result = await self.fg.launch_resumable(
+                "cmpt_chain",
+                {"request": request.model_dump()},
+                run_id=run_id,
+            )
+            self.last_run_id = result.get("run_id")
+        else:
+            result = await self.fg.launch("cmpt_chain", {"request": request.model_dump()})
 
         # The result structure: {"context": {"data": {...}, ...}, "results": [...]}
         context_data = result.get("context", {}).get("data", {})
@@ -341,3 +414,71 @@ class CMPTChain:
         import asyncio
 
         return asyncio.run(self.run(**kwargs))
+
+    async def resume(self, run_id: str | None = None) -> ChainResponse:
+        """
+        Resume a failed or partial chain run.
+
+        Args:
+            run_id: ID of the run to resume (defaults to last_run_id)
+
+        Returns:
+            ChainResponse with completed content
+        """
+        target_run_id = run_id or self.last_run_id
+        if not target_run_id:
+            raise ValueError("No run_id provided and no previous run to resume")
+
+        result = await self.fg.resume(target_run_id)
+        self.last_run_id = result.get("run_id", target_run_id)
+
+        # Extract response from result
+        context_data = result.get("context", {}).get("data", {})
+        final_response_data = context_data.get("final_response")
+
+        if isinstance(final_response_data, ChainResponse):
+            return final_response_data
+        elif isinstance(final_response_data, dict):
+            return ChainResponse(**final_response_data)
+        else:
+            return ChainResponse(
+                success=result.get("success", False),
+                error=result.get("error"),
+            )
+
+    async def get_partial_output(self, run_id: str | None = None) -> dict[str, Any]:
+        """
+        Get partial outputs from a failed or incomplete run.
+
+        Args:
+            run_id: ID of the run (defaults to last_run_id)
+
+        Returns:
+            Dict with outputs from completed steps
+        """
+        target_run_id = run_id or self.last_run_id
+        if not target_run_id:
+            raise ValueError("No run_id provided and no previous run")
+
+        return await self.fg.get_partial_output(target_run_id)
+
+    async def list_runs(
+        self,
+        status: str | None = None,
+        limit: int = 20,
+    ) -> list:
+        """
+        List CMPT chain runs.
+
+        Args:
+            status: Filter by status ("completed", "failed", "partial")
+            limit: Maximum runs to return
+
+        Returns:
+            List of run checkpoints
+        """
+        return await self.fg.list_runs(
+            chain_name="cmpt_chain",
+            status=status,
+            limit=limit,
+        )

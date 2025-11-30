@@ -50,11 +50,20 @@ class ContextBuilderService:
     DEFAULT_NEWS_LOOKBACK_DAYS: int = 30
     DEFAULT_FILING_QUARTERS: int = 8
 
+    # Default per-extractor time budgets (seconds)
+    DEFAULT_EXTRACTOR_TIMEOUTS: dict[str, float] = {
+        "firm": 10.0,           # Company lookup
+        "temporal": 5.0,        # Earnings calendar
+        "rbc_persona": 5.0,     # LDAP lookup
+        "client_persona": 8.0,  # ZoomInfo lookup
+    }
+
     def __init__(
         self,
         http_timeout: float = 20.0,
         company_match_url: str | None = None,
         earnings_calendar_url: str | None = None,
+        extractor_timeouts: dict[str, float] | None = None,
     ):
         """
         Initialize the Context Builder service.
@@ -63,10 +72,17 @@ class ContextBuilderService:
             http_timeout: HTTP request timeout in seconds
             company_match_url: URL for company matching service
             earnings_calendar_url: URL for earnings calendar service
+            extractor_timeouts: Per-extractor time budgets in seconds
+                Keys: "firm", "temporal", "rbc_persona", "client_persona"
+                If not specified, uses DEFAULT_EXTRACTOR_TIMEOUTS
         """
         self.http_timeout = http_timeout
         self.company_match_url = company_match_url
         self.earnings_calendar_url = earnings_calendar_url
+        self.extractor_timeouts = {
+            **self.DEFAULT_EXTRACTOR_TIMEOUTS,
+            **(extractor_timeouts or {}),
+        }
 
     async def execute(
         self,
@@ -120,14 +136,25 @@ class ContextBuilderService:
                 )
             )
 
-        # Execute parallel tasks
+        # Execute parallel tasks with per-extractor timeouts
         if tasks:
-            results = await asyncio.gather(*[task[1] for task in tasks], return_exceptions=True)
+            # Wrap each task with asyncio.wait_for for timeout protection
+            wrapped_tasks = []
+            for name, coro in tasks:
+                timeout = self.extractor_timeouts.get(name, 10.0)
+                wrapped_tasks.append((name, asyncio.wait_for(coro, timeout=timeout)))
 
-            for (name, _), result in zip(tasks, results):
-                task_end = datetime.now()
+            results = await asyncio.gather(
+                *[task[1] for task in wrapped_tasks],
+                return_exceptions=True,
+            )
 
-                if isinstance(result, Exception):
+            for (name, _), result in zip(wrapped_tasks, results):
+                if isinstance(result, asyncio.TimeoutError):
+                    timeout = self.extractor_timeouts.get(name, 10.0)
+                    errors[name] = f"Extractor timed out after {timeout}s"
+                    logger.error(f"Extractor {name} timed out after {timeout}s")
+                elif isinstance(result, Exception):
                     errors[name] = str(result)
                     logger.error(f"Extractor {name} failed: {result}")
                 else:
@@ -158,12 +185,16 @@ class ContextBuilderService:
         # 2. Temporal Context Extractor (needs ticker or company name)
         # Can be skipped if user provides fiscal quarter override
         if not overrides.skip_earnings_calendar_api and (request.corporate_company_name or ticker):
+            temporal_timeout = self.extractor_timeouts.get("temporal", 5.0)
             try:
                 temporal_start = datetime.now()
-                temporal_data, temporal_error = await self._extract_temporal_context(
-                    company_name=request.corporate_company_name,
-                    ticker=ticker,
-                    meeting_datetime=request.meeting_datetime,
+                temporal_data, temporal_error = await asyncio.wait_for(
+                    self._extract_temporal_context(
+                        company_name=request.corporate_company_name,
+                        ticker=ticker,
+                        meeting_datetime=request.meeting_datetime,
+                    ),
+                    timeout=temporal_timeout,
                 )
                 timing["temporal"] = (datetime.now() - temporal_start).total_seconds() * 1000
 
@@ -171,6 +202,9 @@ class ContextBuilderService:
                     errors["temporal"] = temporal_error
                 else:
                     output.temporal_context = temporal_data
+            except asyncio.TimeoutError:
+                errors["temporal"] = f"Extractor timed out after {temporal_timeout}s"
+                logger.error(f"Temporal extractor timed out after {temporal_timeout}s")
             except Exception as e:
                 errors["temporal"] = str(e)
                 logger.error(f"Temporal extractor failed: {e}")

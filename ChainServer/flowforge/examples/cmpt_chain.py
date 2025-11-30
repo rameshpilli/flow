@@ -142,6 +142,43 @@ class StrategicAnalysisResponse(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#                     STEP INPUT/OUTPUT CONTRACT MODELS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class CompanyInfoOutput(BaseModel):
+    """Output contract for extract_company_info step"""
+    company_name: str
+    ticker_symbol: Optional[str] = None
+    company_type: str = "PUB"  # PUB, PRIV, SUB
+    sector: Optional[str] = None
+    industry: Optional[str] = None
+
+
+class ContextBuilderOutput(BaseModel):
+    """Output contract for build_context step"""
+    company_info: Optional[dict] = None
+    temporal_context: Optional[dict] = None
+    meeting_date: str
+    company_name: Optional[str] = None
+    company_type: str = "PUB"
+
+
+class SourcePrioritiesOutput(BaseModel):
+    """Output contract for temporal_source_prioritizer step"""
+    earnings_agent: int = Field(default=20, ge=0, le=100)
+    news_agent: int = Field(default=60, ge=0, le=100)
+    sec_agent: int = Field(default=20, ge=0, le=100)
+
+
+class CMPTFinalResponse(BaseModel):
+    """Final output contract for the CMPT chain"""
+    context_builder: dict
+    content_prioritization: dict
+    response_builder_and_generator: dict
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #                           GRID CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -372,15 +409,32 @@ class EarningsAgent:
     produces=["company_info"],
     description="Extract company information from external API",
     timeout_ms=30000,
-    group="context_builder"
+    group="context_builder",
+    # ═══════════════════════════════════════════════════════════════════════════
+    #                    INPUT/OUTPUT CONTRACTS (FAIL-FAST)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # input_model validates data BEFORE chain starts - fail fast on bad payloads
+    input_model=CMPTRequest,
+    input_key="request",  # Key in initial_data to validate
+    # output_model validates step output - ensures downstream steps get expected data
+    output_model=CompanyInfoOutput,
+    validate_output=False,  # Set to True in production for strict validation
 )
 async def extract_company_info(ctx: ChainContext) -> dict:
     """
     Extract company information (ticker, type, etc.) from foundation service.
 
     Equivalent to: ContextBuilderService.corporate_client_firm_extractor
+
+    Input Contract: CMPTRequest (validated at launch time)
+    Output Contract: CompanyInfoOutput
     """
-    company_name = ctx.get("company_name")
+    # Access validated request - already a CMPTRequest instance if validation passed
+    request = ctx.get("request")
+    if isinstance(request, CMPTRequest):
+        company_name = request.corporate_company_name
+    else:
+        company_name = ctx.get("company_name")
 
     if not company_name:
         logger.warning("No company name provided")
@@ -917,7 +971,9 @@ async def validate_metrics(ctx: ChainContext) -> dict:
     deps=["generate_financial_metrics", "generate_strategic_analysis", "validate_metrics"],
     produces=["final_response"],
     description="Build final CMPT response",
-    group="response_builder"
+    group="response_builder",
+    output_model=CMPTFinalResponse,
+    validate_output=False,  # Set to True for strict validation
 )
 async def build_response(ctx: ChainContext) -> dict:
     """
@@ -1017,6 +1073,10 @@ async def run_cmpt_chain(
     """
     Convenience function to run the CMPT chain.
 
+    The input is validated against CMPTRequest before execution starts.
+    If validation fails, a ContractValidationError is raised immediately
+    with clear error messages about what fields are invalid.
+
     Args:
         company_name: Name of the company to analyze
         meeting_date: Meeting date (YYYY-MM-DD format)
@@ -1025,17 +1085,39 @@ async def run_cmpt_chain(
 
     Returns:
         Final CMPT response dictionary
+
+    Raises:
+        ContractValidationError: If input validation fails
+
+    Example:
+        # This will fail fast with clear errors if request is invalid
+        result = await run_cmpt_chain(
+            company_name="Apple Inc.",
+            meeting_date="2025-01-15",
+        )
+
+        # Or use CMPTRequest directly for better type safety
+        request = CMPTRequest(
+            corporate_company_name="Apple Inc.",
+            meeting_datetime="2025-01-15",
+        )
+        result = await forge.launch("cmpt_pipeline", data={"request": request})
     """
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
 
-    data = {
-        "company_name": company_name,
-        "meeting_date": meeting_date or datetime.now().strftime("%Y-%m-%d"),
-        "client_email": client_email,
-    }
+    # Build request using the validated model
+    # This provides type safety and validation at construction time
+    request = CMPTRequest(
+        corporate_company_name=company_name,
+        meeting_datetime=meeting_date or datetime.now().strftime("%Y-%m-%d"),
+        corporate_client_email=client_email,
+        verbose=verbose,
+    )
 
-    result = await forge.launch("cmpt_pipeline", data=data)
+    # Launch with the validated request
+    # FlowForge will validate again at launch time for fail-fast behavior
+    result = await forge.launch("cmpt_pipeline", data={"request": request})
     return result
 
 

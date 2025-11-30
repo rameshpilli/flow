@@ -1,6 +1,13 @@
 """FlowForge Agents Module"""
 
-from flowforge.agents.base import AgentResult, BaseAgent
+from flowforge.agents.base import (
+    AgentResult,
+    BaseAgent,
+    CompositeAgent,
+    ResilientAgent,
+    ResilientAgentConfig,
+    ResilientCompositeAgent,
+)
 from flowforge.agents.data_agents import (
     EarningsAgent,
     NewsAgent,
@@ -8,8 +15,15 @@ from flowforge.agents.data_agents import (
 )
 
 __all__ = [
+    # Base classes
     "BaseAgent",
     "AgentResult",
+    "CompositeAgent",
+    # Resilient wrappers
+    "ResilientAgent",
+    "ResilientAgentConfig",
+    "ResilientCompositeAgent",
+    # Data agents
     "SECFilingAgent",
     "NewsAgent",
     "EarningsAgent",

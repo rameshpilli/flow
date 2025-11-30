@@ -10,6 +10,25 @@ from flowforge.middleware.metrics import (
     OTelMetricsBackend,
     create_metrics_middleware,
 )
+from flowforge.middleware.offload import (
+    KEY_FIELD_EXTRACTORS,
+    OffloadMiddleware,
+    SUMMARY_GENERATORS,
+    cap_items_with_metadata,
+    cap_per_source,
+    get_key_field_extractor,
+    get_summary_generator,
+)
+from flowforge.middleware.rate_limiter import (
+    CircuitBreakerConfig,
+    CircuitBreakerMiddleware,
+    CircuitOpenError,
+    CircuitState,
+    RateLimitAndCircuitBreakerMiddleware,
+    RateLimitConfig,
+    RateLimitExceededError,
+    RateLimiterMiddleware,
+)
 from flowforge.middleware.summarizer import (
     DOMAIN_PROMPTS,
     LangChainSummarizer,
@@ -33,6 +52,15 @@ __all__ = [
     "InMemoryMetricsBackend",
     "OTelMetricsBackend",
     "create_metrics_middleware",
+    # Rate Limiting & Circuit Breaker
+    "RateLimiterMiddleware",
+    "RateLimitConfig",
+    "RateLimitExceededError",
+    "CircuitBreakerMiddleware",
+    "CircuitBreakerConfig",
+    "CircuitOpenError",
+    "CircuitState",
+    "RateLimitAndCircuitBreakerMiddleware",
     # Summarization (LangChain-powered)
     "SummarizerMiddleware",
     "LangChainSummarizer",
@@ -44,6 +72,14 @@ __all__ = [
     "DOMAIN_PROMPTS",
     "get_domain_prompts",
     "LLMSummarizer",  # Legacy alias
+    # Offload Middleware (Auto-offload to Redis)
+    "OffloadMiddleware",
+    "cap_items_with_metadata",
+    "cap_per_source",
+    "get_key_field_extractor",
+    "get_summary_generator",
+    "KEY_FIELD_EXTRACTORS",
+    "SUMMARY_GENERATORS",
     # Other middleware
     "CacheMiddleware",
     "LoggerMiddleware",

@@ -56,6 +56,24 @@ from flowforge.utils.config import (
     RetryPolicyConfig,
 )
 
+# Health aggregator
+from flowforge.utils.health import (
+    HealthAggregator,
+    ComponentHealth,
+    AggregatedHealth,
+    HealthStatus as AggregatedHealthStatus,
+    run_health_checks,
+    create_default_aggregator,
+    is_ready,
+    is_live,
+    # Built-in checks
+    check_config_health,
+    check_redis_health,
+    check_llm_health,
+    check_agents_health,
+    check_chains_health,
+)
+
 __all__ = [
     # Timing
     "timed",
@@ -105,4 +123,18 @@ __all__ = [
     "CacheConfig",
     "RateLimitConfig",
     "RetryPolicyConfig",
+    # Health aggregator
+    "HealthAggregator",
+    "ComponentHealth",
+    "AggregatedHealth",
+    "AggregatedHealthStatus",
+    "run_health_checks",
+    "create_default_aggregator",
+    "is_ready",
+    "is_live",
+    "check_config_health",
+    "check_redis_health",
+    "check_llm_health",
+    "check_agents_health",
+    "check_chains_health",
 ]

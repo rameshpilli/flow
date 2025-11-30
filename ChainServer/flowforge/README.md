@@ -8,12 +8,16 @@ FlowForge is a lightweight, decorator-driven framework for building data process
 
 - **Decorator-Based Registration**: Simple `@forge.agent()`, `@forge.step()`, `@forge.chain()` decorators
 - **DAG Execution**: Automatic dependency resolution with parallel execution
+- **Chain Composition**: Use chains as steps in other chains for modular pipeline design
 - **Explicit Parallel Groups**: Define custom execution ordering with `parallel_groups`
 - **Per-Step Concurrency Limits**: Control parallelism with `max_concurrency` per step
 - **Context Management**: Shared state across steps with scoped storage
 - **Middleware Support**: Logging, caching, summarization, token management
 - **Agent System**: Pre-built and custom data agents
 - **MCP Integration**: Connect external MCP servers as agents
+- **Plugin System**: Drop-in agents via Python entry points
+- **Project Scaffolding**: Generate complete projects with `flowforge new project`
+- **Versioning & Migrations**: Chain/step version tags with migration helpers
 - **Extensible**: Register your own agents, steps, and chains
 
 ### Production Features
@@ -36,6 +40,16 @@ FlowForge is a lightweight, decorator-driven framework for building data process
 - **Typed Configuration**: Environment variable validation with secret masking
 - **External Secret Backends**: AWS Secrets Manager, HashiCorp Vault support
 - **Health Endpoints**: Built-in health checks and version info for ops visibility
+
+### Context Management Features
+
+- **Redis Context Store**: Offload large payloads to Redis while keeping context lightweight
+- **Offload Middleware**: Auto-offload large step outputs to Redis with domain-aware key extraction
+- **Loss-Aware Serialization**: NEVER blind-truncate - always preserve hashes, sizes, and key fields
+- **Per-Source Caps**: Cap items per source with metadata about what was omitted
+- **Auto-Summarization**: TokenManager hooks into summarizer for automatic context reduction
+- **Input/Output Contracts**: Pydantic model validation for fail-fast type checking
+- **Resumable Chains**: Checkpoint and resume chains from any step
 
 ## Installation
 
@@ -88,6 +102,86 @@ async def main():
 asyncio.run(main())
 ```
 
+## Chain Composition
+
+FlowForge supports **chain composition** - using chains as steps in other chains for modular pipeline design:
+
+```python
+from flowforge import FlowForge, ChainContext
+
+forge = FlowForge(name="composed_app")
+
+# Define a reusable data processing chain
+@forge.step(name="fetch")
+async def fetch(ctx: ChainContext):
+    ctx.set("raw_data", {"items": [1, 2, 3]})
+    return {"fetched": True}
+
+@forge.step(name="transform", deps=["fetch"])
+async def transform(ctx: ChainContext):
+    data = ctx.get("raw_data")
+    ctx.set("transformed", [x * 2 for x in data["items"]])
+    return {"transformed": True}
+
+@forge.chain(name="data_processing")
+class DataProcessing:
+    steps = ["fetch", "transform"]
+
+# Define a validation chain
+@forge.step(name="validate")
+async def validate(ctx: ChainContext):
+    data = ctx.get("transformed")
+    if not data:
+        raise ValueError("No data to validate")
+    return {"valid": True}
+
+@forge.chain(name="validation")
+class Validation:
+    steps = ["validate"]
+
+# Compose chains into a parent pipeline
+@forge.step(name="setup")
+async def setup(ctx: ChainContext):
+    ctx.set("config", {"mode": "production"})
+    return {"setup": True}
+
+@forge.step(name="report", deps=["__subchain__validation"])
+async def report(ctx: ChainContext):
+    transformed = ctx.get("transformed")
+    return {"report": f"Processed {len(transformed)} items"}
+
+@forge.chain(name="full_pipeline")
+class FullPipeline:
+    steps = [
+        "setup",
+        "data_processing",   # Chain as a step
+        "validation",        # Another chain as a step
+        "report",
+    ]
+
+# Run the composed pipeline
+async def main():
+    result = await forge.launch("full_pipeline")
+    print(result)  # All chains execute in order
+
+asyncio.run(main())
+```
+
+### Explicit Subchain References
+
+For more control over dependencies, use `forge.subchain()`:
+
+```python
+@forge.chain(name="pipeline")
+class Pipeline:
+    steps = [
+        "init",
+        forge.subchain("data_processing", deps=["init"]),
+        forge.subchain("validation", deps=["__subchain__data_processing"]),
+        "finalize",
+    ]
+```
+
 ## CLI Usage
 
 FlowForge includes a CLI for running chains, validation, and development:
@@ -109,6 +203,14 @@ flowforge graph my_pipeline --format mermaid
 # Generate new agent/chain from template
 flowforge new agent MyCustomAgent
 flowforge new chain MyPipeline
+
+# Generate a complete project (API, Docker, CI, examples)
+flowforge new project my-app
+flowforge new project my-app --template cmpt --with-api --with-docker --with-ci
+
+# Validate chain definitions (dry-run mode)
+flowforge validate my_chain
+flowforge validate my_chain --check-agents --verbose
 
 # Development mode with hot reload
 flowforge dev --watch
@@ -531,6 +633,199 @@ MyAgent = create_mcp_agent(
 )
 ```
 
+### Plugin System (Entry Points)
+
+Register agents as plugins that can be discovered automatically:
+
+```python
+# In your pyproject.toml
+[project.entry-points."flowforge.agents"]
+my_agent = "my_package.agents:MyCustomAgent"
+news_plugin = "my_package.plugins:NewsPlugin"
+
+# Discover and load plugins at runtime
+from flowforge.plugins import discover_plugins, PluginManager
+
+# Discover all installed plugins
+plugins = discover_plugins()
+for name, info in plugins.items():
+    print(f"{name}: {info.module_path}")
+
+# Use PluginManager for lifecycle management
+manager = PluginManager()
+manager.discover()
+agent = manager.get_instance("my_agent")
+
+# Filter plugins by capability
+search_plugins = manager.get_by_capability("search")
+```
+
+### HTTP Adapter Agent
+
+Pre-built hardened HTTP client with auth, retry, and circuit breaker:
+
+```python
+from flowforge.plugins import HTTPAdapterAgent, HTTPAdapterConfig
+
+# Configure with auth and resilience
+config = HTTPAdapterConfig(
+    base_url="https://api.example.com",
+    auth_type="bearer",
+    auth_token="my-token",
+    timeout_seconds=30.0,
+    max_retries=3,
+    circuit_breaker_enabled=True,
+    rate_limit_enabled=True,
+    rate_limit_rps=10.0,
+)
+
+agent = HTTPAdapterAgent(config)
+
+# Make requests
+data = await agent.get("/users", params={"page": 1})
+result = await agent.post("/users", json={"name": "John"})
+```
+
+### MCP Adapter Agent
+
+Full MCP protocol implementation for connecting to MCP servers:
+
+```python
+from flowforge.plugins import MCPAdapterAgent, MCPAdapterConfig
+
+# HTTP transport
+config = MCPAdapterConfig(
+    name="my_mcp_server",
+    transport="http",
+    url="http://localhost:3000",
+)
+
+# Or stdio transport (for local servers)
+config = MCPAdapterConfig(
+    name="local_server",
+    transport="stdio",
+    command="python",
+    args=["my_mcp_server.py"],
+)
+
+agent = MCPAdapterAgent(config)
+await agent.connect()
+
+# List available tools
+tools = await agent.list_tools()
+
+# Call a tool
+result = await agent.call_tool("search", {"query": "test"})
+
+# Read resources
+resource = await agent.read_resource("file:///path/to/file")
+```
+
+### Versioning & Migrations
+
+Version your chains and migrate data between versions:
+
+```python
+from flowforge.core.versioning import Version, MigrationManager, ChainVersion
+
+# Define chain with version
+@forge.chain(name="my_chain", version="2.0.0")
+class MyChain:
+    steps = ["step_a", "step_b"]
+
+# Set up migrations
+manager = MigrationManager()
+
+@manager.migration("1.0.0", "2.0.0")
+def migrate_v1_to_v2(data: dict) -> dict:
+    # Transform data from v1 format to v2
+    return {
+        "new_field": data.get("old_field"),
+        "renamed": data.pop("old_name", None),
+        **data,
+    }
+
+@manager.rollback("2.0.0", "1.0.0")
+def rollback_v2_to_v1(data: dict) -> dict:
+    # Reverse the migration
+    return {
+        "old_field": data.get("new_field"),
+        "old_name": data.pop("renamed", None),
+        **data,
+    }
+
+# Migrate data
+new_data = manager.migrate(old_data, "1.0.0", "2.0.0")
+
+# Dry-run (preview changes without applying)
+preview = manager.migrate(old_data, "1.0.0", "2.0.0", dry_run=True)
+print(preview)  # Shows what would change
+```
+
+### Dry-Run Validation
+
+Validate chains without executing them:
+
+```python
+from flowforge.core.versioning import validate_chain
+
+# Validate a chain (checks DAG, contracts, agents)
+result = await validate_chain(
+    "my_chain",
+    dry_run=True,
+    check_agents=True,
+    check_contracts=True,
+)
+
+if result["valid"]:
+    print("Chain is valid!")
+else:
+    for error in result["errors"]:
+        print(f"Error: {error}")
+    for warning in result["warnings"]:
+        print(f"Warning: {warning}")
+
+# CLI equivalent
+# flowforge validate my_chain --check-agents --verbose
+```
+
+### Project Scaffolding
+
+Generate complete FlowForge projects:
+
+```bash
+# Create a new project
+flowforge new project my-app
+
+# With all options
+flowforge new project my-app \
+    --template cmpt \
+    --with-api \
+    --with-docker \
+    --with-ci \
+    --description "My FlowForge Application"
+```
+
+Generated project structure:
+```
+my-app/
+├── pyproject.toml
+├── README.md
+├── Dockerfile
+├── docker-compose.yml
+├── .github/workflows/ci.yml
+├── my_app/
+│   ├── __init__.py
+│   ├── api.py              # FastAPI server
+│   ├── chains/
+│   │   ├── __init__.py
+│   │   └── hello_chain.py  # Example chain
+│   └── agents/
+│       └── __init__.py
+└── tests/
+    └── test_chains.py
+```
+
 ### Token Management for LLMs
 
 ```python
@@ -543,6 +838,177 @@ forge.use_middleware(TokenManagerMiddleware(
     max_total_tokens=100000,
     warning_threshold=0.8,
 ))
+```
+
+### Redis Context Store (Large Payload Offloading)
+
+Keep chain context lightweight by offloading large payloads (SEC filings, news, transcripts) to Redis:
+
+```python
+from flowforge.core import RedisContextStore, ContextRef, offload_to_redis
+
+# Initialize store (Redis in same container, different port)
+store = RedisContextStore(host="localhost", port=6380)
+
+# In a step - offload large data
+@forge.step(name="fetch_sec_data")
+async def fetch_sec_data(ctx):
+    large_filing_data = await fetch_filings()  # 1.2MB
+
+    # Offload if large, keep ref in context
+    ref = await offload_to_redis(
+        ctx, "sec_filings", large_filing_data,
+        store=store,
+        threshold_bytes=100_000,
+        summary="10-K Annual Report for Apple Inc., FY2024",
+        key_fields={"ticker": "AAPL", "revenue": "394.3B"},
+    )
+
+    ctx.set("sec_data", ref)  # ContextRef (~500 bytes) instead of 1.2MB
+    return {"sec_data": ref}
+
+# Later, retrieve full data when needed
+full_data = await store.retrieve(ref)  # NEVER loses data
+```
+
+Key principles:
+- **NEVER loses data** - full payloads preserved in Redis
+- **NEVER blind-truncates** - always keeps hashes, sizes, key fields
+- **Lightweight refs** - ContextRef contains summary and key fields for LLM context
+
+### Offload Middleware (Automatic)
+
+Auto-offload large step outputs without manual intervention:
+
+```python
+from flowforge.middleware import OffloadMiddleware
+from flowforge.core import RedisContextStore
+
+store = RedisContextStore(host="localhost", port=6380)
+
+# Auto-offload large outputs to Redis
+forge.use_middleware(OffloadMiddleware(
+    store=store,
+    default_threshold_bytes=100_000,  # 100KB
+    step_thresholds={
+        "fetch_sec_data": 50_000,     # More aggressive for SEC
+        "fetch_news_data": 100_000,
+    },
+))
+```
+
+Features:
+- Domain-aware key field extraction (SEC, news, earnings)
+- Domain-aware summary generation
+- Automatic source tracking
+
+### Token Manager with Auto-Summarization
+
+TokenManager can auto-trigger summarization when approaching limits:
+
+```python
+from flowforge.core import RedisContextStore
+from flowforge.middleware import (
+    TokenManagerMiddleware,
+    SummarizerMiddleware,
+    LangChainSummarizer,
+)
+
+# Create summarizer
+summarizer = LangChainSummarizer(llm=my_llm)
+
+# Create context store
+store = RedisContextStore(port=6380)
+
+# TokenManager with auto-summarization and offloading
+forge.use_middleware(TokenManagerMiddleware(
+    max_total_tokens=100000,
+    warning_threshold=0.8,
+    # Auto-summarize when over limit
+    auto_summarize=True,
+    summarizer=summarizer,
+    summarize_oldest_first=True,
+    # Auto-offload large payloads
+    auto_offload=True,
+    context_store=store,
+    offload_threshold_bytes=50000,
+))
+```
+
+### Per-Source Caps with Metadata
+
+Cap items per source while preserving metadata about what was omitted:
+
+```python
+from flowforge.middleware import cap_items_with_metadata, cap_per_source
+
+# Cap items with metadata
+articles, meta = cap_items_with_metadata(
+    news_articles,
+    max_items=10,
+    sort_key=lambda x: x.get("relevance_score", 0),
+)
+# meta = {"original_count": 150, "kept_count": 10, "omitted_count": 140, ...}
+
+# Cap per source (balanced representation)
+articles, meta = cap_per_source(
+    all_articles,
+    source_field="agent",
+    max_per_source=10,
+    total_max=30,
+)
+# meta = {"original_count": 100, "sources": ["news", "sec", "earnings"], "omitted_per_source": {...}}
+```
+
+### Input/Output Contracts (Pydantic Validation)
+
+Fail-fast validation with Pydantic models:
+
+```python
+from pydantic import BaseModel
+from flowforge.core import ContractValidationError
+
+class CompanyInput(BaseModel):
+    ticker: str
+    fiscal_year: int
+
+class FinancialOutput(BaseModel):
+    revenue: float
+    net_income: float
+
+@forge.step(
+    name="analyze_financials",
+    input_model=CompanyInput,
+    input_key="company_info",  # Key in context to validate
+    output_model=FinancialOutput,
+)
+async def analyze_financials(ctx):
+    # Input is validated before step runs
+    company = ctx.get("company_info")
+
+    result = {"revenue": 394.3e9, "net_income": 97.0e9}
+    # Output is validated after step completes
+    return result
+```
+
+### Resumable Chains
+
+Checkpoint and resume chains from any step:
+
+```python
+from flowforge.core import FileRunStore, ResumableChainRunner
+
+# Create run store (persists to disk)
+run_store = FileRunStore(base_dir="./checkpoints")
+
+# Create resumable runner
+runner = ResumableChainRunner(forge, run_store)
+
+# Run with checkpoints
+result = await runner.run("my_chain", initial_data={"company": "Apple"})
+
+# If chain fails at step 3, resume from checkpoint
+result = await runner.resume(run_id=result["run_id"])
 ```
 
 ### Typed Configuration with Secret Masking
@@ -727,6 +1193,12 @@ for step_result in result["results"]:
 | `ctx.delete(key)` | Remove a key |
 | `ctx.to_dict()` | Export as dictionary |
 
+## Documentation
+
+- **[Build a CMP-like Flow in 30 Minutes](docs/BUILD_CMP_FLOW_GUIDE.md)** - End-to-end tutorial
+- **[Troubleshooting Guide](docs/TROUBLESHOOTING.md)** - Common issues and solutions
+- **[Jupyter Tutorial](examples/cmpt_chain_tutorial.ipynb)** - Interactive notebook tutorial
+
 ## Examples
 
 See the `examples/` directory:
@@ -734,6 +1206,7 @@ See the `examples/` directory:
 - `quickstart.py` - Minimal getting started example
 - `meeting_prep_chain.py` - Full Client Meeting Prep implementation
 - `custom_agent_example.py` - Custom agent and MCP integration
+- `cmpt_chain_tutorial.ipynb` - Comprehensive Jupyter notebook tutorial
 
 ## Testing
 

@@ -86,6 +86,11 @@ class StepSpec:
     max_concurrency: int | None = None  # Max parallel instances (None = unlimited)
     timeout_ms: int = 30000
     is_async: bool = True
+    # Input/Output contracts for validation
+    input_model: type | None = None  # Pydantic model for input validation
+    output_model: type | None = None  # Pydantic model for output validation
+    input_key: str | None = None  # Key in context to validate as input (default: "request")
+    validate_output: bool = True  # Whether to validate output against output_model
 
 
 @dataclass
@@ -97,6 +102,9 @@ class ChainSpec:
     chain_class: type | None = None
     parallel_groups: list[list[str]] = field(default_factory=list)
     error_handling: str = "fail_fast"  # fail_fast, continue, retry
+    # Chain composition support
+    is_subchain: bool = False  # Whether this chain is used as a subchain
+    parent_chain: str | None = None  # Parent chain name if this is a subchain
 
 
 class BaseRegistry:
@@ -268,6 +276,10 @@ class StepRegistry(BaseRegistry):
         group: str | None = None,
         retry_config: RetryConfig | dict[str, Any] | None = None,
         strict: bool = False,
+        input_model: type | None = None,
+        output_model: type | None = None,
+        input_key: str | None = None,
+        validate_output: bool = True,
         **kwargs,  # Accept extra kwargs for forward compatibility
     ) -> None:
         """
@@ -336,6 +348,10 @@ class StepRegistry(BaseRegistry):
             max_concurrency=max_concurrency,
             timeout_ms=timeout_ms,
             is_async=inspect.iscoroutinefunction(handler),
+            input_model=input_model,
+            output_model=output_model,
+            input_key=input_key,
+            validate_output=validate_output,
         )
         self.register(name, spec, aliases, strict=strict)
 
@@ -397,6 +413,10 @@ class ChainRegistry(BaseRegistry):
         """Get chain steps"""
         spec = self.get_spec(name)
         return spec.steps if spec else []
+
+    def is_chain(self, name: str) -> bool:
+        """Check if a name refers to a registered chain."""
+        return self.has(name)
 
 
 # Global registry instances (default shared registries)

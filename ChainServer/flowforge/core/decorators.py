@@ -76,6 +76,7 @@ def step(
     *,
     name: str | None = None,
     deps: list[Any] | None = None,
+    dependencies: list[Any] | None = None,  # Alias for deps
     produces: list[str] | None = None,
     resources: list[str] | None = None,
     description: str = "",
@@ -83,6 +84,11 @@ def step(
     timeout_ms: int = 30000,
     retry: int = 0,
     max_concurrency: int | None = None,
+    # Input/Output Contracts
+    input_model: type | None = None,
+    output_model: type | None = None,
+    input_key: str | None = None,
+    validate_output: bool = True,
 ) -> F | Callable[[F], F]:
     """
     Decorator to register a function as a chain step.
@@ -99,9 +105,20 @@ def step(
         @step(max_concurrency=2)
         async def call_external_api(ctx): ...
 
+        # With input/output contracts (fail-fast validation)
+        @step(
+            input_model=ChainRequest,
+            output_model=ContextBuilderOutput,
+            input_key="request",
+        )
+        async def context_builder(ctx):
+            request = ctx.get("request")  # Already validated
+            return output  # Validated against output_model
+
     Args:
         name: Step name (defaults to function name)
         deps: Steps that must complete before this one
+        dependencies: Alias for deps (backward compatibility)
         produces: Context keys this step produces
         resources: Resource names to inject
         description: Human-readable description
@@ -109,12 +126,19 @@ def step(
         timeout_ms: Execution timeout
         retry: Number of retries on failure
         max_concurrency: Max parallel instances (None = unlimited)
+        input_model: Pydantic model to validate input data (fail-fast)
+        output_model: Pydantic model to validate step output
+        input_key: Context key to validate (default: "request")
+        validate_output: Whether to validate output (default: True)
     """
+    # Support both 'deps' and 'dependencies' (alias)
+    resolved_deps = deps or dependencies
+
     def decorator(func: F) -> F:
         return _get_forge().step(
             func,
             name=name,
-            deps=deps,
+            deps=resolved_deps,
             produces=produces,
             resources=resources,
             description=description,
@@ -122,6 +146,10 @@ def step(
             timeout_ms=timeout_ms,
             retry=retry,
             max_concurrency=max_concurrency,
+            input_model=input_model,
+            output_model=output_model,
+            input_key=input_key,
+            validate_output=validate_output,
         )
 
     if func is not None:
