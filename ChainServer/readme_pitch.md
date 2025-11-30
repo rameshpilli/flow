@@ -232,214 +232,989 @@ flowforge check    # Validate chain definitions
 
 ## Go Crazy: What You Can Build
 
-FlowForge is a general-purpose chain orchestration library. Here's what you can build beyond CMPT:
+FlowForge is a general-purpose chain orchestration library. Here are complete, working examples you can adapt:
 
-### 1. Multi-Model AI Pipeline
-Route queries to different LLMs based on complexity, cost, or capability:
+---
+
+### 1. Multi-Model AI Router
+
+Route queries to different LLMs based on complexity — use cheap/fast models for simple queries, powerful models for complex ones.
+
 ```python
-@forge.step(name="classify_query")
-async def classify(ctx):
+from flowforge import FlowForge
+from pydantic import BaseModel
+
+forge = FlowForge(name="ai_router")
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 1: Classify the query complexity
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="classify_complexity")
+async def classify_complexity(ctx):
     query = ctx.get("query")
-    # Simple queries → fast/cheap model, complex → powerful model
-    return {"model": "gpt-4" if is_complex(query) else "gpt-3.5-turbo"}
 
-@forge.step(name="route_to_model", deps=["classify_query"])
-async def route(ctx):
+    # Simple heuristic (replace with your own classifier)
+    complex_keywords = ["analyze", "compare", "explain why", "multi-step", "reasoning"]
+    is_complex = any(kw in query.lower() for kw in complex_keywords)
+
+    return {
+        "complexity": "high" if is_complex else "low",
+        "model": "gpt-4" if is_complex else "gpt-3.5-turbo",
+        "max_tokens": 2000 if is_complex else 500,
+    }
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 2: Route to appropriate model and get response
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="generate_response", deps=["classify_complexity"])
+async def generate_response(ctx):
     model = ctx.get("model")
-    llm = ctx.get_resource(f"llm_{model}")
-    return await llm.complete(ctx.get("query"))
+    max_tokens = ctx.get("max_tokens")
+    query = ctx.get("query")
+
+    # Get the LLM client (registered as resource)
+    llm = forge.get_resource("llm_client")
+
+    response = await llm.chat(
+        model=model,
+        messages=[{"role": "user", "content": query}],
+        max_tokens=max_tokens,
+    )
+
+    return {
+        "response": response.content,
+        "model_used": model,
+        "tokens_used": response.usage.total_tokens,
+    }
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 3: Log usage for cost tracking
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="log_usage", deps=["generate_response"])
+async def log_usage(ctx):
+    return {
+        "logged": True,
+        "summary": {
+            "query": ctx.get("query")[:50] + "...",
+            "model": ctx.get("model_used"),
+            "tokens": ctx.get("tokens_used"),
+            "complexity": ctx.get("complexity"),
+        }
+    }
+
+# ═══════════════════════════════════════════════════════════════════
+# CHAIN: Wire it together
+# ═══════════════════════════════════════════════════════════════════
+@forge.chain(name="smart_router")
+class SmartRouterChain:
+    steps = ["classify_complexity", "generate_response", "log_usage"]
+
+# ═══════════════════════════════════════════════════════════════════
+# RUN IT
+# ═══════════════════════════════════════════════════════════════════
+async def main():
+    # Register LLM client as a resource
+    forge.register_resource("llm_client", lambda: YourLLMClient())
+
+    result = await forge.launch("smart_router", {
+        "query": "Explain the implications of quantum computing on cryptography"
+    })
+
+    print(f"Model used: {result['model_used']}")
+    print(f"Response: {result['response']}")
+
+# Run: python router.py
 ```
 
-### 2. Document Processing Pipeline
-```
-┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-│  Ingest  │───▶│  Parse   │───▶│  Chunk   │───▶│  Embed   │
-│  (S3/GCS)│    │(PDF/DOCX)│    │ (tokens) │    │(vectors) │
-└──────────┘    └──────────┘    └──────────┘    └──────────┘
-                                                      │
-┌──────────┐    ┌──────────┐    ┌──────────┐         │
-│  Answer  │◀───│ Retrieve │◀───│  Index   │◀────────┘
-│  (LLM)   │    │ (top-k)  │    │(Pinecone)│
-└──────────┘    └──────────┘    └──────────┘
-```
+---
+
+### 2. RAG Document Pipeline
+
+Ingest documents, chunk, embed, index, and query — complete RAG pipeline.
+
 ```python
-@forge.chain(name="doc_pipeline")
-class DocPipeline:
-    steps = ["ingest", "parse", "chunk", "embed", "index"]
-    parallel_groups = [["chunk", "embed"]]  # These can overlap
-```
+from flowforge import FlowForge, ResilientAgent
+from pydantic import BaseModel
+from typing import List
 
-### 3. Real-Time Trading Signal Generator
-```python
-@forge.agent(name="market_data")
-class MarketDataAgent(ResilientAgent):
-    # Circuit breaker prevents hammering failing exchange APIs
-    pass
+forge = FlowForge(name="rag_pipeline")
 
-@forge.chain(name="trading_signals", error_handling="continue")
-class TradingChain:
-    steps = [
-        "fetch_prices",      # Market data
-        "fetch_sentiment",   # News/social sentiment
-        "fetch_fundamentals",# SEC filings
-        "generate_signals",  # ML model
-        "validate_risk",     # Risk checks
-        "publish_signals",   # Push to execution
+# ═══════════════════════════════════════════════════════════════════
+# MODELS
+# ═══════════════════════════════════════════════════════════════════
+class Document(BaseModel):
+    id: str
+    content: str
+    metadata: dict = {}
+
+class Chunk(BaseModel):
+    doc_id: str
+    chunk_id: str
+    text: str
+    embedding: List[float] = []
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 1: Ingest documents from source
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="ingest")
+async def ingest(ctx):
+    source = ctx.get("source")  # e.g., "s3://bucket/docs/"
+
+    # Mock: In reality, fetch from S3/GCS/local
+    documents = [
+        Document(id="doc1", content="FlowForge is a DAG orchestration library..."),
+        Document(id="doc2", content="Chains consist of steps with dependencies..."),
     ]
+
+    return {"documents": [d.model_dump() for d in documents], "count": len(documents)}
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 2: Parse documents (extract text from PDF/DOCX)
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="parse", deps=["ingest"])
+async def parse(ctx):
+    documents = ctx.get("documents")
+
+    parsed = []
+    for doc in documents:
+        # Mock: In reality, use pypdf, python-docx, etc.
+        parsed.append({
+            **doc,
+            "content": doc["content"],  # Already text in this example
+            "parsed": True,
+        })
+
+    return {"documents": parsed}
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 3: Chunk into smaller pieces
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="chunk", deps=["parse"])
+async def chunk(ctx):
+    documents = ctx.get("documents")
+    chunk_size = ctx.get("chunk_size", 500)
+
+    chunks = []
+    for doc in documents:
+        text = doc["content"]
+        # Simple chunking (use tiktoken/langchain for production)
+        for i in range(0, len(text), chunk_size):
+            chunks.append(Chunk(
+                doc_id=doc["id"],
+                chunk_id=f"{doc['id']}_chunk_{i}",
+                text=text[i:i + chunk_size],
+            ).model_dump())
+
+    return {"chunks": chunks, "chunk_count": len(chunks)}
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 4: Generate embeddings
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="embed", deps=["chunk"])
+async def embed(ctx):
+    chunks = ctx.get("chunks")
+    embedder = forge.get_resource("embedder")
+
+    for chunk in chunks:
+        # Generate embedding for each chunk
+        chunk["embedding"] = await embedder.embed(chunk["text"])
+
+    return {"chunks": chunks}
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 5: Index in vector store
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="index", deps=["embed"])
+async def index(ctx):
+    chunks = ctx.get("chunks")
+    vector_store = forge.get_resource("vector_store")
+
+    # Upsert all chunks
+    await vector_store.upsert(
+        vectors=[
+            {"id": c["chunk_id"], "values": c["embedding"], "metadata": {"text": c["text"]}}
+            for c in chunks
+        ]
+    )
+
+    return {"indexed": len(chunks), "status": "success"}
+
+# ═══════════════════════════════════════════════════════════════════
+# CHAIN: Indexing pipeline
+# ═══════════════════════════════════════════════════════════════════
+@forge.chain(name="index_pipeline")
+class IndexPipeline:
+    steps = ["ingest", "parse", "chunk", "embed", "index"]
+
+# ═══════════════════════════════════════════════════════════════════
+# QUERY CHAIN (separate chain for retrieval)
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="embed_query")
+async def embed_query(ctx):
+    query = ctx.get("query")
+    embedder = forge.get_resource("embedder")
+    embedding = await embedder.embed(query)
+    return {"query_embedding": embedding}
+
+@forge.step(name="retrieve", deps=["embed_query"])
+async def retrieve(ctx):
+    query_embedding = ctx.get("query_embedding")
+    vector_store = forge.get_resource("vector_store")
+
+    results = await vector_store.query(
+        vector=query_embedding,
+        top_k=5,
+        include_metadata=True,
+    )
+
+    return {"retrieved_chunks": [r.metadata["text"] for r in results.matches]}
+
+@forge.step(name="generate_answer", deps=["retrieve"])
+async def generate_answer(ctx):
+    query = ctx.get("query")
+    chunks = ctx.get("retrieved_chunks")
+    llm = forge.get_resource("llm_client")
+
+    context = "\n\n".join(chunks)
+    prompt = f"Based on the following context, answer the question.\n\nContext:\n{context}\n\nQuestion: {query}"
+
+    response = await llm.chat(messages=[{"role": "user", "content": prompt}])
+
+    return {"answer": response.content, "sources": chunks}
+
+@forge.chain(name="query_pipeline")
+class QueryPipeline:
+    steps = ["embed_query", "retrieve", "generate_answer"]
+
+# ═══════════════════════════════════════════════════════════════════
+# RUN IT
+# ═══════════════════════════════════════════════════════════════════
+async def main():
+    # Register resources
+    forge.register_resource("embedder", lambda: OpenAIEmbedder())
+    forge.register_resource("vector_store", lambda: PineconeClient())
+    forge.register_resource("llm_client", lambda: OpenAIClient())
+
+    # Index documents
+    await forge.launch("index_pipeline", {"source": "s3://my-bucket/docs/"})
+
+    # Query
+    result = await forge.launch("query_pipeline", {
+        "query": "How do I define dependencies between steps?"
+    })
+    print(f"Answer: {result['answer']}")
 ```
 
-### 4. Customer Support Automation
+---
+
+### 3. Customer Support Bot with Escalation
+
+Classify tickets, auto-respond to simple ones, escalate complex/angry ones.
+
 ```python
+from flowforge import FlowForge
+from flowforge.middleware import LoggerMiddleware, MetricsMiddleware
+from pydantic import BaseModel
+from enum import Enum
+
+forge = FlowForge(name="support_bot")
+forge.use(LoggerMiddleware())
+forge.use(MetricsMiddleware())
+
+# ═══════════════════════════════════════════════════════════════════
+# MODELS
+# ═══════════════════════════════════════════════════════════════════
+class Priority(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    URGENT = "urgent"
+
+class TicketClassification(BaseModel):
+    category: str
+    priority: Priority
+    sentiment: str
+    confidence: float
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 1: Classify the support ticket
+# ═══════════════════════════════════════════════════════════════════
 @forge.step(name="classify_ticket")
-async def classify(ctx):
-    return {"category": "billing", "priority": "high", "sentiment": "angry"}
+async def classify_ticket(ctx):
+    ticket_text = ctx.get("ticket_text")
+    customer_tier = ctx.get("customer_tier", "standard")
 
+    llm = forge.get_resource("llm_client")
+
+    response = await llm.chat(
+        messages=[{
+            "role": "system",
+            "content": """Classify this support ticket. Return JSON:
+            {"category": "billing|technical|account|general",
+             "priority": "low|medium|high|urgent",
+             "sentiment": "positive|neutral|negative|angry",
+             "confidence": 0.0-1.0}"""
+        }, {
+            "role": "user",
+            "content": ticket_text
+        }],
+        response_format={"type": "json_object"}
+    )
+
+    classification = TicketClassification.model_validate_json(response.content)
+
+    # Boost priority for premium customers
+    if customer_tier == "enterprise" and classification.priority == Priority.MEDIUM:
+        classification.priority = Priority.HIGH
+
+    return classification.model_dump()
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 2: Decide routing based on classification
+# ═══════════════════════════════════════════════════════════════════
 @forge.step(name="route_ticket", deps=["classify_ticket"])
-async def route(ctx):
-    if ctx.get("priority") == "high":
-        return {"action": "escalate_human"}
-    return {"action": "auto_respond"}
+async def route_ticket(ctx):
+    priority = ctx.get("priority")
+    sentiment = ctx.get("sentiment")
+    category = ctx.get("category")
 
-@forge.step(name="generate_response", deps=["route_ticket"])
-async def respond(ctx):
-    if ctx.get("action") == "auto_respond":
-        return await llm.generate_support_response(ctx)
-    return {"response": None, "escalated": True}
+    # Escalate if high priority, angry, or low confidence
+    needs_human = (
+        priority in ["high", "urgent"] or
+        sentiment == "angry" or
+        ctx.get("confidence", 1.0) < 0.7
+    )
+
+    return {
+        "route": "human" if needs_human else "auto",
+        "queue": f"{category}_{'urgent' if priority == 'urgent' else 'normal'}",
+        "reason": "High priority or negative sentiment" if needs_human else "Auto-response eligible"
+    }
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 3A: Auto-generate response (if eligible)
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="generate_auto_response", deps=["route_ticket"])
+async def generate_auto_response(ctx):
+    if ctx.get("route") == "human":
+        return {"response": None, "auto_responded": False}
+
+    ticket_text = ctx.get("ticket_text")
+    category = ctx.get("category")
+
+    llm = forge.get_resource("llm_client")
+    kb = forge.get_resource("knowledge_base")
+
+    # Get relevant KB articles
+    relevant_docs = await kb.search(ticket_text, category=category, limit=3)
+
+    response = await llm.chat(
+        messages=[{
+            "role": "system",
+            "content": f"""You are a helpful support agent. Use these knowledge base articles:
+            {relevant_docs}
+
+            Be concise, friendly, and helpful. If you can't fully answer, say so."""
+        }, {
+            "role": "user",
+            "content": ticket_text
+        }]
+    )
+
+    return {
+        "response": response.content,
+        "auto_responded": True,
+        "kb_articles_used": [d["id"] for d in relevant_docs]
+    }
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 3B: Create escalation ticket (if needed)
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="escalate_to_human", deps=["route_ticket"])
+async def escalate_to_human(ctx):
+    if ctx.get("route") != "human":
+        return {"escalated": False}
+
+    ticketing_system = forge.get_resource("ticketing_system")
+
+    ticket_id = await ticketing_system.create_ticket(
+        title=f"[{ctx.get('priority').upper()}] {ctx.get('category')} - Customer Support",
+        body=ctx.get("ticket_text"),
+        priority=ctx.get("priority"),
+        queue=ctx.get("queue"),
+        metadata={
+            "sentiment": ctx.get("sentiment"),
+            "classification_confidence": ctx.get("confidence"),
+            "customer_id": ctx.get("customer_id"),
+        }
+    )
+
+    return {
+        "escalated": True,
+        "ticket_id": ticket_id,
+        "message": "Your request has been escalated to our support team. We'll respond within 2 hours."
+    }
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 4: Send response to customer
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="send_response", deps=["generate_auto_response", "escalate_to_human"])
+async def send_response(ctx):
+    email_client = forge.get_resource("email_client")
+    customer_email = ctx.get("customer_email")
+
+    if ctx.get("auto_responded"):
+        message = ctx.get("response")
+    else:
+        message = ctx.get("message")  # Escalation message
+
+    await email_client.send(
+        to=customer_email,
+        subject="Re: Your Support Request",
+        body=message,
+    )
+
+    return {"sent": True, "response_type": "auto" if ctx.get("auto_responded") else "escalation"}
+
+# ═══════════════════════════════════════════════════════════════════
+# CHAIN
+# ═══════════════════════════════════════════════════════════════════
+@forge.chain(name="support_chain")
+class SupportChain:
+    steps = [
+        "classify_ticket",
+        "route_ticket",
+        "generate_auto_response",
+        "escalate_to_human",
+        "send_response",
+    ]
+
+# ═══════════════════════════════════════════════════════════════════
+# RUN IT
+# ═══════════════════════════════════════════════════════════════════
+async def main():
+    result = await forge.launch("support_chain", {
+        "ticket_text": "I've been charged twice for my subscription! This is unacceptable!",
+        "customer_email": "customer@example.com",
+        "customer_id": "cust_123",
+        "customer_tier": "standard",
+    })
+
+    print(f"Route: {result['route']}")
+    print(f"Response type: {result['response_type']}")
 ```
 
-### 5. Code Review Bot
+---
+
+### 4. Code Review Bot
+
+Fetch PR, run parallel checks (style, security, tests), generate AI review, post comments.
+
 ```python
+from flowforge import FlowForge
+from flowforge.agents import ResilientAgent, ResilienceConfig
+
+forge = FlowForge(name="code_review_bot")
+
+# ═══════════════════════════════════════════════════════════════════
+# AGENTS (external services wrapped with resilience)
+# ═══════════════════════════════════════════════════════════════════
+@forge.agent(name="github_agent")
+class GitHubAgent(ResilientAgent):
+    def __init__(self):
+        super().__init__(
+            agent=GitHubAPIClient(),
+            config=ResilienceConfig(timeout_ms=10000, retry_count=3)
+        )
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 1: Fetch PR diff from GitHub
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="fetch_pr")
+async def fetch_pr(ctx):
+    github = forge.get_agent("github_agent")
+    pr_url = ctx.get("pr_url")
+
+    pr_data = await github.fetch(f"/repos/{owner}/{repo}/pulls/{pr_number}")
+    diff = await github.fetch(f"/repos/{owner}/{repo}/pulls/{pr_number}/files")
+
+    return {
+        "pr_title": pr_data["title"],
+        "pr_body": pr_data["body"],
+        "files_changed": [f["filename"] for f in diff],
+        "diff": diff,
+        "additions": sum(f["additions"] for f in diff),
+        "deletions": sum(f["deletions"] for f in diff),
+    }
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 2A: Check code style (runs in parallel)
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="check_style", deps=["fetch_pr"])
+async def check_style(ctx):
+    diff = ctx.get("diff")
+
+    issues = []
+    for file in diff:
+        if file["filename"].endswith(".py"):
+            # Run ruff/flake8/black check
+            result = await run_linter(file["patch"])
+            issues.extend(result)
+
+    return {
+        "style_issues": issues,
+        "style_passed": len(issues) == 0,
+    }
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 2B: Check security (runs in parallel)
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="check_security", deps=["fetch_pr"])
+async def check_security(ctx):
+    diff = ctx.get("diff")
+
+    vulnerabilities = []
+    for file in diff:
+        # Run bandit/semgrep
+        result = await run_security_scan(file["patch"])
+        vulnerabilities.extend(result)
+
+    return {
+        "security_issues": vulnerabilities,
+        "security_passed": len(vulnerabilities) == 0,
+        "severity_counts": count_by_severity(vulnerabilities),
+    }
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 2C: Check test coverage (runs in parallel)
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="check_tests", deps=["fetch_pr"])
+async def check_tests(ctx):
+    files_changed = ctx.get("files_changed")
+
+    # Check if tests exist for changed files
+    missing_tests = []
+    for file in files_changed:
+        if file.endswith(".py") and not file.startswith("test_"):
+            test_file = f"test_{file}"
+            if not await test_exists(test_file):
+                missing_tests.append(file)
+
+    # Run tests and get coverage delta
+    coverage_before = await get_coverage("main")
+    coverage_after = await get_coverage("pr_branch")
+
+    return {
+        "missing_tests": missing_tests,
+        "coverage_delta": coverage_after - coverage_before,
+        "tests_passed": len(missing_tests) == 0 and (coverage_after - coverage_before) >= 0,
+    }
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 3: Generate AI review summary
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="generate_review", deps=["check_style", "check_security", "check_tests"])
+async def generate_review(ctx):
+    llm = forge.get_resource("llm_client")
+
+    review_context = {
+        "pr_title": ctx.get("pr_title"),
+        "files_changed": ctx.get("files_changed"),
+        "additions": ctx.get("additions"),
+        "deletions": ctx.get("deletions"),
+        "style_issues": ctx.get("style_issues"),
+        "security_issues": ctx.get("security_issues"),
+        "coverage_delta": ctx.get("coverage_delta"),
+    }
+
+    response = await llm.chat(
+        messages=[{
+            "role": "system",
+            "content": """You are a senior code reviewer. Generate a concise, actionable review.
+            Structure: Summary → Critical Issues → Suggestions → Approval Status"""
+        }, {
+            "role": "user",
+            "content": f"Review this PR:\n{json.dumps(review_context, indent=2)}"
+        }]
+    )
+
+    # Determine if we should approve, request changes, or comment
+    all_passed = (
+        ctx.get("style_passed") and
+        ctx.get("security_passed") and
+        ctx.get("tests_passed")
+    )
+
+    return {
+        "review_body": response.content,
+        "action": "APPROVE" if all_passed else "REQUEST_CHANGES",
+    }
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 4: Post review to GitHub
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="post_review", deps=["generate_review"])
+async def post_review(ctx):
+    github = forge.get_agent("github_agent")
+
+    await github.execute("post_review", {
+        "pr_number": ctx.get("pr_number"),
+        "body": ctx.get("review_body"),
+        "event": ctx.get("action"),  # APPROVE, REQUEST_CHANGES, COMMENT
+    })
+
+    # Post inline comments for specific issues
+    for issue in ctx.get("style_issues", []) + ctx.get("security_issues", []):
+        await github.execute("post_comment", {
+            "pr_number": ctx.get("pr_number"),
+            "path": issue["file"],
+            "line": issue["line"],
+            "body": issue["message"],
+        })
+
+    return {"posted": True}
+
+# ═══════════════════════════════════════════════════════════════════
+# CHAIN: Run checks in parallel, then review
+# ═══════════════════════════════════════════════════════════════════
 @forge.chain(name="code_review")
 class CodeReviewChain:
     steps = [
-        "fetch_diff",           # GitHub PR diff
-        "parse_changes",        # AST analysis
-        "check_style",          # Linting
-        "check_security",       # SAST scan
-        "check_tests",          # Coverage delta
-        "generate_review",      # LLM summary
-        "post_comments",        # GitHub API
+        "fetch_pr",
+        "check_style",      # ─┐
+        "check_security",   # ─┼─ These run in PARALLEL
+        "check_tests",      # ─┘
+        "generate_review",
+        "post_review",
     ]
     parallel_groups = [
-        ["check_style", "check_security", "check_tests"],  # Run in parallel
+        ["check_style", "check_security", "check_tests"],
     ]
+
+# ═══════════════════════════════════════════════════════════════════
+# RUN IT (webhook handler)
+# ═══════════════════════════════════════════════════════════════════
+async def handle_pr_webhook(payload: dict):
+    result = await forge.launch("code_review", {
+        "pr_url": payload["pull_request"]["url"],
+        "pr_number": payload["pull_request"]["number"],
+        "owner": payload["repository"]["owner"]["login"],
+        "repo": payload["repository"]["name"],
+    })
+
+    return {"status": "reviewed", "action": result["action"]}
 ```
 
-### 6. ETL with Validation
-```python
-@forge.step(name="extract", input_model=ExtractRequest, output_model=RawData)
-async def extract(ctx): ...
+---
 
-@forge.step(name="transform", deps=["extract"], output_model=CleanData)
+### 5. ETL Pipeline with Validation & Resumability
+
+Extract from source, transform with validation, load to destination — resumable on failure.
+
+```python
+from flowforge import FlowForge
+from flowforge.core import FileRunStore, ResumableChainRunner
+from pydantic import BaseModel, validator
+from typing import List
+
+forge = FlowForge(name="etl_pipeline")
+
+# ═══════════════════════════════════════════════════════════════════
+# MODELS with validation
+# ═══════════════════════════════════════════════════════════════════
+class RawRecord(BaseModel):
+    id: str
+    data: dict
+
+class CleanRecord(BaseModel):
+    id: str
+    name: str
+    email: str
+    amount: float
+
+    @validator("email")
+    def validate_email(cls, v):
+        if "@" not in v:
+            raise ValueError("Invalid email")
+        return v
+
+    @validator("amount")
+    def validate_amount(cls, v):
+        if v < 0:
+            raise ValueError("Amount cannot be negative")
+        return v
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 1: Extract from source
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(
+    name="extract",
+    output_model=List[RawRecord],  # Validates output
+)
+async def extract(ctx):
+    source = ctx.get("source")
+    db = forge.get_resource("source_db")
+
+    # Fetch all records (or paginate for large datasets)
+    records = await db.query(f"SELECT * FROM {source}")
+
+    return {
+        "raw_records": [RawRecord(id=r["id"], data=r).model_dump() for r in records],
+        "record_count": len(records),
+    }
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 2: Transform and validate
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(
+    name="transform",
+    deps=["extract"],
+)
 async def transform(ctx):
-    # If this fails, chain stops (fail-fast with contracts)
-    ...
+    raw_records = ctx.get("raw_records")
 
-@forge.step(name="load", deps=["transform"])
+    clean_records = []
+    errors = []
+
+    for raw in raw_records:
+        try:
+            clean = CleanRecord(
+                id=raw["id"],
+                name=raw["data"]["name"],
+                email=raw["data"]["email"],
+                amount=float(raw["data"]["amount"]),
+            )
+            clean_records.append(clean.model_dump())
+        except Exception as e:
+            errors.append({"id": raw["id"], "error": str(e)})
+
+    return {
+        "clean_records": clean_records,
+        "transform_errors": errors,
+        "success_rate": len(clean_records) / len(raw_records) if raw_records else 0,
+    }
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 3: Load to destination
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(
+    name="load",
+    deps=["transform"],
+    retry=3,  # Retry on failure
+    timeout_ms=60000,  # 60 second timeout
+)
 async def load(ctx):
-    # Resumable: if load fails, resume from here (not re-extract)
-    ...
+    clean_records = ctx.get("clean_records")
+    dest_db = forge.get_resource("dest_db")
+
+    # Batch insert
+    inserted = 0
+    batch_size = 100
+
+    for i in range(0, len(clean_records), batch_size):
+        batch = clean_records[i:i + batch_size]
+        await dest_db.insert_many("clean_data", batch)
+        inserted += len(batch)
+
+        # Checkpoint progress (resumable if this step fails)
+        ctx.set("inserted_so_far", inserted)
+
+    return {
+        "inserted": inserted,
+        "destination": "clean_data",
+    }
+
+# ═══════════════════════════════════════════════════════════════════
+# STEP 4: Generate report
+# ═══════════════════════════════════════════════════════════════════
+@forge.step(name="report", deps=["load"])
+async def report(ctx):
+    return {
+        "summary": {
+            "source_records": ctx.get("record_count"),
+            "transformed": len(ctx.get("clean_records")),
+            "errors": len(ctx.get("transform_errors")),
+            "loaded": ctx.get("inserted"),
+            "success_rate": ctx.get("success_rate"),
+        },
+        "errors": ctx.get("transform_errors"),
+    }
+
+# ═══════════════════════════════════════════════════════════════════
+# CHAIN
+# ═══════════════════════════════════════════════════════════════════
+@forge.chain(name="etl")
+class ETLChain:
+    steps = ["extract", "transform", "load", "report"]
+    error_handling = "fail_fast"  # Stop on first error
+
+# ═══════════════════════════════════════════════════════════════════
+# RUN IT (with resumability)
+# ═══════════════════════════════════════════════════════════════════
+async def main():
+    # Use file-based run store for persistence
+    store = FileRunStore("./etl_checkpoints")
+    runner = ResumableChainRunner(forge, store=store)
+
+    try:
+        result = await runner.run("etl", {
+            "source": "raw_customers",
+        })
+        print(f"ETL complete: {result['summary']}")
+
+    except Exception as e:
+        print(f"ETL failed: {e}")
+
+        # Get the run ID from the error
+        run_id = runner.last_run_id
+
+        # Later, resume from where it failed
+        result = await runner.resume(run_id)
+        print(f"Resumed ETL complete: {result['summary']}")
+
+# Or use CLI:
+# flowforge run etl --resumable --data '{"source": "raw_customers"}'
+# flowforge resume <run_id>  # If it fails
 ```
 
-### 7. Multi-Tenant SaaS Workflows
+---
+
+### 6. Multi-Tenant SaaS Workflow
+
+Isolated execution per tenant with tenant-specific agents and rate limits.
+
 ```python
-# Each tenant gets isolated registries
-async def handle_request(tenant_id: str, request: dict):
-    async with IsolatedForge() as forge:
-        # Load tenant-specific agents
-        load_tenant_agents(forge, tenant_id)
+from flowforge import FlowForge, IsolatedForge
+from flowforge.middleware import RateLimiterMiddleware, LoggerMiddleware
 
-        # Run with tenant's rate limits
-        forge.use(RateLimiterMiddleware(get_tenant_limits(tenant_id)))
+# ═══════════════════════════════════════════════════════════════════
+# TENANT CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════
+TENANT_CONFIGS = {
+    "tenant_free": {
+        "rate_limit": 10,  # requests per minute
+        "max_tokens": 1000,
+        "models": ["gpt-3.5-turbo"],
+    },
+    "tenant_pro": {
+        "rate_limit": 100,
+        "max_tokens": 4000,
+        "models": ["gpt-3.5-turbo", "gpt-4"],
+    },
+    "tenant_enterprise": {
+        "rate_limit": 1000,
+        "max_tokens": 8000,
+        "models": ["gpt-3.5-turbo", "gpt-4", "gpt-4-turbo"],
+    },
+}
 
-        return await forge.launch("workflow", request)
+# ═══════════════════════════════════════════════════════════════════
+# TENANT-AWARE REQUEST HANDLER
+# ═══════════════════════════════════════════════════════════════════
+async def handle_tenant_request(tenant_id: str, request: dict):
+    """
+    Each tenant gets:
+    - Isolated registries (no cross-contamination)
+    - Tenant-specific rate limits
+    - Tenant-specific model access
+    """
+    config = TENANT_CONFIGS.get(tenant_id, TENANT_CONFIGS["tenant_free"])
+
+    # Create isolated forge for this tenant
+    async with IsolatedForge(name=f"forge_{tenant_id}") as forge:
+
+        # Apply tenant-specific middleware
+        forge.use(LoggerMiddleware(prefix=f"[{tenant_id}]"))
+        forge.use(RateLimiterMiddleware({
+            "generate": {"requests_per_second": config["rate_limit"] / 60}
+        }))
+
+        # Register tenant-specific steps
+        @forge.step(name="validate_request")
+        async def validate_request(ctx):
+            model = ctx.get("model", "gpt-3.5-turbo")
+            if model not in config["models"]:
+                raise ValueError(f"Model {model} not available for your plan")
+
+            if ctx.get("max_tokens", 0) > config["max_tokens"]:
+                raise ValueError(f"Max tokens exceeds plan limit of {config['max_tokens']}")
+
+            return {"validated": True, "model": model}
+
+        @forge.step(name="generate", deps=["validate_request"])
+        async def generate(ctx):
+            llm = get_llm_client()  # Shared client, but rate-limited per tenant
+
+            response = await llm.chat(
+                model=ctx.get("model"),
+                messages=ctx.get("messages"),
+                max_tokens=min(ctx.get("max_tokens", 500), config["max_tokens"]),
+            )
+
+            return {"response": response.content}
+
+        @forge.step(name="log_usage", deps=["generate"])
+        async def log_usage(ctx):
+            # Log to tenant-specific usage table
+            await log_to_db(tenant_id, {
+                "tokens": ctx.get("tokens_used"),
+                "model": ctx.get("model"),
+                "timestamp": datetime.now(),
+            })
+            return {"logged": True}
+
+        @forge.chain(name="tenant_workflow")
+        class TenantWorkflow:
+            steps = ["validate_request", "generate", "log_usage"]
+
+        # Run the workflow
+        return await forge.launch("tenant_workflow", request)
+
+# ═══════════════════════════════════════════════════════════════════
+# API ENDPOINT
+# ═══════════════════════════════════════════════════════════════════
+from fastapi import FastAPI, Header
+
+app = FastAPI()
+
+@app.post("/generate")
+async def generate(
+    request: dict,
+    x_tenant_id: str = Header(...),
+):
+    result = await handle_tenant_request(x_tenant_id, request)
+    return {"response": result["response"]}
 ```
 
-### 8. Agentic Loop (ReAct Pattern)
-```python
-@forge.step(name="think")
-async def think(ctx):
-    return await llm.generate_thought(ctx.get("observation"))
+---
 
-@forge.step(name="act", deps=["think"])
-async def act(ctx):
-    action = ctx.get("thought")["action"]
-    tool = ctx.get_agent(action["tool"])
-    return await tool.execute(action["input"])
+### Quick Reference: Pattern → FlowForge Features
 
-@forge.step(name="observe", deps=["act"])
-async def observe(ctx):
-    result = ctx.get("action_result")
-    if is_final(result):
-        return {"done": True, "answer": result}
-    ctx.set("observation", result)
-    return {"done": False}
+| Pattern | Example | Key Features |
+|---------|---------|--------------|
+| **Router** | Multi-model AI | Conditional logic in steps, resource injection |
+| **Pipeline** | RAG, ETL | `deps`, input/output contracts, sequential flow |
+| **Fan-out/Fan-in** | Code review | `parallel_groups`, multiple agents |
+| **Saga** | Support bot | `error_handling="continue"`, compensating actions |
+| **Multi-tenant** | SaaS | `IsolatedForge`, per-tenant middleware |
+| **Resumable** | ETL | `FileRunStore`, `ResumableChainRunner`, `flowforge resume` |
 
-# Loop until done (via chain composition)
-@forge.chain(name="react_loop")
-class ReactLoop:
-    steps = ["think", "act", "observe"]
-    loop_until = lambda ctx: ctx.get("done", False)  # Custom loop condition
-```
-
-### 9. Batch Processing with Progress
-```python
-@forge.step(name="process_batch")
-async def process_batch(ctx):
-    items = ctx.get("items")
-    results = []
-
-    for i, item in enumerate(items):
-        result = await process_one(item)
-        results.append(result)
-
-        # Checkpoint after each item (resumable on failure)
-        ctx.checkpoint({"processed": i + 1, "results": results})
-
-    return {"results": results}
-```
-
-### 10. A/B Testing LLM Prompts
-```python
-@forge.step(name="ab_test_prompt")
-async def ab_test(ctx):
-    variant = random.choice(["A", "B"])
-    prompt = PROMPTS[variant]
-
-    result = await llm.complete(prompt.format(**ctx.get("inputs")))
-
-    # Track for analysis
-    ctx.set("variant", variant, scope=ContextScope.CHAIN)
-    metrics.record("prompt_variant", variant)
-
-    return {"response": result, "variant": variant}
-```
-
-### Mix & Match Patterns
-
-| Pattern | Use Case | Key Features Used |
-|---------|----------|-------------------|
-| Fan-out/Fan-in | Query multiple sources, merge | `parallel_groups`, agents |
-| Pipeline | Sequential processing | `deps`, input/output contracts |
-| Router | Dynamic step selection | Conditional logic in steps |
-| Saga | Distributed transactions | `error_handling="continue"`, compensating steps |
-| Retry Loop | Iterative refinement | Chain composition, `loop_until` |
-| Batch | Process large datasets | Checkpointing, resumability |
-| Multi-tenant | SaaS isolation | `IsolatedForge`, per-tenant middleware |
+---
 
 ### The FlowForge Advantage
 
 | Without FlowForge | With FlowForge |
 |-------------------|----------------|
-| Manual retry/backoff code | `@forge.step(retry=3, backoff=2.0)` |
-| Custom parallel execution | `parallel_groups=[["a", "b", "c"]]` |
-| Ad-hoc error handling | `error_handling="continue"` / `"fail_fast"` |
-| No visibility into failures | `flowforge runs --status failed` |
-| Start from scratch on crash | `flowforge resume <run_id>` |
-| Scattered logging | `LoggerMiddleware` + `MetricsMiddleware` |
-| No rate limiting | `RateLimiterMiddleware` per-step |
-| Hardcoded dependencies | `resources=["llm", "db"]` injection |
+| 50+ lines of retry/backoff code | `@forge.step(retry=3, backoff=2.0)` |
+| Manual asyncio.gather orchestration | `parallel_groups=[["a", "b", "c"]]` |
+| Custom error handling per service | `error_handling="continue"` / `"fail_fast"` |
+| No visibility into partial failures | `flowforge runs --status failed` |
+| Re-run entire pipeline on crash | `flowforge resume <run_id>` |
+| Scattered logging across services | `LoggerMiddleware` + `MetricsMiddleware` |
+| Per-service rate limiting | `RateLimiterMiddleware` with per-step config |
+| Hardcoded client initialization | `forge.register_resource()` + DI |
+| Manual test isolation | `IsolatedForge` context manager |
 
 ---
 
-**Bottom line**: If you're stitching together APIs, LLMs, databases, or any async operations with dependencies — FlowForge gives you the plumbing for free so you can focus on the logic.
+**Bottom line**: FlowForge handles the orchestration plumbing — retries, parallelism, context, logging, resumability — so you focus on your business logic.
