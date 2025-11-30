@@ -46,11 +46,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -74,11 +72,11 @@ class ToolName(Enum):
 
 class CMPTRequest(BaseModel):
     """Unified request model for CMPT chain"""
-    corporate_client_email: Optional[str] = None
-    corporate_client_names: Optional[str] = None
-    rbc_employee_email: Optional[str] = None
-    meeting_datetime: Optional[str] = None
-    corporate_company_name: Optional[str] = None
+    corporate_client_email: str | None = None
+    corporate_client_names: str | None = None
+    rbc_employee_email: str | None = None
+    meeting_datetime: str | None = None
+    corporate_company_name: str | None = None
     verbose: bool = False
 
 
@@ -97,29 +95,29 @@ class CitationDict(BaseModel):
 
 class FinancialMetricsResponse(BaseModel):
     """Financial metrics extraction response"""
-    current_annual_revenue: Optional[float] = None
-    current_annual_revenue_date: Optional[str] = None
-    current_annual_revenue_citation: Optional[CitationDict] = None
-    current_annual_revenue_yoy_change: Optional[float] = None
-    current_annual_revenue_yoy_change_citation: Optional[CitationDict] = None
-    estimated_annual_revenue_next_year: Optional[float] = None
-    estimated_annual_revenue_next_year_date: Optional[str] = None
-    estimated_annual_revenue_next_year_citation: Optional[CitationDict] = None
-    ebitda_margin: Optional[float] = None
-    ebitda_margin_citation: Optional[CitationDict] = None
-    ebitda_margin_yoy_change: Optional[float] = None
-    ebitda_margin_yoy_change_citation: Optional[CitationDict] = None
-    stock_price: Optional[float] = None
-    stock_price_citation: Optional[CitationDict] = None
-    stock_price_daily_change: Optional[float] = None
-    stock_price_daily_change_percent: Optional[float] = None
-    stock_price_yoy_change: Optional[float] = None
-    stock_price_yoy_change_citation: Optional[CitationDict] = None
-    market_cap: Optional[float] = None
-    market_cap_citation: Optional[CitationDict] = None
-    market_cap_date: Optional[str] = None
-    revenue_growth_trajectory: Optional[dict[str, Optional[float]]] = None
-    revenue_growth_trajectory_citation: Optional[CitationDict] = None
+    current_annual_revenue: float | None = None
+    current_annual_revenue_date: str | None = None
+    current_annual_revenue_citation: CitationDict | None = None
+    current_annual_revenue_yoy_change: float | None = None
+    current_annual_revenue_yoy_change_citation: CitationDict | None = None
+    estimated_annual_revenue_next_year: float | None = None
+    estimated_annual_revenue_next_year_date: str | None = None
+    estimated_annual_revenue_next_year_citation: CitationDict | None = None
+    ebitda_margin: float | None = None
+    ebitda_margin_citation: CitationDict | None = None
+    ebitda_margin_yoy_change: float | None = None
+    ebitda_margin_yoy_change_citation: CitationDict | None = None
+    stock_price: float | None = None
+    stock_price_citation: CitationDict | None = None
+    stock_price_daily_change: float | None = None
+    stock_price_daily_change_percent: float | None = None
+    stock_price_yoy_change: float | None = None
+    stock_price_yoy_change_citation: CitationDict | None = None
+    market_cap: float | None = None
+    market_cap_citation: CitationDict | None = None
+    market_cap_date: str | None = None
+    revenue_growth_trajectory: dict[str, float | None] | None = None
+    revenue_growth_trajectory_citation: CitationDict | None = None
 
 
 class StrategicAnalysisResponse(BaseModel):
@@ -149,18 +147,18 @@ class StrategicAnalysisResponse(BaseModel):
 class CompanyInfoOutput(BaseModel):
     """Output contract for extract_company_info step"""
     company_name: str
-    ticker_symbol: Optional[str] = None
+    ticker_symbol: str | None = None
     company_type: str = "PUB"  # PUB, PRIV, SUB
-    sector: Optional[str] = None
-    industry: Optional[str] = None
+    sector: str | None = None
+    industry: str | None = None
 
 
 class ContextBuilderOutput(BaseModel):
     """Output contract for build_context step"""
-    company_info: Optional[dict] = None
-    temporal_context: Optional[dict] = None
+    company_info: dict | None = None
+    temporal_context: dict | None = None
     meeting_date: str
-    company_name: Optional[str] = None
+    company_name: str | None = None
     company_type: str = "PUB"
 
 
@@ -482,7 +480,7 @@ async def extract_temporal_context(ctx: ChainContext) -> dict:
     """
     company_info = ctx.get("company_info", {})
     company_name = company_info.get("company_name") or ctx.get("company_name")
-    ticker = company_info.get("ticker_symbol")
+    # ticker available for future API calls: company_info.get("ticker_symbol")
 
     try:
         # In production, this would call the earnings calendar API
@@ -619,7 +617,6 @@ async def generate_subqueries(ctx: ChainContext) -> dict:
     # Get agents to build their subqueries
     news_agent = forge.get_agent("news_agent")
     sec_agent = forge.get_agent("sec_agent")
-    earnings_agent = forge.get_agent("earnings_agent")
 
     subqueries = {
         ToolName.NEWS_TOOL.value: news_agent._build_subqueries(company_name),
@@ -875,10 +872,8 @@ async def generate_financial_metrics(ctx: ChainContext) -> dict:
 
     Equivalent to: ResponseBuilderAndGenerator.get_structured_response (for metrics)
     """
-    prompts = ctx.get("prompts", {})
-    prompt = prompts.get("financial_metrics_prompt", "")
-
-    # In production, this would call the LLM gateway
+    # In production, get prompt from: ctx.get("prompts", {}).get("financial_metrics_prompt")
+    # and call the LLM gateway
     # from flowforge.services.llm_gateway import get_llm_client
     # client = get_llm_client()
     # response = await client.generate_async(prompt, ...)
@@ -911,9 +906,7 @@ async def generate_strategic_analysis(ctx: ChainContext) -> dict:
 
     Equivalent to: ResponseBuilderAndGenerator.get_structured_response (for analysis)
     """
-    prompts = ctx.get("prompts", {})
-    prompt = prompts.get("strategic_analysis_prompt", "")
-
+    # In production, get prompt from: ctx.get("prompts", {}).get("strategic_analysis_prompt")
     # Placeholder response
     strategic_analysis = {
         "strength": [],
@@ -945,9 +938,7 @@ async def validate_metrics(ctx: ChainContext) -> dict:
 
     Equivalent to: MetricsValidator.validate_financial_metrics
     """
-    financial_metrics = ctx.get("financial_metrics", {})
-    parsed_data = ctx.get("parsed_agent_data", {})
-
+    # In production, validate: ctx.get("financial_metrics") against ctx.get("parsed_agent_data")
     # Placeholder validation
     validation_results = {
         "validation_summary": {
@@ -1066,8 +1057,8 @@ class CMPTPipeline:
 
 async def run_cmpt_chain(
     company_name: str,
-    meeting_date: Optional[str] = None,
-    client_email: Optional[str] = None,
+    meeting_date: str | None = None,
+    client_email: str | None = None,
     verbose: bool = False,
 ) -> dict:
     """

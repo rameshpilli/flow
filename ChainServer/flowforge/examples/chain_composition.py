@@ -14,9 +14,9 @@ Run with:
 """
 
 import asyncio
-from flowforge import FlowForge, ChainContext
-from flowforge.core.context import ContextScope
 
+from flowforge import ChainContext, FlowForge
+from flowforge.core.context import ContextScope
 
 # Initialize FlowForge
 forge = FlowForge(name="composition_example", version="1.0.0")

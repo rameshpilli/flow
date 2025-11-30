@@ -14,12 +14,12 @@ Features:
 
 import asyncio
 import atexit
-import inspect
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +176,11 @@ class ResourceManager:
         # If factory is not callable, wrap it
         if not callable(factory):
             instance = factory
-            factory = lambda: instance
+
+            def make_factory(inst):
+                return lambda: inst
+
+            factory = make_factory(instance)
             is_async_factory = False
 
         # Auto-detect async

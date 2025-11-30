@@ -35,7 +35,6 @@ Usage:
 import asyncio
 import json
 import logging
-import subprocess
 import time
 from dataclasses import dataclass, field
 from typing import Any, Literal

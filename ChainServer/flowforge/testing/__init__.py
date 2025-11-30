@@ -32,12 +32,11 @@ Usage:
             ...
 """
 
-from flowforge.testing.mocks import (
-    MockAgent,
-    MockAgentResult,
-    mock_step,
-    mock_chain,
-    MockMiddleware,
+from flowforge.testing.assertions import (
+    assert_chain_valid,
+    assert_context_has,
+    assert_step_completed,
+    assert_step_failed,
 )
 from flowforge.testing.fixtures import (
     IsolatedForge,
@@ -45,11 +44,12 @@ from flowforge.testing.fixtures import (
     create_test_forge,
     sample_chain_request,
 )
-from flowforge.testing.assertions import (
-    assert_step_completed,
-    assert_step_failed,
-    assert_context_has,
-    assert_chain_valid,
+from flowforge.testing.mocks import (
+    MockAgent,
+    MockAgentResult,
+    MockMiddleware,
+    mock_chain,
+    mock_step,
 )
 
 __all__ = [

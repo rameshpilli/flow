@@ -29,12 +29,10 @@ import asyncio
 import importlib
 import importlib.util
 import json
-import logging
 import os
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 
 def get_forge():
@@ -43,7 +41,7 @@ def get_forge():
 
     Uses importlib.util for proper module loading without sys.path manipulation.
     """
-    from flowforge import FlowForge, get_forge as _get_forge
+    from flowforge import get_forge as _get_forge
 
     cwd = Path.cwd()
 
@@ -68,7 +66,7 @@ def get_forge():
 
     # Import CMPT chain by default if nothing else was imported
     try:
-        from flowforge.chains import CMPTChain
+        from flowforge.chains import CMPTChain  # noqa: F401
     except ImportError:
         pass
 
@@ -124,7 +122,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"\n{'═' * 60}")
     print(f"  Running: {args.chain_name}")
     if resumable:
-        print(f"  Mode: Resumable (checkpoints enabled)")
+        print("  Mode: Resumable (checkpoints enabled)")
         if run_id:
             print(f"  Run ID: {run_id}")
     print(f"  Input: {json.dumps(data, indent=2) if data else '{}'}")
@@ -228,7 +226,7 @@ def cmd_runs(args: argparse.Namespace) -> int:
             return 0
 
         print(f"\n{'═' * 80}")
-        print(f"  Chain Runs" + (f" ({chain_name})" if chain_name else ""))
+        print("  Chain Runs" + (f" ({chain_name})" if chain_name else ""))
         print(f"{'═' * 80}\n")
 
         # Header
@@ -256,7 +254,7 @@ def cmd_runs(args: argparse.Namespace) -> int:
         print(f"\n{'═' * 80}")
         print(f"  Total: {len(runs)} runs")
         if args.resumable_only:
-            print(f"  (showing resumable runs only)")
+            print("  (showing resumable runs only)")
         print(f"{'═' * 80}\n")
 
         return 0
@@ -293,11 +291,11 @@ def cmd_run_info(args: argparse.Namespace) -> int:
         print(f"  Duration: {run.total_duration_ms:.2f}ms")
         print(f"  Steps: {run.completed_steps}/{run.total_steps}")
         if run.resumable:
-            print(f"  Resumable: Yes")
+            print("  Resumable: Yes")
             print(f"  Last Completed: {run.last_completed_step or 'None'}")
 
         if run.steps:
-            print(f"\n  Steps:")
+            print("\n  Steps:")
             for step in run.steps:
                 status_icon = {
                     "completed": "✓",
@@ -467,10 +465,10 @@ def register(forge):
 
     agent_file.write_text(template)
     print(f"Created: {agent_file}")
-    print(f"\nTo use this agent:")
+    print("\nTo use this agent:")
     print(f"  from {name.lower()}_agent import {name}Agent")
     print(f"  agent = {name}Agent()")
-    print(f"  result = await agent.fetch('query')")
+    print("  result = await agent.fetch('query')")
 
     return 0
 
@@ -584,10 +582,10 @@ if __name__ == "__main__":
 
     chain_file.write_text(template)
     print(f"Created: {chain_file}")
-    print(f"\nTo use this chain:")
+    print("\nTo use this chain:")
     print(f"  from {name.lower()}_chain import run, check, graph")
-    print(f"  result = await run({{'key': 'value'}})")
-    print(f"\nOr via CLI:")
+    print("  result = await run({'key': 'value'})")
+    print("\nOr via CLI:")
     print(f"  flowforge run {name}Chain")
 
     return 0
@@ -633,12 +631,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
         print(f"  Resources checked: {len(result.resources_checked)}")
 
         if result.errors:
-            print(f"\n  \033[91mErrors:\033[0m")
+            print("\n  \033[91mErrors:\033[0m")
             for error in result.errors:
                 print(f"    - {error}")
 
         if result.warnings:
-            print(f"\n  \033[93mWarnings:\033[0m")
+            print("\n  \033[93mWarnings:\033[0m")
             for warning in result.warnings:
                 print(f"    - {warning}")
 
@@ -718,7 +716,7 @@ def cmd_health(args: argparse.Namespace) -> int:
 
     # Use the comprehensive health aggregator for detailed checks
     if detailed:
-        from flowforge.utils.health import run_health_checks, HealthStatus
+        from flowforge.utils.health import HealthStatus, run_health_checks
 
         try:
             result = asyncio.run(run_health_checks(
@@ -737,7 +735,7 @@ def cmd_health(args: argparse.Namespace) -> int:
             color = status_colors.get(result.status, "")
 
             print(f"\n{'═' * 60}")
-            print(f"  FlowForge Health Check (Detailed)")
+            print("  FlowForge Health Check (Detailed)")
             print(f"{'═' * 60}\n")
 
             print(f"  Status: {color}{result.status.value.upper()}{reset}")
@@ -745,12 +743,12 @@ def cmd_health(args: argparse.Namespace) -> int:
             print(f"  Environment: {result.environment}")
             print(f"  Total Latency: {result.total_latency_ms:.2f}ms")
 
-            print(f"\n  Summary:")
+            print("\n  Summary:")
             print(f"    Healthy:   {result.healthy_count}")
             print(f"    Degraded:  {result.degraded_count}")
             print(f"    Unhealthy: {result.unhealthy_count}")
 
-            print(f"\n  Components:")
+            print("\n  Components:")
             for comp in result.components:
                 comp_color = status_colors.get(comp.status, "")
                 icon = {
@@ -796,7 +794,7 @@ def cmd_health(args: argparse.Namespace) -> int:
         color = status_colors.get(health.status, "")
 
         print(f"\n{'═' * 50}")
-        print(f"  FlowForge Health Check")
+        print("  FlowForge Health Check")
         print(f"{'═' * 50}\n")
 
         print(f"  Status: {color}{health.status.upper()}{reset}")
@@ -804,14 +802,14 @@ def cmd_health(args: argparse.Namespace) -> int:
         print(f"  Environment: {health.environment}")
 
         if health.checks:
-            print(f"\n  Checks:")
+            print("\n  Checks:")
             for check, passed in health.checks.items():
                 icon = "✓" if passed else "✗"
                 check_color = "\033[92m" if passed else "\033[91m"
                 print(f"    {check_color}{icon}{reset} {check}")
 
         print(f"\n{'═' * 50}")
-        print(f"  Tip: Use --detailed for full dependency checks")
+        print("  Tip: Use --detailed for full dependency checks")
         print(f"{'═' * 50}\n")
 
         if args.json:
@@ -861,7 +859,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     import platform
 
     print(f"\n{'═' * 50}")
-    print(f"  FlowForge Doctor")
+    print("  FlowForge Doctor")
     print(f"{'═' * 50}\n")
 
     issues = []
@@ -923,7 +921,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             checks_passed += 1  # Optional, so still passes
 
     # 4. Environment variables
-    print(f"\n  Environment Variables:")
+    print("\n  Environment Variables:")
     env_vars = [
         ("LLM_API_KEY", True, "LLM API authentication"),
         ("LLM_BASE_URL", False, "LLM endpoint URL"),
@@ -947,11 +945,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             checks_passed += 1
 
     # 5. FlowForge imports
-    print(f"\n  FlowForge Imports:")
+    print("\n  FlowForge Imports:")
     checks_total += 1
     try:
-        from flowforge import FlowForge, get_forge
-        print(f"  ✅ FlowForge core imports successful")
+        from flowforge import FlowForge, get_forge  # noqa: F401
+        print("  ✅ FlowForge core imports successful")
         checks_passed += 1
     except ImportError as e:
         print(f"  ❌ FlowForge import failed: {e}")
@@ -960,17 +958,17 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # 6. Check for circular imports (basic check)
     checks_total += 1
     try:
-        from flowforge.core import forge, context, dag, registry
-        from flowforge.middleware import base as mw_base
-        from flowforge.agents import base as agent_base
-        print(f"  ✅ No circular import issues detected")
+        from flowforge.agents import base as agent_base  # noqa: F401
+        from flowforge.core import context, dag, forge, registry  # noqa: F401
+        from flowforge.middleware import base as mw_base  # noqa: F401
+        print("  ✅ No circular import issues detected")
         checks_passed += 1
     except ImportError as e:
         print(f"  ❌ Circular import detected: {e}")
         issues.append(f"Circular import: {e}")
 
     # 7. Validate registered chains
-    print(f"\n  Registered Chains:")
+    print("\n  Registered Chains:")
     checks_total += 1
     try:
         forge = get_forge()
@@ -993,7 +991,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             if valid_count == len(chains):
                 checks_passed += 1
         else:
-            print(f"  ⚪ No chains registered")
+            print("  ⚪ No chains registered")
             checks_passed += 1
     except Exception as e:
         print(f"  ❌ Could not check chains: {e}")
@@ -1014,11 +1012,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print(f"     - {warning}")
 
     if not issues and not warnings:
-        print(f"\n  🎉 All checks passed! FlowForge is ready to use.")
+        print("\n  🎉 All checks passed! FlowForge is ready to use.")
     elif not issues:
-        print(f"\n  ✅ FlowForge is functional with minor warnings.")
+        print("\n  ✅ FlowForge is functional with minor warnings.")
     else:
-        print(f"\n  ❌ Please fix the issues above before using FlowForge.")
+        print("\n  ❌ Please fix the issues above before using FlowForge.")
 
     print(f"{'═' * 50}\n")
 
@@ -1028,14 +1026,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 def cmd_config(args: argparse.Namespace) -> int:
     """Show current configuration (secrets masked)."""
-    from flowforge.utils.config import get_config, ConfigError
+    from flowforge.utils.config import ConfigError, get_config
 
     try:
         config = get_config()
         safe_config = config.to_safe_dict()
 
         print(f"\n{'═' * 50}")
-        print(f"  FlowForge Configuration")
+        print("  FlowForge Configuration")
         print(f"{'═' * 50}\n")
 
         for key, value in safe_config.items():
@@ -1062,8 +1060,8 @@ def cmd_dev(args: argparse.Namespace) -> int:
 
     # Try to import watchdog for file watching
     try:
-        from watchdog.observers import Observer
         from watchdog.events import FileSystemEventHandler
+        from watchdog.observers import Observer
         WATCHDOG_AVAILABLE = True
     except ImportError:
         WATCHDOG_AVAILABLE = False
@@ -1144,8 +1142,9 @@ def cmd_debug(args: argparse.Namespace) -> int:
     - Step results with timing
     - Error details and tracebacks
     """
-    from flowforge.utils.config import get_config
     import datetime
+
+    from flowforge.utils.config import get_config
 
     forge = get_forge()
     config = get_config()

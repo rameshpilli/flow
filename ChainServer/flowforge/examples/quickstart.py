@@ -15,7 +15,7 @@ Run this example:
 
 import asyncio
 
-from flowforge import FlowForge, ChainContext
+from flowforge import ChainContext, FlowForge
 
 # Create FlowForge instance (isolated to prevent registry bleed)
 forge = FlowForge(name="quickstart", isolated=True)

@@ -57,7 +57,7 @@ import pickle
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -342,12 +342,27 @@ class RedisContextStore(ContextStore):
     Designed to run Redis in the same container on a different port
     for low-latency access while keeping data external to Python memory.
 
-    Setup:
+    Memory Configuration:
+        The maxmemory setting controls how much memory Redis will use.
+        When maxmemory is reached, Redis uses the eviction policy (default: allkeys-lru).
+
+        Sizing guidelines:
+        - Small workloads: 128MB-256MB (handles ~100-500 concurrent contexts)
+        - Medium workloads: 512MB-1GB (handles ~1000-5000 concurrent contexts)
+        - Large workloads: 2GB-4GB (handles ~10000+ concurrent contexts)
+
+    Setup with external Redis:
         # Start Redis in same container (e.g., supervisord or docker-compose)
         redis-server --port 6380 --maxmemory 512mb --maxmemory-policy allkeys-lru
 
     Usage:
-        store = RedisContextStore(host="localhost", port=6380)
+        # Configure with memory limit (sets maxmemory on Redis server)
+        store = RedisContextStore(
+            host="localhost",
+            port=6380,
+            maxmemory="512mb",  # Options: "128mb", "256mb", "512mb", "1gb", "2gb"
+        )
+
         ref = await store.store("sec_filing", large_data, summary="10-K for AAPL")
     """
 
@@ -359,14 +374,35 @@ class RedisContextStore(ContextStore):
         password: str | None = None,
         key_prefix: str = "flowforge:ctx:",
         max_connections: int = 10,
+        maxmemory: str | None = None,
+        maxmemory_policy: str = "allkeys-lru",
     ):
+        """
+        Initialize Redis context store.
+
+        Args:
+            host: Redis host
+            port: Redis port (default 6380 to avoid conflicts with other Redis instances)
+            db: Redis database number
+            password: Redis password
+            key_prefix: Prefix for all context keys
+            max_connections: Maximum connection pool size
+            maxmemory: Memory limit for Redis (e.g., "128mb", "512mb", "1gb", "2gb").
+                      If provided, will configure Redis server on first connection.
+            maxmemory_policy: Eviction policy when maxmemory is reached.
+                             Options: "allkeys-lru" (default), "volatile-lru",
+                             "allkeys-random", "volatile-random", "volatile-ttl", "noeviction"
+        """
         self._host = host
         self._port = port
         self._db = db
         self._password = password
         self._key_prefix = key_prefix
         self._max_connections = max_connections
+        self._maxmemory = maxmemory
+        self._maxmemory_policy = maxmemory_policy
         self._redis = None
+        self._memory_configured = False
 
     async def _get_redis(self):
         """Lazy initialization of Redis connection."""
@@ -388,7 +424,33 @@ class RedisContextStore(ContextStore):
                 decode_responses=False,  # We handle bytes
             )
 
+            # Configure memory limits if specified
+            if self._maxmemory and not self._memory_configured:
+                await self._configure_memory()
+
         return self._redis
+
+    async def _configure_memory(self) -> None:
+        """Configure Redis memory settings."""
+        if not self._redis or self._memory_configured:
+            return
+
+        try:
+            # Set maxmemory
+            await self._redis.config_set("maxmemory", self._maxmemory)
+            await self._redis.config_set("maxmemory-policy", self._maxmemory_policy)
+            self._memory_configured = True
+
+            logger.info(
+                f"Redis memory configured: maxmemory={self._maxmemory}, "
+                f"policy={self._maxmemory_policy}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Could not configure Redis memory settings: {e}. "
+                f"This may require Redis admin privileges. "
+                f"Configure Redis directly with: redis-cli CONFIG SET maxmemory {self._maxmemory}"
+            )
 
     def _redis_key(self, ref_id: str) -> str:
         """Get Redis key for ref ID."""
@@ -475,7 +537,7 @@ class RedisContextStore(ContextStore):
         return await redis.exists(redis_key) > 0
 
     async def get_stats(self) -> dict[str, Any]:
-        """Get context store statistics."""
+        """Get context store statistics including memory usage."""
         redis = await self._get_redis()
 
         # Count refs
@@ -491,12 +553,31 @@ class RedisContextStore(ContextStore):
             size = await redis.strlen(key)
             total_size += size
 
+        # Get memory info
+        memory_info = {}
+        try:
+            info = await redis.info("memory")
+            memory_info = {
+                "used_memory": info.get("used_memory"),
+                "used_memory_human": info.get("used_memory_human"),
+                "used_memory_peak": info.get("used_memory_peak"),
+                "used_memory_peak_human": info.get("used_memory_peak_human"),
+                "maxmemory": info.get("maxmemory"),
+                "maxmemory_human": info.get("maxmemory_human"),
+                "maxmemory_policy": info.get("maxmemory_policy"),
+            }
+        except Exception as e:
+            logger.debug(f"Could not get Redis memory info: {e}")
+
         return {
             "backend": "redis",
             "host": self._host,
             "port": self._port,
             "ref_count": len(keys),
             "sample_size_bytes": total_size,
+            "memory": memory_info,
+            "configured_maxmemory": self._maxmemory,
+            "configured_policy": self._maxmemory_policy,
         }
 
     async def close(self):
@@ -698,5 +779,6 @@ def create_context_store(
 
 # Type hint import for context
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from flowforge.core.context import ChainContext

@@ -14,11 +14,15 @@ import asyncio
 import contextvars
 import copy
 import logging
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, AsyncIterator, Iterator, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Optional, TypeVar
+
+if TYPE_CHECKING:
+    from flowforge.core.serializers import ContextSerializer
 
 logger = logging.getLogger(__name__)
 

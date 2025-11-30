@@ -24,9 +24,8 @@ Usage:
 
 import importlib
 import logging
-import sys
 from dataclasses import dataclass, field
-from typing import Any, Type
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +208,7 @@ def load_plugin(
 def load_plugin_class(
     name: str,
     group: str = AGENT_ENTRY_POINT,
-) -> Type[Any]:
+) -> type[Any]:
     """
     Load a plugin class without instantiating.
 

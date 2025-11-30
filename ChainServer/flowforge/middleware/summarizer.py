@@ -275,7 +275,11 @@ class LangChainSummarizer:
     async def _stuff_summarize(self, text: str, max_tokens: int | None = None) -> str:
         """Single LLM call with all text."""
         if not self.llm:
-            return self._truncate(text, max_tokens or 1000)
+            raise ValueError(
+                "No LLM configured for summarization. "
+                "Use create_openai_summarizer(), create_anthropic_summarizer(), "
+                "or create_gateway_summarizer() to configure an LLM backend."
+            )
 
         try:
             from langchain_core.output_parsers import StrOutputParser
@@ -285,12 +289,16 @@ class LangChainSummarizer:
             return await chain.ainvoke({"text": text})
         except Exception as e:
             logger.error(f"Stuff summarization failed: {e}")
-            return self._truncate(text, max_tokens or 1000)
+            raise RuntimeError(f"Summarization failed: {e}") from e
 
     async def _map_reduce_summarize(self, text: str, max_tokens: int | None = None) -> str:
         """Summarize chunks in parallel, then combine."""
         if not self.llm:
-            return self._truncate(text, max_tokens or 1000)
+            raise ValueError(
+                "No LLM configured for summarization. "
+                "Use create_openai_summarizer(), create_anthropic_summarizer(), "
+                "or create_gateway_summarizer() to configure an LLM backend."
+            )
 
         try:
             from langchain_core.output_parsers import StrOutputParser
@@ -322,12 +330,16 @@ class LangChainSummarizer:
 
         except Exception as e:
             logger.error(f"Map-Reduce summarization failed: {e}")
-            return self._truncate(text, max_tokens or 1000)
+            raise RuntimeError(f"Summarization failed: {e}") from e
 
     async def _refine_summarize(self, text: str, max_tokens: int | None = None) -> str:
         """Iteratively refine summary with each chunk (sequential)."""
         if not self.llm:
-            return self._truncate(text, max_tokens or 1000)
+            raise ValueError(
+                "No LLM configured for summarization. "
+                "Use create_openai_summarizer(), create_anthropic_summarizer(), "
+                "or create_gateway_summarizer() to configure an LLM backend."
+            )
 
         try:
             from langchain_core.output_parsers import StrOutputParser
@@ -358,14 +370,7 @@ class LangChainSummarizer:
 
         except Exception as e:
             logger.error(f"Refine summarization failed: {e}")
-            return self._truncate(text, max_tokens or 1000)
-
-    def _truncate(self, text: str, max_tokens: int) -> str:
-        """Simple truncation fallback."""
-        target_chars = max_tokens * 4
-        if len(text) <= target_chars:
-            return text
-        return text[: target_chars - 20] + "\n[... truncated ...]"
+            raise RuntimeError(f"Summarization failed: {e}") from e
 
 
 class SummarizerMiddleware(Middleware):
@@ -434,7 +439,12 @@ class SummarizerMiddleware(Middleware):
         elif hasattr(self, "_legacy_summarizer"):
             summarized = await self._run_legacy_summarizer(output_str, max_tokens)
         else:
-            summarized = output_str[: max_tokens * 4] + "\n[... truncated ...]"
+            raise ValueError(
+                f"Step '{step_name}' output exceeds {max_tokens} tokens but no summarizer configured. "
+                "Use create_openai_summarizer(), create_anthropic_summarizer(), "
+                "or create_gateway_summarizer() to configure an LLM backend, "
+                "or use Redis offloading with RedisContextStore for large payloads."
+            )
 
         summarized_tokens = count_tokens(summarized)
 
@@ -456,7 +466,7 @@ class SummarizerMiddleware(Middleware):
                 "original_tokens": token_count,
                 "summarized_tokens": summarized_tokens,
                 "summarization_strategy": (
-                    self.summarizer.strategy.value if self.summarizer else "truncation"
+                    self.summarizer.strategy.value if self.summarizer else "legacy"
                 ),
                 "content_type": content_type,
             }

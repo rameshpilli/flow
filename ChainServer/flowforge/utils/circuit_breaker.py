@@ -8,9 +8,10 @@ Prevents cascading failures by failing fast when a service is unhealthy.
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, TypeVar
+from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +214,7 @@ class CircuitBreaker:
 
             return result
 
-        except Exception as e:
+        except Exception:
             async with self._lock:
                 self._record_failure()
             raise

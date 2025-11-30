@@ -525,3 +525,7 @@ class ResilientCompositeAgent(BaseAgent):
             }
             for agent in self._resilient_agents
         }
+
+
+# Backward compatibility alias
+ResilienceConfig = ResilientAgentConfig

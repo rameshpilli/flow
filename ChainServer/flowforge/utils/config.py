@@ -15,8 +15,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, TypeVar, Generic, Callable
+from typing import Any, Generic, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -479,7 +478,7 @@ class FlowForgeConfig:
 
         if errors:
             raise ConfigError(
-                f"Configuration validation failed:\n" +
+                "Configuration validation failed:\n" +
                 "\n".join(f"  - {e}" for e in errors)
             )
 

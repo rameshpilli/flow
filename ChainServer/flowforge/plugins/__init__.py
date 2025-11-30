@@ -25,17 +25,17 @@ Usage:
     agent = pm.get("my_agent")
 """
 
-from flowforge.plugins.discovery import (
-    discover_plugins,
-    load_plugin,
-    PluginInfo,
-    PluginManager,
-)
 from flowforge.plugins.capability import (
     AgentCapability,
     CapabilityParameter,
     CapabilitySchema,
     validate_capability_schema,
+)
+from flowforge.plugins.discovery import (
+    PluginInfo,
+    PluginManager,
+    discover_plugins,
+    load_plugin,
 )
 from flowforge.plugins.http_adapter import (
     HTTPAdapterAgent,

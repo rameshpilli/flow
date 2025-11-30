@@ -6,8 +6,9 @@ Falls back gracefully when OpenTelemetry is not installed.
 """
 
 import logging
+from collections.abc import Callable
 from contextlib import contextmanager
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -16,10 +17,10 @@ T = TypeVar("T")
 # Try to import OpenTelemetry
 try:
     from opentelemetry import trace
-    from opentelemetry.trace import Span, Status, StatusCode, Tracer
+    from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.trace import Span, Status, StatusCode, Tracer
     OTEL_AVAILABLE = True
 except ImportError:
     OTEL_AVAILABLE = False

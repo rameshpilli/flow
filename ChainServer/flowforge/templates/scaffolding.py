@@ -9,10 +9,8 @@ Usage:
     flowforge new project my_app --with-api --with-docker
 """
 
-import os
 import re
 from pathlib import Path
-from typing import Any
 
 
 def to_snake_case(name: str) -> str:
@@ -924,11 +922,10 @@ async def get_chain_graph(chain_name: str, format: str = "mermaid"):
 '''
 
 
-def get_hello_chain_py(name: str) -> str:
+def get_hello_chain_py(_name: str) -> str:
     """Generate hello_chain.py content."""
-    snake_name = to_snake_case(name)
-    pascal_name = to_pascal_case(name)
-    return f'''"""
+    # name available for customization: to_snake_case(name), to_pascal_case(name)
+    return '''"""
 Hello Chain
 
 A simple example chain demonstrating FlowForge basics.
@@ -979,16 +976,16 @@ async def prepare_greeting(ctx: ChainContext):
     name = ctx.get("name", "World")
 
     # Prepare greeting
-    greeting = f"{{message}}, {{name}}!"
+    greeting = f"{message}, {name}!"
     timestamp = datetime.utcnow().isoformat()
 
     # Store in context
-    result = {{
+    result = {
         "greeting": greeting,
         "timestamp": timestamp,
         "original_message": message,
         "original_name": name,
-    }}
+    }
     ctx.set("greeting_data", result)
 
     return result
@@ -1036,7 +1033,7 @@ class HelloChain:
 
 async def run(message: str = "Hello", name: str = "World") -> dict:
     """Run the hello chain."""
-    return await forge.launch("hello_chain", {{"message": message, "name": name}})
+    return await forge.launch("hello_chain", {"message": message, "name": name})
 
 
 if __name__ == "__main__":
@@ -1197,10 +1194,9 @@ Encapsulate complex business logic in services, then use them in steps.
 '''
 
 
-def get_conftest_py(name: str) -> str:
+def get_conftest_py(_name: str) -> str:
     """Generate conftest.py for pytest."""
-    snake_name = to_snake_case(name)
-    return f'''"""
+    return '''"""
 Pytest configuration and fixtures.
 """
 
@@ -1227,10 +1223,10 @@ def forge():
 @pytest.fixture
 def sample_input():
     """Sample input data for testing."""
-    return {{
+    return {
         "message": "Test",
         "name": "User",
-    }}
+    }
 '''
 
 

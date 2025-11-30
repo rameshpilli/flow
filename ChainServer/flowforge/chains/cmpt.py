@@ -40,7 +40,7 @@ from flowforge.services import (
     ContextBuilderService,
     ResponseBuilderService,
 )
-from flowforge.utils.tracing import ChainTracer, trace_span
+from flowforge.utils.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 

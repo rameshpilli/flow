@@ -12,13 +12,6 @@ from typing import Any, TypeVar
 
 from flowforge.core.context import ChainContext, ContextManager, ContextScope
 from flowforge.core.dag import ChainRunner, DAGExecutor, DebugCallback
-from flowforge.core.run_store import (
-    FileRunStore,
-    InMemoryRunStore,
-    ResumableChainRunner,
-    RunCheckpoint,
-    RunStore,
-)
 from flowforge.core.registry import (
     AgentRegistry,
     ChainRegistry,
@@ -29,10 +22,16 @@ from flowforge.core.registry import (
     get_step_registry,
 )
 from flowforge.core.resources import (
-    Resource,
     ResourceManager,
     ResourceScope,
     get_resource_manager,
+)
+from flowforge.core.run_store import (
+    FileRunStore,
+    InMemoryRunStore,
+    ResumableChainRunner,
+    RunCheckpoint,
+    RunStore,
 )
 
 logger = logging.getLogger(__name__)
@@ -1127,7 +1126,7 @@ class FlowForge:
         Raises:
             ContractValidationError: If validation fails
         """
-        from flowforge.core.validation import validate_chain_input, is_pydantic_model
+        from flowforge.core.validation import is_pydantic_model, validate_chain_input
 
         # Get chain spec
         chain_spec = self._chain_registry.get_spec(chain_name)

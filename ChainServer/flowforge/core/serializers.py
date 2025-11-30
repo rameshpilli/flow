@@ -25,7 +25,8 @@ Usage:
 import json
 import re
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 
 class ContextSerializer(ABC):
@@ -250,7 +251,7 @@ class ContextRefSerializer(ContextSerializer):
 
     def serialize_value(self, key: str, value: Any) -> Any:
         # Import here to avoid circular imports
-        from flowforge.core.context_store import ContextRef, is_context_ref
+        from flowforge.core.context_store import ContextRef
 
         if isinstance(value, ContextRef):
             ref_dict = value.to_dict()

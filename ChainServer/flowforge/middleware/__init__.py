@@ -12,8 +12,8 @@ from flowforge.middleware.metrics import (
 )
 from flowforge.middleware.offload import (
     KEY_FIELD_EXTRACTORS,
-    OffloadMiddleware,
     SUMMARY_GENERATORS,
+    OffloadMiddleware,
     cap_items_with_metadata,
     cap_per_source,
     get_key_field_extractor,
@@ -26,8 +26,8 @@ from flowforge.middleware.rate_limiter import (
     CircuitState,
     RateLimitAndCircuitBreakerMiddleware,
     RateLimitConfig,
-    RateLimitExceededError,
     RateLimiterMiddleware,
+    RateLimitExceededError,
 )
 from flowforge.middleware.summarizer import (
     DOMAIN_PROMPTS,

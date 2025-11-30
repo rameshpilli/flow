@@ -34,9 +34,10 @@ Usage:
 
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -666,21 +667,21 @@ def cmd_validate(args) -> int:
 
     # Print results
     if result.valid:
-        print(f"  Status: VALID")
+        print("  Status: VALID")
     else:
-        print(f"  Status: INVALID")
+        print("  Status: INVALID")
 
     print(f"  Steps validated: {result.steps_validated}")
     print(f"  Agents checked: {len(result.agents_checked)}")
     print(f"  Resources checked: {len(result.resources_checked)}")
 
     if result.errors:
-        print(f"\n  Errors:")
+        print("\n  Errors:")
         for error in result.errors:
             print(f"    - {error}")
 
     if result.warnings:
-        print(f"\n  Warnings:")
+        print("\n  Warnings:")
         for warning in result.warnings:
             print(f"    - {warning}")
 

@@ -181,13 +181,13 @@ class ChunkFormatter:
     """
 
     @staticmethod
-    def format_chunks(raw_chunks: list[dict], agent_type: str = "default") -> str:
+    def format_chunks(raw_chunks: list[dict], _agent_type: str = "default") -> str:
         """
         Format raw chunks into structured text.
 
         Args:
             raw_chunks: List of chunk dictionaries
-            agent_type: Type of agent (affects parsing)
+            _agent_type: Reserved for future use
 
         Returns:
             Formatted string with CHUNK-N sections

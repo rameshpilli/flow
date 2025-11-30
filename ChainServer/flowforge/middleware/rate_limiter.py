@@ -14,11 +14,11 @@ Features:
 import asyncio
 import logging
 import time
-from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 from flowforge.core.context import ChainContext, StepResult
 from flowforge.middleware.base import Middleware

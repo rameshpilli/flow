@@ -46,11 +46,11 @@ Usage:
 import json
 import logging
 import pickle
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from flowforge.core.context import ChainContext, StepResult
 from flowforge.core.context_store import (
-    ContextRef,
     ContextStore,
     InMemoryContextStore,
     is_context_ref,

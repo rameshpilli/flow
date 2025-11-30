@@ -15,12 +15,13 @@ import asyncio
 import logging
 import time
 import traceback
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
-from flowforge.core.context import ChainContext, ExecutionSummary, StepResult
+from flowforge.core.context import ChainContext, StepResult
 from flowforge.core.registry import (
     ChainSpec,
     StepSpec,
@@ -31,7 +32,6 @@ from flowforge.core.validation import (
     ContractValidationError,
     is_pydantic_model,
     validate_chain_input,
-    validate_input,
     validate_output,
 )
 
@@ -44,7 +44,6 @@ __all__ = [
     "ExecutionPlan",
     "ChainRunner",
     "DebugCallback",
-    "NodeState",
 ]
 
 
@@ -740,7 +739,7 @@ class DAGExecutor:
                         logger.info(f"Step {node.name} completed in {duration_ms:.2f}ms")
                         return step_result
 
-                    except asyncio.TimeoutError as e:
+                    except asyncio.TimeoutError:
                         duration_ms = (time.perf_counter() - start_time) * 1000
                         last_error = TimeoutError(f"Step {node.name} timed out after {timeout_ms}ms")
                         logger.error(f"Step {node.name} timed out")
@@ -935,7 +934,6 @@ class ChainRunner:
         Returns:
             Dictionary with results, metadata, and structured error info
         """
-        import traceback
         import uuid
 
         request_id = request_id or str(uuid.uuid4())

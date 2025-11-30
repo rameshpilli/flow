@@ -7,11 +7,11 @@ Provides mock implementations for agents, steps, and middleware.
 import asyncio
 import functools
 import logging
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, TypeVar
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any, TypeVar
 
 from flowforge.agents.base import AgentResult, BaseAgent
 from flowforge.core.context import ChainContext, StepResult

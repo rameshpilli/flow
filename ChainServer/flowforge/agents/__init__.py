@@ -4,6 +4,7 @@ from flowforge.agents.base import (
     AgentResult,
     BaseAgent,
     CompositeAgent,
+    ResilienceConfig,  # Backward compatibility alias
     ResilientAgent,
     ResilientAgentConfig,
     ResilientCompositeAgent,
@@ -22,6 +23,7 @@ __all__ = [
     # Resilient wrappers
     "ResilientAgent",
     "ResilientAgentConfig",
+    "ResilienceConfig",  # Alias for ResilientAgentConfig
     "ResilientCompositeAgent",
     # Data agents
     "SECFilingAgent",
