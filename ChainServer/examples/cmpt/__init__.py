@@ -1,20 +1,72 @@
 """
-CMPT (Client Meeting Prep Tool) Chain Example
+================================================================================
+CMPT (Client Meeting Prep Tool) - Production Example
+================================================================================
 
-This is an example implementation using the FlowForge framework.
-It demonstrates how to build a production-ready chain for preparing
-client meeting materials.
+PURPOSE:
+    This is a COMPLETE PRODUCTION EXAMPLE of a chain that prepares
+    client meeting materials. Use this as a reference for building
+    your own production chains.
 
-Usage:
-    from examples.cmpt import CMPTChain, create_cmpt_chain
+HOW TO RUN:
+    python examples/cmpt/run.py --company "Apple Inc"
 
-    chain = create_cmpt_chain()
-    result = await chain.run({"company": "Apple Inc"})
+FOLDER STRUCTURE:
+    cmpt/
+    ├── run.py                   # 👈 START HERE - Main entry point
+    ├── services/                # Business logic (the actual work)
+    │   ├── models.py            # Pydantic data models
+    │   ├── context_builder.py   # Stage 1: Extract context
+    │   ├── content_prioritization.py  # Stage 2: Prioritize sources
+    │   ├── response_builder.py  # Stage 3: Build response
+    │   └── llm_gateway.py       # LLM client with OAuth
+    ├── standalone_example.py    # Alternative: All-in-one implementation
+    ├── 02_cmpt_tutorial.ipynb   # Interactive tutorial notebook
+    └── 03_cmpt_tests.py         # Test examples
+
+THE 3-STAGE PIPELINE:
+    ┌─────────────────┐    ┌─────────────────────┐    ┌─────────────────┐
+    │ Context Builder │───▶│Content Prioritizer  │───▶│Response Builder │
+    │                 │    │                     │    │                 │
+    │ • Company Info  │    │ • Source Priority   │    │ • Agent Calls   │
+    │ • Temporal Info │    │ • Subquery Engine   │    │ • LLM Response  │
+    │ • Persona Info  │    │ • Topic Ranker      │    │ • Final Output  │
+    └─────────────────┘    └─────────────────────┘    └─────────────────┘
+
+USAGE:
+    # Option 1: Run directly
+    python examples/cmpt/run.py --company "Apple Inc"
+
+    # Option 2: Import and use programmatically
+    from examples.cmpt.run import create_cmpt_chain
+    from agentorchestrator import AgentOrchestrator
+
+    ao = AgentOrchestrator(name="my_app")
+    create_cmpt_chain(ao)
+    result = await ao.launch("cmpt_chain", {"request": {...}})
+
+    # Option 3: Use services directly (without AgentOrchestrator)
+    from examples.cmpt.services import ContextBuilderService
+    service = ContextBuilderService()
+    output = await service.execute(request)
 """
 
-from examples.cmpt.chains.cmpt import CMPTChain, create_cmpt_chain
+from examples.cmpt.run import create_cmpt_chain
+
+# Re-export services for direct use
+from examples.cmpt.services import (
+    ChainRequest,
+    ChainResponse,
+    ContextBuilderService,
+    ContentPrioritizationService,
+    ResponseBuilderService,
+)
 
 __all__ = [
-    "CMPTChain",
     "create_cmpt_chain",
+    "ChainRequest",
+    "ChainResponse",
+    "ContextBuilderService",
+    "ContentPrioritizationService",
+    "ResponseBuilderService",
 ]

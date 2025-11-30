@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "flowforge"
+name = "agentorchestrator"
 version = "0.1.0"
 description = "A DAG-based chain orchestration framework for AI/ML pipelines"
-readme = "flowforge/README.md"
+readme = "agentorchestrator/README.md"
 license = "MIT"
 requires-python = ">=3.10"
-keywords = ["ai", "ml", "chains", "dag", "orchestration", "llm"]
+keywords = ["ai", "ml", "chains", "dag", "orchestration", "llm", "agents"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -58,23 +58,24 @@ dev = [
 ]
 # All optional features
 all = [
-    "flowforge[summarization,openai,anthropic,observability]",
+    "agentorchestrator[summarization,openai,anthropic,observability]",
 ]
 
 [project.scripts]
-flowforge = "flowforge.cli:main"
+agentorchestrator = "agentorchestrator.cli:main"
+ao = "agentorchestrator.cli:main"
 
 [project.urls]
-Repository = "https://github.com/your-org/flowforge"
+Repository = "https://github.com/your-org/agentorchestrator"
 
 # ============================================================
 # BUILD
 # ============================================================
 [tool.hatch.build.targets.wheel]
-packages = ["flowforge"]
+packages = ["agentorchestrator"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/flowforge", "/tests"]
+include = ["/agentorchestrator", "/tests"]
 
 # ============================================================
 # RUFF - Linting & Formatting
@@ -85,7 +86,7 @@ line-length = 100
 extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I", "UP"]  # Removed B, C4 - too noisy for this codebase
+select = ["E", "W", "F", "I", "UP"]
 ignore = [
     "E501",   # line too long
     "E402",   # module level import not at top (needed for conditional imports)
@@ -94,12 +95,11 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/*" = ["S101"]
-"flowforge/examples/*" = ["F841", "W293"]
-"flowforge/services/*" = ["F841"]
-"flowforge/core/*" = ["F841"]
+"agentorchestrator/examples/*" = ["F841", "W293"]
+"agentorchestrator/core/*" = ["F841"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["flowforge"]
+known-first-party = ["agentorchestrator"]
 
 # ============================================================
 # PYTEST
@@ -107,7 +107,7 @@ known-first-party = ["flowforge"]
 [tool.pytest.ini_options]
 minversion = "7.0"
 asyncio_mode = "auto"
-testpaths = ["flowforge/tests"]
+testpaths = ["agentorchestrator/tests"]
 python_files = ["test_*.py"]
 addopts = ["-ra", "-q", "--strict-markers"]
 markers = [
@@ -120,7 +120,7 @@ filterwarnings = ["ignore::DeprecationWarning"]
 # COVERAGE
 # ============================================================
 [tool.coverage.run]
-source = ["flowforge"]
+source = ["agentorchestrator"]
 branch = true
 omit = ["*/tests/*", "*/__init__.py"]
 

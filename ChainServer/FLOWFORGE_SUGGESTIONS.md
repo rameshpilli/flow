@@ -1,6 +1,6 @@
-# FlowForge Improvement Suggestions
+# AgentOrchestrator Improvement Suggestions
 
-This document provides comprehensive suggestions for enhancing the FlowForge framework based on code review and analysis.
+This document provides comprehensive suggestions for enhancing the AgentOrchestrator framework based on code review and analysis.
 
 ## Table of Contents
 
@@ -28,7 +28,7 @@ This document provides comprehensive suggestions for enhancing the FlowForge fra
 **Recommendations:**
 1. **Implement Real API Integrations:**
    ```python
-   # flowforge/services/context_builder.py
+   # agentorchestrator/services/context_builder.py
    async def _extract_company_info(self, company_name: str) -> CompanyInfo:
        # Replace mock with real Foundation DB call
        async with httpx.AsyncClient(timeout=20.0) as client:
@@ -40,7 +40,7 @@ This document provides comprehensive suggestions for enhancing the FlowForge fra
    ```
 
 2. **Add Retry Logic with Exponential Backoff:**
-   - Use `flowforge.utils.retry` for all external API calls
+   - Use `agentorchestrator.utils.retry` for all external API calls
    - Implement circuit breaker pattern for unreliable services
 
 3. **Add Health Checks:**
@@ -57,7 +57,7 @@ This document provides comprehensive suggestions for enhancing the FlowForge fra
 **Recommendations:**
 1. **Implement Circuit Breaker Pattern:**
    ```python
-   from flowforge.utils.circuit_breaker import CircuitBreaker
+   from agentorchestrator.utils.circuit_breaker import CircuitBreaker
    
    @CircuitBreaker(failure_threshold=5, recovery_timeout=60)
    async def _call_external_api(self, ...):
@@ -91,7 +91,7 @@ This document provides comprehensive suggestions for enhancing the FlowForge fra
 
 **Suggestion:**
 ```python
-class FlowForge:
+class AgentOrchestrator:
     def register_resource(self, name: str, resource: Any, lifecycle: str = "singleton"):
         """
         lifecycle: "singleton" | "per_request" | "per_step"
@@ -175,7 +175,7 @@ async def process(ctx):
 - Document error conditions
 
 ### 3. **Code Organization**
-**Suggestion:** Create a `flowforge/plugins/` directory for:
+**Suggestion:** Create a `agentorchestrator/plugins/` directory for:
 - Custom agent implementations
 - Domain-specific summarizers
 - Custom middleware
@@ -185,8 +185,8 @@ async def process(ctx):
 
 **Suggestion:** Centralize configuration:
 ```python
-# flowforge/config.py (enhance existing)
-class FlowForgeConfig:
+# agentorchestrator/config.py (enhance existing)
+class AgentOrchestratorConfig:
     # Execution
     max_parallel: int = 10
     default_timeout_ms: int = 30000
@@ -265,7 +265,7 @@ async def test_chain_handles_api_failures():
 
 **Suggestion:**
 ```python
-class FlowForge:
+class AgentOrchestrator:
     def __init__(self, ...):
         # Reuse HTTP clients
         self._http_client = httpx.AsyncClient(
@@ -348,7 +348,7 @@ logger.info(
 ### 2. **Metrics Collection**
 **Suggestion:** Add Prometheus metrics
 ```python
-from flowforge.metrics import MetricsCollector
+from agentorchestrator.metrics import MetricsCollector
 
 metrics = MetricsCollector()
 
@@ -403,21 +403,21 @@ async def fetch_data(ctx):
 **Suggestion:**
 ```bash
 # Install CLI
-pip install flowforge[cli]
+pip install agentorchestrator[cli]
 
 # Commands
-flowforge check                    # Validate chains
-flowforge run cmpt_chain           # Run chain
-flowforge graph cmpt_chain         # Visualize DAG
-flowforge test                     # Run tests
-flowforge watch                    # Watch mode for development
+agentorchestrator check                    # Validate chains
+agentorchestrator run cmpt_chain           # Run chain
+agentorchestrator graph cmpt_chain         # Visualize DAG
+agentorchestrator test                     # Run tests
+agentorchestrator watch                    # Watch mode for development
 ```
 
 ### 2. **Interactive Debugging**
 **Suggestion:**
 ```python
 # Add debug mode
-forge = FlowForge(debug=True)
+forge = AgentOrchestrator(debug=True)
 
 # Step-by-step execution
 await forge.debug("cmpt_chain", breakpoints=["context_builder"])
@@ -452,7 +452,7 @@ raise StepExecutionError(
 ### 5. **Development Mode**
 **Suggestion:**
 ```python
-forge = FlowForge(dev_mode=True)
+forge = AgentOrchestrator(dev_mode=True)
 # Features:
 # - Hot reload on code changes
 # - Detailed error stack traces
@@ -492,7 +492,7 @@ class ChainRequest(BaseModel):
 ### 3. **Rate Limiting**
 **Suggestion:**
 ```python
-from flowforge.middleware.rate_limit import RateLimitMiddleware
+from agentorchestrator.middleware.rate_limit import RateLimitMiddleware
 
 forge.use_middleware(RateLimitMiddleware(
     requests_per_minute=100,
@@ -661,7 +661,7 @@ forge.rollback("cmpt_chain", to_version="1.1.0")
 
 ## Conclusion
 
-FlowForge is a well-architected framework with a clean API and solid foundation. The main areas for improvement are:
+AgentOrchestrator is a well-architected framework with a clean API and solid foundation. The main areas for improvement are:
 
 1. **Production Readiness** - Replace mocks, add error handling
 2. **Observability** - Better monitoring and debugging tools
@@ -673,5 +673,5 @@ The framework shows excellent design patterns and is well-positioned for growth.
 ---
 
 *Generated: 2025-01-15*
-*FlowForge Version: 0.1.0*
+*AgentOrchestrator Version: 0.1.0*
 

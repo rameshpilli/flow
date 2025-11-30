@@ -52,7 +52,7 @@ class ContentPrioritizationService:
         service = ContentPrioritizationService()
         output = await service.execute(context_builder_output)
 
-    Or as a step in FlowForge:
+    Or as a step in AgentOrchestrator:
         @forge.step(deps=[context_builder], produces=["content_prioritization_output"])
         async def content_prioritization(ctx):
             service = ContentPrioritizationService()

@@ -1,23 +1,23 @@
 """
-FlowForge Test Suite
+AgentOrchestrator Test Suite
 
-Tests for the FlowForge framework core functionality.
+Tests for the AgentOrchestrator framework core functionality.
 """
 
 import asyncio
 
-# Import FlowForge components
+# Import AgentOrchestrator components
 import sys
 
 import pytest
 
 sys.path.insert(0, "/Users/rameshpilli/Developer/ChainServer")
 
-from flowforge import ChainContext, FlowForge
-from flowforge.agents import AgentResult, BaseAgent
-from flowforge.core.context import ContextScope, StepResult
-from flowforge.core.registry import get_agent_registry, get_chain_registry, get_step_registry
-from flowforge.middleware import CacheMiddleware, LoggerMiddleware
+from agentorchestrator import ChainContext, AgentOrchestrator
+from agentorchestrator.agents import AgentResult, BaseAgent
+from agentorchestrator.core.context import ContextScope, StepResult
+from agentorchestrator.core.registry import get_agent_registry, get_chain_registry, get_step_registry
+from agentorchestrator.middleware import CacheMiddleware, LoggerMiddleware
 
 
 class TestChainContext:
@@ -67,8 +67,8 @@ class TestChainContext:
         assert "key" in d["data"]
 
 
-class TestFlowForge:
-    """Tests for FlowForge main class"""
+class TestAgentOrchestrator:
+    """Tests for AgentOrchestrator main class"""
 
     def setup_method(self):
         """Reset registries before each test"""
@@ -77,12 +77,12 @@ class TestFlowForge:
         get_chain_registry().clear()
 
     def test_forge_creation(self):
-        forge = FlowForge(name="test_app", version="1.0.0")
+        forge = AgentOrchestrator(name="test_app", version="1.0.0")
         assert forge.name == "test_app"
         assert forge.version == "1.0.0"
 
     def test_step_registration(self):
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
 
         @forge.step(name="my_step")
         async def my_step(ctx: ChainContext):
@@ -91,7 +91,7 @@ class TestFlowForge:
         assert "my_step" in forge.list_steps()
 
     def test_agent_registration(self):
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
 
         @forge.agent(name="my_agent")
         class MyAgent(BaseAgent):
@@ -101,7 +101,7 @@ class TestFlowForge:
         assert "my_agent" in forge.list_agents()
 
     def test_chain_registration(self):
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
 
         @forge.step(name="step_a")
         async def step_a(ctx):
@@ -128,7 +128,7 @@ class TestDAGExecution:
 
     @pytest.mark.asyncio
     async def test_simple_chain_execution(self):
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
 
         @forge.step(name="step1", produces=["data1"])
         async def step1(ctx: ChainContext):
@@ -154,7 +154,7 @@ class TestDAGExecution:
     @pytest.mark.asyncio
     async def test_parallel_execution(self):
         """Test that independent steps run in parallel"""
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         execution_order = []
 
         @forge.step(name="parallel_a")
@@ -189,7 +189,7 @@ class TestDAGExecution:
 
     @pytest.mark.asyncio
     async def test_error_handling(self):
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
 
         @forge.step(name="failing_step")
         async def failing_step(ctx):
@@ -216,7 +216,7 @@ class TestMiddleware:
 
     @pytest.mark.asyncio
     async def test_logger_middleware(self):
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         forge.use(LoggerMiddleware())
 
         @forge.step(name="logged_step")
@@ -232,7 +232,7 @@ class TestMiddleware:
 
     @pytest.mark.asyncio
     async def test_cache_middleware(self):
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         cache = CacheMiddleware(ttl_seconds=60)
         forge.use(cache)
 
@@ -266,7 +266,7 @@ class TestAgents:
 
     @pytest.mark.asyncio
     async def test_custom_agent(self):
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
 
         @forge.agent(name="test_agent")
         class TestAgent(BaseAgent):
@@ -285,7 +285,7 @@ class TestAgents:
 
     @pytest.mark.asyncio
     async def test_agent_in_step(self):
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
 
         @forge.agent(name="data_agent")
         class DataAgent(BaseAgent):
@@ -322,7 +322,7 @@ class TestVisualization:
         get_chain_registry().clear()
 
     def test_chain_visualization(self):
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
 
         @forge.step(name="step_a")
         async def step_a(ctx):
@@ -353,7 +353,7 @@ class TestSummarizer:
 
     def test_domain_prompts_exist(self):
         """Test that domain prompts are defined"""
-        from flowforge.middleware.summarizer import DOMAIN_PROMPTS
+        from agentorchestrator.middleware.summarizer import DOMAIN_PROMPTS
 
         # All expected domains should exist
         expected_domains = ["sec_filing", "earnings", "news", "transcripts", "pricing"]
@@ -364,7 +364,7 @@ class TestSummarizer:
 
     def test_get_domain_prompts(self):
         """Test getting domain-specific prompts"""
-        from flowforge.middleware.summarizer import LangChainSummarizer, get_domain_prompts
+        from agentorchestrator.middleware.summarizer import LangChainSummarizer, get_domain_prompts
 
         # Test known domain
         map_prompt, reduce_prompt = get_domain_prompts("sec_filing")
@@ -378,7 +378,7 @@ class TestSummarizer:
 
     def test_summarizer_content_type_parameter(self):
         """Test that summarizer accepts content_type parameter"""
-        from flowforge.middleware.summarizer import LangChainSummarizer
+        from agentorchestrator.middleware.summarizer import LangChainSummarizer
 
         summarizer = LangChainSummarizer(llm=None)
 
@@ -398,7 +398,7 @@ class TestSummarizer:
 
     def test_create_domain_aware_middleware(self):
         """Test factory function for domain-aware middleware"""
-        from flowforge.middleware.summarizer import create_domain_aware_middleware
+        from agentorchestrator.middleware.summarizer import create_domain_aware_middleware
 
         middleware = create_domain_aware_middleware(llm=None, max_tokens=4000)
 
@@ -409,7 +409,7 @@ class TestSummarizer:
 
     def test_summarizer_middleware_with_content_type(self):
         """Test SummarizerMiddleware with step_content_types"""
-        from flowforge.middleware.summarizer import SummarizerMiddleware
+        from agentorchestrator.middleware.summarizer import SummarizerMiddleware
 
         middleware = SummarizerMiddleware(
             max_tokens=4000,
@@ -428,14 +428,14 @@ class TestExports:
 
     def test_main_exports(self):
         """Test that main package exports are available"""
-        from flowforge import (
+        from agentorchestrator import (
             DOMAIN_PROMPTS,
             CacheMiddleware,
             ChainContext,
             ChainRequest,
             ChainResponse,
             CMPTChain,
-            FlowForge,
+            AgentOrchestrator,
             LangChainSummarizer,
             LoggerMiddleware,
             SummarizationStrategy,
@@ -445,7 +445,7 @@ class TestExports:
         )
 
         # All imports should succeed
-        assert FlowForge is not None
+        assert AgentOrchestrator is not None
         assert ChainContext is not None
         assert SummarizerMiddleware is not None
         assert LangChainSummarizer is not None
@@ -461,7 +461,7 @@ class TestExports:
 
     def test_middleware_exports(self):
         """Test middleware submodule exports"""
-        from flowforge.middleware import (
+        from agentorchestrator.middleware import (
             Middleware,
             create_anthropic_summarizer,
             create_openai_summarizer,
@@ -479,7 +479,7 @@ class TestUserOverrides:
 
     def test_chain_request_overrides_model(self):
         """Test ChainRequestOverrides model creation"""
-        from flowforge.services.models import ChainRequest, ChainRequestOverrides
+        from agentorchestrator.services.models import ChainRequest, ChainRequestOverrides
 
         overrides = ChainRequestOverrides(
             ticker="AAPL",
@@ -497,7 +497,7 @@ class TestUserOverrides:
 
     def test_chain_request_with_overrides(self):
         """Test ChainRequest with overrides"""
-        from flowforge.services.models import ChainRequest, ChainRequestOverrides
+        from agentorchestrator.services.models import ChainRequest, ChainRequestOverrides
 
         request = ChainRequest(
             corporate_company_name="Apple Inc",
@@ -518,7 +518,7 @@ class TestUserOverrides:
 
     def test_chain_request_without_overrides(self):
         """Test ChainRequest without overrides"""
-        from flowforge.services.models import ChainRequest
+        from agentorchestrator.services.models import ChainRequest
 
         request = ChainRequest(
             corporate_company_name="Microsoft",
@@ -531,8 +531,8 @@ class TestUserOverrides:
     @pytest.mark.asyncio
     async def test_context_builder_with_ticker_override(self):
         """Test ContextBuilder applies ticker override"""
-        from flowforge.services.context_builder import ContextBuilderService
-        from flowforge.services.models import ChainRequest, ChainRequestOverrides
+        from agentorchestrator.services.context_builder import ContextBuilderService
+        from agentorchestrator.services.models import ChainRequest, ChainRequestOverrides
 
         service = ContextBuilderService()
 
@@ -553,8 +553,8 @@ class TestUserOverrides:
     @pytest.mark.asyncio
     async def test_context_builder_with_fiscal_quarter_override(self):
         """Test ContextBuilder applies fiscal quarter override"""
-        from flowforge.services.context_builder import ContextBuilderService
-        from flowforge.services.models import ChainRequest, ChainRequestOverrides
+        from agentorchestrator.services.context_builder import ContextBuilderService
+        from agentorchestrator.services.models import ChainRequest, ChainRequestOverrides
 
         service = ContextBuilderService()
 
@@ -577,8 +577,8 @@ class TestUserOverrides:
     @pytest.mark.asyncio
     async def test_context_builder_skip_earnings_api(self):
         """Test ContextBuilder skips earnings calendar API when override set"""
-        from flowforge.services.context_builder import ContextBuilderService
-        from flowforge.services.models import ChainRequest, ChainRequestOverrides
+        from agentorchestrator.services.context_builder import ContextBuilderService
+        from agentorchestrator.services.models import ChainRequest, ChainRequestOverrides
 
         service = ContextBuilderService()
 
@@ -600,8 +600,8 @@ class TestUserOverrides:
     @pytest.mark.asyncio
     async def test_context_builder_skip_company_lookup(self):
         """Test ContextBuilder skips company lookup when override set"""
-        from flowforge.services.context_builder import ContextBuilderService
-        from flowforge.services.models import ChainRequest, ChainRequestOverrides
+        from agentorchestrator.services.context_builder import ContextBuilderService
+        from agentorchestrator.services.models import ChainRequest, ChainRequestOverrides
 
         service = ContextBuilderService()
 
@@ -626,8 +626,8 @@ class TestUserOverrides:
     @pytest.mark.asyncio
     async def test_context_builder_lookback_overrides(self):
         """Test ContextBuilder applies lookback period overrides"""
-        from flowforge.services.context_builder import ContextBuilderService
-        from flowforge.services.models import ChainRequest, ChainRequestOverrides
+        from agentorchestrator.services.context_builder import ContextBuilderService
+        from agentorchestrator.services.models import ChainRequest, ChainRequestOverrides
 
         service = ContextBuilderService()
 
@@ -649,7 +649,7 @@ class TestUserOverrides:
 
     def test_overrides_validation(self):
         """Test that overrides have proper validation"""
-        from flowforge.services.models import ChainRequestOverrides
+        from agentorchestrator.services.models import ChainRequestOverrides
         import pydantic
 
         # news_lookback_days must be between 1 and 365
@@ -672,7 +672,7 @@ class TestLLMGateway:
 
     def test_llm_gateway_client_creation(self):
         """Test LLMGatewayClient can be created"""
-        from flowforge.services.llm_gateway import LLMGatewayClient
+        from agentorchestrator.services.llm_gateway import LLMGatewayClient
 
         client = LLMGatewayClient(
             server_url="https://llm.example.com/v1",
@@ -687,7 +687,7 @@ class TestLLMGateway:
 
     def test_llm_gateway_client_with_oauth_config(self):
         """Test LLMGatewayClient with OAuth configuration"""
-        from flowforge.services.llm_gateway import LLMGatewayClient
+        from agentorchestrator.services.llm_gateway import LLMGatewayClient
 
         client = LLMGatewayClient(
             server_url="https://llm.example.com/v1",
@@ -703,7 +703,7 @@ class TestLLMGateway:
 
     def test_oauth_token_manager_creation(self):
         """Test OAuthTokenManager can be created"""
-        from flowforge.services.llm_gateway import OAuthTokenManager
+        from agentorchestrator.services.llm_gateway import OAuthTokenManager
 
         manager = OAuthTokenManager(
             oauth_endpoint="https://auth.example.com/oauth/token",
@@ -718,7 +718,7 @@ class TestLLMGateway:
     def test_get_llm_client_factory(self):
         """Test get_llm_client factory function"""
         import os
-        from flowforge.services.llm_gateway import get_llm_client
+        from agentorchestrator.services.llm_gateway import get_llm_client
 
         # Set environment variables for testing
         os.environ["LLM_GATEWAY_URL"] = "https://test.example.com/v1"
@@ -737,7 +737,7 @@ class TestLLMGateway:
 
     def test_timed_lru_cache(self):
         """Test timed_lru_cache decorator"""
-        from flowforge.services.llm_gateway import timed_lru_cache
+        from agentorchestrator.services.llm_gateway import timed_lru_cache
         import time
 
         call_count = 0
@@ -768,7 +768,7 @@ class TestLLMGateway:
 
     def test_default_llm_client_singleton(self):
         """Test default LLM client singleton pattern"""
-        from flowforge.services.llm_gateway import (
+        from agentorchestrator.services.llm_gateway import (
             LLMGatewayClient,
             get_default_llm_client,
             set_default_llm_client,
@@ -790,7 +790,7 @@ class TestLLMGateway:
         assert retrieved is test_client
 
         # Clean up - set back to None
-        from flowforge.services import llm_gateway
+        from agentorchestrator.services import llm_gateway
         llm_gateway._default_client = None
 
 
@@ -799,7 +799,7 @@ class TestResponseBuilderWithLLM:
 
     def test_response_builder_without_llm(self):
         """Test ResponseBuilder works without LLM client"""
-        from flowforge.services.response_builder import ResponseBuilderService
+        from agentorchestrator.services.response_builder import ResponseBuilderService
 
         service = ResponseBuilderService()
         assert service.llm_client is None
@@ -808,8 +808,8 @@ class TestResponseBuilderWithLLM:
 
     def test_response_builder_with_llm_client(self):
         """Test ResponseBuilder accepts LLM client"""
-        from flowforge.services.llm_gateway import LLMGatewayClient
-        from flowforge.services.response_builder import ResponseBuilderService
+        from agentorchestrator.services.llm_gateway import LLMGatewayClient
+        from agentorchestrator.services.response_builder import ResponseBuilderService
 
         llm_client = LLMGatewayClient(
             server_url="https://llm.example.com/v1",
@@ -822,7 +822,7 @@ class TestResponseBuilderWithLLM:
 
     def test_response_builder_llm_toggle_flags(self):
         """Test ResponseBuilder LLM toggle flags"""
-        from flowforge.services.response_builder import ResponseBuilderService
+        from agentorchestrator.services.response_builder import ResponseBuilderService
 
         service = ResponseBuilderService(
             use_llm_for_metrics=False,
@@ -837,8 +837,8 @@ class TestResponseBuilderWithLLM:
     @pytest.mark.asyncio
     async def test_response_builder_fallback_without_llm(self):
         """Test ResponseBuilder falls back to heuristics without LLM"""
-        from flowforge.services.response_builder import ResponseBuilderService
-        from flowforge.services.models import (
+        from agentorchestrator.services.response_builder import ResponseBuilderService
+        from agentorchestrator.services.models import (
             CompanyInfo,
             ContextBuilderOutput,
             ContentPrioritizationOutput,
@@ -861,7 +861,7 @@ class TestResponseBuilderWithLLM:
 
     def test_parse_json_response(self):
         """Test JSON parsing from LLM responses"""
-        from flowforge.services.response_builder import ResponseBuilderService
+        from agentorchestrator.services.response_builder import ResponseBuilderService
 
         service = ResponseBuilderService()
 
@@ -891,13 +891,13 @@ class TestGatewaySummarizer:
 
     def test_create_gateway_summarizer_import(self):
         """Test create_gateway_summarizer is importable"""
-        from flowforge.middleware import create_gateway_summarizer
+        from agentorchestrator.middleware import create_gateway_summarizer
 
         assert create_gateway_summarizer is not None
 
     def test_middleware_exports_gateway_summarizer(self):
         """Test middleware module exports create_gateway_summarizer"""
-        from flowforge.middleware import __all__
+        from agentorchestrator.middleware import __all__
 
         assert "create_gateway_summarizer" in __all__
 
@@ -907,7 +907,7 @@ class TestLLMExports:
 
     def test_services_exports_llm_gateway(self):
         """Test services module exports LLM gateway components"""
-        from flowforge.services import (
+        from agentorchestrator.services import (
             LLMGatewayClient,
             OAuthTokenManager,
             get_llm_client,
@@ -928,7 +928,7 @@ class TestLLMExports:
 
     def test_chain_request_overrides_exported(self):
         """Test ChainRequestOverrides is exported from services"""
-        from flowforge.services import ChainRequestOverrides
+        from agentorchestrator.services import ChainRequestOverrides
 
         assert ChainRequestOverrides is not None
 
@@ -939,7 +939,7 @@ class TestConfig:
     def test_config_from_env(self):
         """Test Config can be loaded from environment"""
         import os
-        from flowforge.config import Config
+        from agentorchestrator.config import Config
 
         # Set some test environment variables
         os.environ["LLM_GATEWAY_URL"] = "https://test.example.com/v1"
@@ -964,7 +964,7 @@ class TestConfig:
 
     def test_llm_config_is_configured(self):
         """Test LLMConfig.is_configured property"""
-        from flowforge.config import LLMConfig
+        from agentorchestrator.config import LLMConfig
 
         # Not configured - missing server URL
         config = LLMConfig(api_key="test-key")
@@ -989,7 +989,7 @@ class TestConfig:
 
     def test_config_get_llm_client(self):
         """Test Config.get_llm_client() factory method"""
-        from flowforge.config import Config, LLMConfig
+        from agentorchestrator.config import Config, LLMConfig
 
         # Unconfigured - should return None
         config = Config()
@@ -1010,7 +1010,7 @@ class TestConfig:
 
     def test_config_to_dict(self):
         """Test Config.to_dict() method"""
-        from flowforge.config import Config, LLMConfig
+        from agentorchestrator.config import Config, LLMConfig
 
         config = Config(
             llm=LLMConfig(
@@ -1029,8 +1029,8 @@ class TestConfig:
 
     def test_get_config_singleton(self):
         """Test get_config returns singleton"""
-        from flowforge.config import get_config, reload_config
-        import flowforge.config as config_module
+        from agentorchestrator.config import get_config, reload_config
+        import agentorchestrator.config as config_module
 
         # Reset singleton
         config_module._config = None
@@ -1046,8 +1046,8 @@ class TestConfig:
 
     def test_set_config(self):
         """Test set_config allows custom config"""
-        from flowforge.config import Config, LLMConfig, get_config, set_config
-        import flowforge.config as config_module
+        from agentorchestrator.config import Config, LLMConfig, get_config, set_config
+        import agentorchestrator.config as config_module
 
         custom_config = Config(
             llm=LLMConfig(server_url="https://custom.com"),
@@ -1065,7 +1065,7 @@ class TestConfig:
 
     def test_config_exports_from_main_module(self):
         """Test config exports are available from main flowforge module"""
-        from flowforge import Config, get_config, set_config, reload_config
+        from agentorchestrator import Config, get_config, set_config, reload_config
 
         assert Config is not None
         assert get_config is not None
@@ -1089,7 +1089,7 @@ class TestDAGExecutorBehaviors:
     @pytest.mark.asyncio
     async def test_fail_fast_cancels_pending_tasks(self):
         """Test that fail_fast mode truly cancels pending tasks when one fails."""
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         started_tasks = set()
         completed_tasks = set()
 
@@ -1123,7 +1123,7 @@ class TestDAGExecutorBehaviors:
     @pytest.mark.asyncio
     async def test_retry_only_records_final_result(self):
         """Test that retry logic only records the final outcome, not intermediate failures."""
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         attempt_count = 0
 
         @forge.step(name="flaky_step", retry=2)  # Will retry up to 2 times
@@ -1154,7 +1154,7 @@ class TestDAGExecutorBehaviors:
     @pytest.mark.asyncio
     async def test_continue_mode_skips_failed_dependents(self):
         """Test that in continue mode, dependents of failed steps are skipped."""
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
 
         @forge.step(name="step_a")
         async def step_a(ctx):
@@ -1201,7 +1201,7 @@ class TestDAGExecutorBehaviors:
     @pytest.mark.asyncio
     async def test_per_step_concurrency_limit(self):
         """Test that per-step concurrency limits are respected."""
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         concurrent_count = 0
         max_concurrent = 0
 
@@ -1224,7 +1224,7 @@ class TestDAGExecutorBehaviors:
     @pytest.mark.asyncio
     async def test_step_spec_has_resources_field(self):
         """Test that StepSpec has a dedicated resources field (not in retry_config)."""
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
 
         @forge.step(name="resource_step", resources=["db", "cache"])
         async def resource_step(ctx, db=None, cache=None):
@@ -1244,13 +1244,13 @@ class TestDAGExecutorBehaviors:
     @pytest.mark.asyncio
     async def test_retry_config_is_typed_dataclass(self):
         """Test that retry_config is now a proper RetryConfig dataclass."""
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
 
         @forge.step(name="retry_step", retry=3)
         async def retry_step(ctx):
             return {}
 
-        from flowforge.core.registry import RetryConfig
+        from agentorchestrator.core.registry import RetryConfig
 
         # Use forge's own registry (isolated)
         spec = forge._step_registry.get_spec("retry_step")
@@ -1265,8 +1265,8 @@ class TestDAGExecutorBehaviors:
     @pytest.mark.asyncio
     async def test_dag_node_skipped_state(self):
         """Test that DAGNode can transition to SKIPPED state."""
-        from flowforge.core.dag import DAGNode, StepState
-        from flowforge.core.registry import RetryConfig, StepSpec, ComponentMetadata
+        from agentorchestrator.core.dag import DAGNode, StepState
+        from agentorchestrator.core.registry import RetryConfig, StepSpec, ComponentMetadata
 
         # Create a mock StepSpec
         spec = StepSpec(
@@ -1298,7 +1298,7 @@ class TestErrorHandlingModes:
     @pytest.mark.asyncio
     async def test_fail_fast_stops_immediately(self):
         """Test that fail_fast mode stops execution on first failure."""
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         executed_steps = []
 
         @forge.step(name="step_a")
@@ -1331,7 +1331,7 @@ class TestErrorHandlingModes:
     @pytest.mark.asyncio
     async def test_continue_mode_runs_all_independent_steps(self):
         """Test that continue mode runs all steps that can run."""
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         executed_steps = []
 
         @forge.step(name="step_a")
@@ -1371,7 +1371,7 @@ class TestErrorHandlingModes:
     @pytest.mark.asyncio
     async def test_continue_mode_skipped_step_has_reason(self):
         """Test that skipped steps have clear skip reasons."""
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
 
         @forge.step(name="failing_parent")
         async def failing_parent(ctx):
@@ -1400,7 +1400,7 @@ class TestErrorHandlingModes:
     @pytest.mark.asyncio
     async def test_retry_mode_retries_on_failure(self):
         """Test that retry mode actually retries failed steps."""
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         attempt_count = 0
 
         @forge.step(name="flaky_step", retry=3)
@@ -1424,7 +1424,7 @@ class TestErrorHandlingModes:
     @pytest.mark.asyncio
     async def test_retry_exhaustion_records_failure(self):
         """Test that exhausted retries result in proper failure recording."""
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         attempt_count = 0
 
         @forge.step(name="always_fails", retry=2)
@@ -1461,7 +1461,7 @@ class TestResourceCleanup:
             nonlocal cleanup_called
             cleanup_called = True
 
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         forge.register_resource(
             "test_resource",
             factory=lambda: {"data": "test"},
@@ -1490,7 +1490,7 @@ class TestResourceCleanup:
             nonlocal cleanup_called
             cleanup_called = True
 
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         forge.register_resource(
             "test_resource",
             factory=lambda: {"data": "test"},
@@ -1523,7 +1523,7 @@ class TestStepScopeCleanup:
     @pytest.mark.asyncio
     async def test_step_scope_cleanup_on_success(self):
         """Test that step-scoped data is cleaned up after step completes."""
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
 
         @forge.step(name="step_with_scope")
         async def step_with_scope(ctx):
@@ -1556,7 +1556,7 @@ class TestStepScopeCleanup:
     @pytest.mark.asyncio
     async def test_step_scope_cleanup_on_exception(self):
         """Test that step-scoped data is cleaned up even when step fails."""
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         ctx_after_failure = None
 
         @forge.step(name="failing_step")
@@ -1592,7 +1592,7 @@ class TestMiddlewareIsolation:
     @pytest.mark.asyncio
     async def test_middleware_failure_does_not_crash_step(self):
         """Test that middleware failures don't prevent step execution."""
-        from flowforge.middleware.base import Middleware
+        from agentorchestrator.middleware.base import Middleware
 
         class FailingMiddleware(Middleware):
             async def before(self, ctx, step_name):
@@ -1601,7 +1601,7 @@ class TestMiddlewareIsolation:
             async def after(self, ctx, step_name, result):
                 raise RuntimeError("Middleware fails")
 
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         forge.use(FailingMiddleware())
 
         step_executed = False
@@ -1624,7 +1624,7 @@ class TestMiddlewareIsolation:
     @pytest.mark.asyncio
     async def test_multiple_middleware_continue_on_failure(self):
         """Test that other middleware run even if one fails."""
-        from flowforge.middleware.base import Middleware
+        from agentorchestrator.middleware.base import Middleware
 
         middleware_order = []
 
@@ -1649,7 +1649,7 @@ class TestMiddlewareIsolation:
             async def after(self, ctx, step_name, result):
                 middleware_order.append("second_after")
 
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         forge.use(FirstMiddleware())
         forge.use(SecondMiddleware())
 
@@ -1681,9 +1681,9 @@ class TestMetricsMiddleware:
     @pytest.mark.asyncio
     async def test_metrics_middleware_collects_duration(self):
         """Test that MetricsMiddleware collects step duration."""
-        from flowforge.middleware import MetricsMiddleware
+        from agentorchestrator.middleware import MetricsMiddleware
 
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         metrics = MetricsMiddleware()
         forge.use(metrics)
 
@@ -1700,18 +1700,18 @@ class TestMetricsMiddleware:
 
         stats = metrics.get_stats()
         assert "histograms" in stats
-        assert "flowforge.step.duration_ms" in stats["histograms"]
+        assert "agentorchestrator.step.duration_ms" in stats["histograms"]
 
-        duration_stats = stats["histograms"]["flowforge.step.duration_ms"]
+        duration_stats = stats["histograms"]["agentorchestrator.step.duration_ms"]
         assert duration_stats["count"] >= 1
         assert duration_stats["min"] >= 40  # At least 40ms
 
     @pytest.mark.asyncio
     async def test_metrics_middleware_counts_successes_and_failures(self):
         """Test that MetricsMiddleware tracks success/failure counts."""
-        from flowforge.middleware import MetricsMiddleware
+        from agentorchestrator.middleware import MetricsMiddleware
 
-        forge = FlowForge(name="test")
+        forge = AgentOrchestrator(name="test")
         metrics = MetricsMiddleware()
         forge.use(metrics)
 
@@ -1733,7 +1733,7 @@ class TestMetricsMiddleware:
         stats = metrics.get_stats()
         assert "counters" in stats
         # Should have counted both executions
-        assert stats["counters"].get("flowforge.step.executions_total", 0) >= 2
+        assert stats["counters"].get("agentorchestrator.step.executions_total", 0) >= 2
 
 
 class TestLLMGatewayRetryConfig:
@@ -1741,7 +1741,7 @@ class TestLLMGatewayRetryConfig:
 
     def test_llm_client_uses_instance_retry_config(self):
         """Test that LLMGatewayClient uses instance-level retry config."""
-        from flowforge.services.llm_gateway import LLMGatewayClient
+        from agentorchestrator.services.llm_gateway import LLMGatewayClient
 
         # Create client with custom retry config
         client = LLMGatewayClient(
@@ -1757,7 +1757,7 @@ class TestLLMGatewayRetryConfig:
 
     def test_async_client_lock_exists(self):
         """Test that LLMGatewayClient has async client lock for thread safety."""
-        from flowforge.services.llm_gateway import LLMGatewayClient
+        from agentorchestrator.services.llm_gateway import LLMGatewayClient
 
         client = LLMGatewayClient(
             server_url="https://test.example.com/v1",
@@ -1771,7 +1771,7 @@ class TestLLMGatewayRetryConfig:
     @pytest.mark.asyncio
     async def test_get_async_client_is_thread_safe(self):
         """Test that _get_async_client uses proper locking."""
-        from flowforge.services.llm_gateway import LLMGatewayClient
+        from agentorchestrator.services.llm_gateway import LLMGatewayClient
 
         client = LLMGatewayClient(
             server_url="https://test.example.com/v1",

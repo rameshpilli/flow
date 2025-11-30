@@ -1,5 +1,5 @@
 """
-FlowForge LLM Gateway Client
+AgentOrchestrator LLM Gateway Client
 
 OAuth-authenticated LLM gateway client for enterprise environments.
 Supports both sync and async operations with:
@@ -19,7 +19,7 @@ from typing import Any
 
 import httpx
 
-from flowforge.utils.circuit_breaker import (
+from agentorchestrator.utils.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerConfig,
     CircuitBreakerError,

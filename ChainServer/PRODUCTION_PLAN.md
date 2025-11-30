@@ -1,17 +1,17 @@
-# FlowForge Production Readiness Plan
+# AgentOrchestrator Production Readiness Plan
 
-This document outlines the specific steps required to take FlowForge from a mock-backed prototype to a production-ready system.
+This document outlines the specific steps required to take AgentOrchestrator from a mock-backed prototype to a production-ready system.
 
 ## Phase 1: Interface Abstraction (Refactoring)
 
 Currently, `ContextBuilderService` and `ResponseBuilderService` contain hardcoded mocks. We need to decouple the "what" (data needed) from the "how" (mock vs. real API).
 
 ### 1. Define Interfaces
-Create `flowforge/interfaces.py` to define the contracts for external data:
+Create `agentorchestrator/interfaces.py` to define the contracts for external data:
 
 ```python
 from abc import ABC, abstractmethod
-from flowforge.services.models import CompanyInfo, PersonaInfo
+from agentorchestrator.services.models import CompanyInfo, PersonaInfo
 
 class CompanyDataProvider(ABC):
     @abstractmethod
@@ -27,10 +27,10 @@ class EarningsProvider(ABC):
 ```
 
 ### 2. Implement Adapters
-Create `flowforge/adapters/` to hold implementations:
+Create `agentorchestrator/adapters/` to hold implementations:
 
-*   **Mock Adapters**: Move current logic from `ContextBuilderService` to `flowforge/adapters/mock.py`.
-*   **Real Adapters**: Implement `flowforge/adapters/zoominfo.py`, `flowforge/adapters/sec.py`, etc.
+*   **Mock Adapters**: Move current logic from `ContextBuilderService` to `agentorchestrator/adapters/mock.py`.
+*   **Real Adapters**: Implement `agentorchestrator/adapters/zoominfo.py`, `agentorchestrator/adapters/sec.py`, etc.
 
 ### 3. Dependency Injection
 Update services to accept providers in `__init__`:
@@ -52,7 +52,7 @@ class ContextBuilderService:
 Apply the existing `CircuitBreaker` utility to the **Real Adapters**.
 
 ```python
-from flowforge.utils.circuit_breaker import CircuitBreaker
+from agentorchestrator.utils.circuit_breaker import CircuitBreaker
 
 class ZoomInfoAdapter(PersonaProvider):
     @CircuitBreaker(failure_threshold=5, recovery_timeout=60)
@@ -62,7 +62,7 @@ class ZoomInfoAdapter(PersonaProvider):
 ```
 
 ### 2. Structured Error Types
-Define specific exceptions in `flowforge/exceptions.py` to handle API failures gracefully (e.g., `ProviderUnavailableError`, `RateLimitExceededError`) instead of generic `Exception`.
+Define specific exceptions in `agentorchestrator/exceptions.py` to handle API failures gracefully (e.g., `ProviderUnavailableError`, `RateLimitExceededError`) instead of generic `Exception`.
 
 ## Phase 3: Observability Integration
 
@@ -70,7 +70,7 @@ Define specific exceptions in `flowforge/exceptions.py` to handle API failures g
 Add the `@trace_span` decorator to all provider methods to visualize which external APIs are being called and how long they take.
 
 ```python
-from flowforge.utils.tracing import trace_span
+from agentorchestrator.utils.tracing import trace_span
 
 class ContextBuilderService:
     async def execute(self, request):
@@ -84,12 +84,12 @@ Implement a `/health` endpoint or CLI command that checks connectivity to all co
 ## Phase 4: Secrets Management
 
 1.  **Secret Masking**: Ensure `ChainRequestOverrides` and logs never print raw API keys.
-2.  **Configuration**: Update `flowforge/config.py` to load provider-specific secrets (e.g., `ZOOMINFO_API_KEY`, `SEC_API_KEY`).
+2.  **Configuration**: Update `agentorchestrator/config.py` to load provider-specific secrets (e.g., `ZOOMINFO_API_KEY`, `SEC_API_KEY`).
 
 ## Migration Checklist
 
-- [ ] Create `flowforge/interfaces.py`
-- [ ] Extract mocks to `flowforge/adapters/mock.py`
+- [ ] Create `agentorchestrator/interfaces.py`
+- [ ] Extract mocks to `agentorchestrator/adapters/mock.py`
 - [ ] Refactor `ContextBuilderService` to use dependency injection
 - [ ] Implement one real adapter (e.g., for Company Lookup)
 - [ ] Add integration tests verifying the real adapter works (with VCR/cassettes for replay)

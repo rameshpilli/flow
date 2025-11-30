@@ -1,8 +1,8 @@
-# FlowForge / ChainServer – Quick Pitch
+# AgentOrchestrator / ChainServer – Quick Pitch
 
 ## What it is
-- A Python DAG-based orchestration library (FlowForge) plus a packaged Client Meeting Prep Tool (CMPT) chain that you can run as-is or customize.
-- Decorator-driven: register agents, steps, and chains; FlowForge handles dependency resolution, parallelism, retries, timeouts, and scoped context.
+- A Python DAG-based orchestration library (AgentOrchestrator) plus a packaged Client Meeting Prep Tool (CMPT) chain that you can run as-is or customize.
+- Decorator-driven: register agents, steps, and chains; AgentOrchestrator handles dependency resolution, parallelism, retries, timeouts, and scoped context.
 - Middleware and resources are first-class: logging, caching, token tracking, metrics/tracing, rate limiting, offload, and managed resources (DB/HTTP clients, LLMs).
 
 ## Why it matters
@@ -16,7 +16,7 @@
 - **Middleware:** logging, cache, token manager, metrics, tracing, rate limiter, offload. Add/remove per forge instance.
 - **Resources:** managed lifecycle for shared clients; inject into steps with `resources=["llm", "db", ...]`.
 - **Resumability:** checkpoint runs, resume or retry failed steps, fetch partial outputs.
-- **Visualization & CLI:** ASCII/Mermaid DAGs, `flowforge check`, `flowforge graph`, `flowforge run`, `flowforge runs`, `flowforge resume`.
+- **Visualization & CLI:** ASCII/Mermaid DAGs, `agentorchestrator check`, `agentorchestrator graph`, `agentorchestrator run`, `agentorchestrator runs`, `agentorchestrator resume`.
 
 ## CMPT packaged chain (example service)
 - Implements a Client Meeting Prep flow: context building, content prioritization, response building.
@@ -26,7 +26,7 @@
 ### Quick run (CLI)
 ```bash
 make install-dev
-flowforge run cmpt_chain --data '{
+agentorchestrator run cmpt_chain --data '{
   "request": {
     "corporate_company_name": "Apple Inc",
     "meeting_datetime": "2025-01-15T10:00:00Z"
@@ -36,7 +36,7 @@ flowforge run cmpt_chain --data '{
 
 ### Quick run (Python)
 ```python
-from flowforge.chains.cmpt import CMPTChain
+from agentorchestrator.chains.cmpt import CMPTChain
 
 chain = CMPTChain()
 result = await chain.run(
@@ -49,7 +49,7 @@ print(result.prepared_content)
 ## Integration options
 1) **Use CMPT out-of-the-box**: run the chain as a service/worker; feed meeting requests, get prepared content.  
 2) **Bring your own agents**: replace SEC/news/earnings/transcripts with your APIs; wrap with `ResilientAgent` or implement via `HTTPAdapterAgent`.  
-3) **Build new chains**: use FlowForge primitives to compose entirely different workflows; reuse middleware/resources.  
+3) **Build new chains**: use AgentOrchestrator primitives to compose entirely different workflows; reuse middleware/resources.  
 4) **Expose via API**: thin FastAPI/Flask wrapper that validates `ChainRequest`, calls `CMPTChain().run()`, returns `ChainResponse`.
 
 ## Architecture
@@ -57,7 +57,7 @@ print(result.prepared_content)
 ### Internal Structure
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              FlowForge Core                                  │
+│                              AgentOrchestrator Core                                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ┌──────────────────────────────────────────────────────────────────────┐  │
@@ -150,12 +150,12 @@ Request                                                              Response
 │                                │                                            │
 │                                ▼                                            │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                     FlowForge (pip installed)                        │   │
+│  │                     AgentOrchestrator (pip installed)                        │   │
 │  │                                                                      │   │
-│  │   from flowforge import FlowForge                                    │   │
-│  │   from flowforge.chains import CMPTChain                             │   │
+│  │   from agentorchestrator import AgentOrchestrator                                    │   │
+│  │   from agentorchestrator.chains import CMPTChain                             │   │
 │  │                                                                      │   │
-│  │   forge = FlowForge()                                                │   │
+│  │   forge = AgentOrchestrator()                                                │   │
 │  │   forge.use(LoggerMiddleware(), MetricsMiddleware())                 │   │
 │  │                                                                      │   │
 │  │   # Register your agents                                             │   │
@@ -175,28 +175,28 @@ Request                                                              Response
 ```
 
 ### Files at a glance
-- `flowforge/core`: executor, DAG builder, context, registry, resources, resumable run store
-- `flowforge/middleware`: logging, cache, token manager, metrics, tracing, rate limiter, offload
-- `flowforge/agents` + `flowforge/plugins/http_adapter.py`: base agent contracts, resilient wrappers
-- `flowforge/chains/cmpt.py`: packaged CMPT chain definition
-- `flowforge/cli.py`: CLI for run/check/graph/resume/list
+- `agentorchestrator/core`: executor, DAG builder, context, registry, resources, resumable run store
+- `agentorchestrator/middleware`: logging, cache, token manager, metrics, tracing, rate limiter, offload
+- `agentorchestrator/agents` + `agentorchestrator/plugins/http_adapter.py`: base agent contracts, resilient wrappers
+- `agentorchestrator/chains/cmpt.py`: packaged CMPT chain definition
+- `agentorchestrator/cli.py`: CLI for run/check/graph/resume/list
 - `examples/`: quickstart and CMPT example usage
 
 ## Ops & observability
 - Metrics middleware for step durations and success/fail counts.
-- Tracing hooks (`flowforge/utils/tracing.py`) to emit spans per step/agent.
-- Health checks and run history (`flowforge run`, `flowforge runs`, `flowforge resume`, partial outputs).
+- Tracing hooks (`agentorchestrator/utils/tracing.py`) to emit spans per step/agent.
+- Health checks and run history (`agentorchestrator run`, `agentorchestrator runs`, `agentorchestrator resume`, partial outputs).
 - Caching and rate limiting middleware for API friendliness.
 
 ## How to extend safely
 - Add middleware early (metrics/tracing/rate limiting).
 - Validate inputs with `input_model` on steps/chains to fail fast.
 - Use resilient agents for any external API; prefer shared resources for clients/LLMs.
-- Keep DAGs explicit and visualize (`flowforge graph`) before shipping.
+- Keep DAGs explicit and visualize (`agentorchestrator graph`) before shipping.
 
 ## Testing
 ```python
-from flowforge import IsolatedForge, MockAgent, create_test_context
+from agentorchestrator import IsolatedForge, MockAgent, create_test_context
 
 # Isolated test environment
 async with IsolatedForge() as forge:
@@ -212,27 +212,27 @@ mock = MockAgent(name="news", responses={"Apple": {"articles": [...]}})
 
 ## Troubleshooting
 ```bash
-flowforge doctor   # Diagnose dependencies, env vars, imports
-flowforge health   # Quick health check
-flowforge check    # Validate chain definitions
+agentorchestrator doctor   # Diagnose dependencies, env vars, imports
+agentorchestrator health   # Quick health check
+agentorchestrator check    # Validate chain definitions
 ```
 
 ## Key files to know
 | File | Purpose |
 |------|---------|
-| `flowforge/core/forge.py` | Main FlowForge class |
-| `flowforge/core/dag.py` | DAG builder & executor |
-| `flowforge/core/context.py` | Shared context with scopes |
-| `flowforge/chains/cmpt.py` | CMPT chain implementation |
-| `flowforge/agents/base.py` | Agent base classes |
-| `flowforge/middleware/` | All middleware (cache, logger, etc.) |
+| `agentorchestrator/core/forge.py` | Main AgentOrchestrator class |
+| `agentorchestrator/core/dag.py` | DAG builder & executor |
+| `agentorchestrator/core/context.py` | Shared context with scopes |
+| `agentorchestrator/chains/cmpt.py` | CMPT chain implementation |
+| `agentorchestrator/agents/base.py` | Agent base classes |
+| `agentorchestrator/middleware/` | All middleware (cache, logger, etc.) |
 | `examples/cmpt_chain_tutorial.ipynb` | Full walkthrough notebook |
 
 ---
 
 ## Go Crazy: What You Can Build
 
-FlowForge is a general-purpose chain orchestration library. Here are complete, working examples you can adapt:
+AgentOrchestrator is a general-purpose chain orchestration library. Here are complete, working examples you can adapt:
 
 ---
 
@@ -241,10 +241,10 @@ FlowForge is a general-purpose chain orchestration library. Here are complete, w
 Route queries to different LLMs based on complexity — use cheap/fast models for simple queries, powerful models for complex ones.
 
 ```python
-from flowforge import FlowForge
+from agentorchestrator import AgentOrchestrator
 from pydantic import BaseModel
 
-forge = FlowForge(name="ai_router")
+forge = AgentOrchestrator(name="ai_router")
 
 # ═══════════════════════════════════════════════════════════════════
 # STEP 1: Classify the query complexity
@@ -333,11 +333,11 @@ async def main():
 Ingest documents, chunk, embed, index, and query — complete RAG pipeline.
 
 ```python
-from flowforge import FlowForge, ResilientAgent
+from agentorchestrator import AgentOrchestrator, ResilientAgent
 from pydantic import BaseModel
 from typing import List
 
-forge = FlowForge(name="rag_pipeline")
+forge = AgentOrchestrator(name="rag_pipeline")
 
 # ═══════════════════════════════════════════════════════════════════
 # MODELS
@@ -362,7 +362,7 @@ async def ingest(ctx):
 
     # Mock: In reality, fetch from S3/GCS/local
     documents = [
-        Document(id="doc1", content="FlowForge is a DAG orchestration library..."),
+        Document(id="doc1", content="AgentOrchestrator is a DAG orchestration library..."),
         Document(id="doc2", content="Chains consist of steps with dependencies..."),
     ]
 
@@ -512,12 +512,12 @@ async def main():
 Classify tickets, auto-respond to simple ones, escalate complex/angry ones.
 
 ```python
-from flowforge import FlowForge
-from flowforge.middleware import LoggerMiddleware, MetricsMiddleware
+from agentorchestrator import AgentOrchestrator
+from agentorchestrator.middleware import LoggerMiddleware, MetricsMiddleware
 from pydantic import BaseModel
 from enum import Enum
 
-forge = FlowForge(name="support_bot")
+forge = AgentOrchestrator(name="support_bot")
 forge.use(LoggerMiddleware())
 forge.use(MetricsMiddleware())
 
@@ -711,10 +711,10 @@ async def main():
 Fetch PR, run parallel checks (style, security, tests), generate AI review, post comments.
 
 ```python
-from flowforge import FlowForge
-from flowforge.agents import ResilientAgent, ResilienceConfig
+from agentorchestrator import AgentOrchestrator
+from agentorchestrator.agents import ResilientAgent, ResilienceConfig
 
-forge = FlowForge(name="code_review_bot")
+forge = AgentOrchestrator(name="code_review_bot")
 
 # ═══════════════════════════════════════════════════════════════════
 # AGENTS (external services wrapped with resilience)
@@ -912,12 +912,12 @@ async def handle_pr_webhook(payload: dict):
 Extract from source, transform with validation, load to destination — resumable on failure.
 
 ```python
-from flowforge import FlowForge
-from flowforge.core import FileRunStore, ResumableChainRunner
+from agentorchestrator import AgentOrchestrator
+from agentorchestrator.core import FileRunStore, ResumableChainRunner
 from pydantic import BaseModel, validator
 from typing import List
 
-forge = FlowForge(name="etl_pipeline")
+forge = AgentOrchestrator(name="etl_pipeline")
 
 # ═══════════════════════════════════════════════════════════════════
 # MODELS with validation
@@ -1073,8 +1073,8 @@ async def main():
         print(f"Resumed ETL complete: {result['summary']}")
 
 # Or use CLI:
-# flowforge run etl --resumable --data '{"source": "raw_customers"}'
-# flowforge resume <run_id>  # If it fails
+# agentorchestrator run etl --resumable --data '{"source": "raw_customers"}'
+# agentorchestrator resume <run_id>  # If it fails
 ```
 
 ---
@@ -1084,8 +1084,8 @@ async def main():
 Isolated execution per tenant with tenant-specific agents and rate limits.
 
 ```python
-from flowforge import FlowForge, IsolatedForge
-from flowforge.middleware import RateLimiterMiddleware, LoggerMiddleware
+from agentorchestrator import AgentOrchestrator, IsolatedForge
+from agentorchestrator.middleware import RateLimiterMiddleware, LoggerMiddleware
 
 # ═══════════════════════════════════════════════════════════════════
 # TENANT CONFIGURATION
@@ -1188,7 +1188,7 @@ async def generate(
 
 ---
 
-### Quick Reference: Pattern → FlowForge Features
+### Quick Reference: Pattern → AgentOrchestrator Features
 
 | Pattern | Example | Key Features |
 |---------|---------|--------------|
@@ -1197,19 +1197,19 @@ async def generate(
 | **Fan-out/Fan-in** | Code review | `parallel_groups`, multiple agents |
 | **Saga** | Support bot | `error_handling="continue"`, compensating actions |
 | **Multi-tenant** | SaaS | `IsolatedForge`, per-tenant middleware |
-| **Resumable** | ETL | `FileRunStore`, `ResumableChainRunner`, `flowforge resume` |
+| **Resumable** | ETL | `FileRunStore`, `ResumableChainRunner`, `agentorchestrator resume` |
 
 ---
 
-### The FlowForge Advantage
+### The AgentOrchestrator Advantage
 
-| Without FlowForge | With FlowForge |
+| Without AgentOrchestrator | With AgentOrchestrator |
 |-------------------|----------------|
 | 50+ lines of retry/backoff code | `@forge.step(retry=3, backoff=2.0)` |
 | Manual asyncio.gather orchestration | `parallel_groups=[["a", "b", "c"]]` |
 | Custom error handling per service | `error_handling="continue"` / `"fail_fast"` |
-| No visibility into partial failures | `flowforge runs --status failed` |
-| Re-run entire pipeline on crash | `flowforge resume <run_id>` |
+| No visibility into partial failures | `agentorchestrator runs --status failed` |
+| Re-run entire pipeline on crash | `agentorchestrator resume <run_id>` |
 | Scattered logging across services | `LoggerMiddleware` + `MetricsMiddleware` |
 | Per-service rate limiting | `RateLimiterMiddleware` with per-step config |
 | Hardcoded client initialization | `forge.register_resource()` + DI |
@@ -1217,4 +1217,4 @@ async def generate(
 
 ---
 
-**Bottom line**: FlowForge handles the orchestration plumbing — retries, parallelism, context, logging, resumability — so you focus on your business logic.
+**Bottom line**: AgentOrchestrator handles the orchestration plumbing — retries, parallelism, context, logging, resumability — so you focus on your business logic.

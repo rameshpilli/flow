@@ -6,11 +6,11 @@ ensuring all components wire together correctly even while using mocks.
 """
 
 import pytest
-from flowforge import FlowForge
-from flowforge.services.context_builder import ContextBuilderService
-from flowforge.services.content_prioritization import ContentPrioritizationService
-from flowforge.services.response_builder import ResponseBuilderService
-from flowforge.services.models import ChainRequest, ChainRequestOverrides
+from agentorchestrator import AgentOrchestrator
+from agentorchestrator.services.context_builder import ContextBuilderService
+from agentorchestrator.services.content_prioritization import ContentPrioritizationService
+from agentorchestrator.services.response_builder import ResponseBuilderService
+from agentorchestrator.services.models import ChainRequest, ChainRequestOverrides
 
 @pytest.mark.asyncio
 class TestCMPTIntegration:
@@ -24,7 +24,7 @@ class TestCMPTIntegration:
         3. ResponseBuilder generates a final response
         """
         # 1. Setup
-        forge = FlowForge(name="cmpt_test")
+        forge = AgentOrchestrator(name="cmpt_test")
         
         # Initialize services (using default mocks)
         context_service = ContextBuilderService()

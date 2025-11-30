@@ -1,6 +1,6 @@
 # ChainServer
 
-A client meeting prep (CMPT) chain server built with **FlowForge** - a DAG-based chain orchestration framework.
+A client meeting prep (CMPT) chain server built with **AgentOrchestrator** - a DAG-based chain orchestration framework.
 
 ## Overview
 
@@ -27,8 +27,8 @@ make test
 
 ```
 ChainServer/
-├── flowforge/                    # FlowForge framework
-│   ├── core/                     # Core framework (FlowForge, Context, DAG)
+├── agentorchestrator/                    # AgentOrchestrator framework
+│   ├── core/                     # Core framework (AgentOrchestrator, Context, DAG)
 │   ├── middleware/               # Middleware (Summarizer, Cache, Logger)
 │   ├── agents/                   # Data agents (SEC, News, Earnings)
 │   ├── services/                 # CMPT services (Context, Prioritization, Response)
@@ -45,9 +45,9 @@ ChainServer/
 └── pyproject.toml               # Package configuration
 ```
 
-## FlowForge Framework
+## AgentOrchestrator Framework
 
-FlowForge provides:
+AgentOrchestrator provides:
 
 - **Decorator-driven registration** - `@forge.agent()`, `@forge.step()`, `@forge.chain()`
 - **Automatic dependency resolution** - Steps execute in optimal order
@@ -58,9 +58,9 @@ FlowForge provides:
 ### Basic Usage
 
 ```python
-from flowforge import FlowForge, ChainContext
+from agentorchestrator import AgentOrchestrator, ChainContext
 
-forge = FlowForge(name="my_app")
+forge = AgentOrchestrator(name="my_app")
 
 @forge.step(name="extract", produces=["data"])
 async def extract(ctx: ChainContext):
@@ -83,7 +83,7 @@ result = await forge.run("my_chain")
 ### CMPT Chain Usage
 
 ```python
-from flowforge.chains import CMPTChain
+from agentorchestrator.chains import CMPTChain
 
 chain = CMPTChain()
 chain.check()       # Validate
@@ -100,7 +100,7 @@ print(result.response_builder['prepared_content'])
 ### Domain-Aware Summarization
 
 ```python
-from flowforge import create_domain_aware_middleware
+from agentorchestrator import create_domain_aware_middleware
 
 # Automatically extracts key info based on content type
 middleware = create_domain_aware_middleware(llm=my_llm, max_tokens=4000)
@@ -127,8 +127,8 @@ forge.use_middleware(middleware)
 
 ## Documentation
 
-- [USER_GUIDE.md](flowforge/USER_GUIDE.md) - Comprehensive guide with examples
-- [FLOW_GUIDE.md](flowforge/FLOW_GUIDE.md) - Technical flow documentation
+- [USER_GUIDE.md](agentorchestrator/USER_GUIDE.md) - Comprehensive guide with examples
+- [FLOW_GUIDE.md](agentorchestrator/FLOW_GUIDE.md) - Technical flow documentation
 - [Examples](examples/) - Working code examples
 
 ## Adding Custom Agents

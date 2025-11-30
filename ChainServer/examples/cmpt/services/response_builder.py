@@ -150,7 +150,7 @@ class AgentProvider(ABC):
 
 class RegistryAgentProvider(AgentProvider):
     """
-    Agent provider that uses registered agents from the FlowForge registry.
+    Agent provider that uses registered agents from the AgentOrchestrator registry.
 
     This is the production implementation that uses real agent instances.
     Supports per-agent timeout/retry configuration and collects execution metrics.
@@ -174,7 +174,7 @@ class RegistryAgentProvider(AgentProvider):
         Initialize the registry-based agent provider.
 
         Args:
-            forge: FlowForge instance (uses global if not provided)
+            forge: AgentOrchestrator instance (uses global if not provided)
             default_config: Default execution config for all agents
             agent_configs: Per-agent execution configurations
         """
@@ -184,12 +184,12 @@ class RegistryAgentProvider(AgentProvider):
         self._metrics: list[AgentExecutionMetrics] = []
         self._agent_instances: dict[str, Any] = {}
 
-    def _get_forge(self):
-        """Get FlowForge instance (lazy initialization)"""
+    def _get_orchestrator(self):
+        """Get AgentOrchestrator instance (lazy initialization)"""
         if self._forge is None:
-            from flowforge.core.forge import get_forge
+            from agentorchestrator.core.orchestrator import get_orchestrator
 
-            self._forge = get_forge()
+            self._forge = get_orchestrator()
         return self._forge
 
     def _get_config(self, agent_name: str) -> AgentExecutionConfig:
@@ -202,7 +202,7 @@ class RegistryAgentProvider(AgentProvider):
         registered_name = self.AGENT_NAME_MAPPING.get(agent_name, agent_name)
 
         if registered_name not in self._agent_instances:
-            forge = self._get_forge()
+            forge = self._get_orchestrator()
             agent = forge.get_agent(registered_name)
             if agent:
                 self._agent_instances[registered_name] = agent
@@ -556,7 +556,7 @@ class ResponseBuilderService:
         service = ResponseBuilderService(agent_provider=provider)
 
         # With LLM gateway
-        from flowforge.services.llm_gateway import get_llm_client
+        from agentorchestrator.services.llm_gateway import get_llm_client
         llm_client = get_llm_client()
         service = ResponseBuilderService(
             agent_provider=provider,
@@ -568,7 +568,7 @@ class ResponseBuilderService:
         metrics = service.get_agent_metrics_summary()
         print(f"News agent success rate: {metrics['by_agent']['news']['success_rate']}")
 
-    Or as a step in FlowForge:
+    Or as a step in AgentOrchestrator:
         @forge.step(deps=[content_prioritization], produces=["response_builder_output"])
         async def response_builder(ctx):
             provider = RegistryAgentProvider(forge=ctx.get("forge"))

@@ -1,8 +1,8 @@
-# FlowForge Improvement Report
+# AgentOrchestrator Improvement Report
 
 ## Executive Summary
 
-FlowForge is a robust DAG-based orchestration framework with a solid core (`flowforge/core`) supporting advanced features like fail-fast execution, middleware, and parallel processing. However, the service layer (`flowforge/services`) is currently in a **prototype state**, heavily relying on mock data. 
+AgentOrchestrator is a robust DAG-based orchestration framework with a solid core (`agentorchestrator/core`) supporting advanced features like fail-fast execution, middleware, and parallel processing. However, the service layer (`agentorchestrator/services`) is currently in a **prototype state**, heavily relying on mock data. 
 
 To move from prototype to production, the primary focus must be on **removing mocks**, **improving error handling**, and **adding integration tests**.
 
@@ -39,7 +39,7 @@ The current services (`ContextBuilderService`, `ResponseBuilderService`) contain
 ### B. Architecture & Design
 
 *   **Dependency Injection**: Move away from instantiating services directly inside steps. Pass dependencies (like the `LLMGatewayClient` or data providers) into the service constructors.
-*   **Configuration Management**: Consolidate all external API keys and URLs into `flowforge/config.py` with strict validation.
+*   **Configuration Management**: Consolidate all external API keys and URLs into `agentorchestrator/config.py` with strict validation.
 
 ### C. Testing & Quality Assurance
 
@@ -48,7 +48,7 @@ The current services (`ContextBuilderService`, `ResponseBuilderService`) contain
 
 ### D. Observability
 
-*   **Distributed Tracing**: The `flowforge/utils/tracing.py` module exists but needs to be pervasive.
+*   **Distributed Tracing**: The `agentorchestrator/utils/tracing.py` module exists but needs to be pervasive.
 *   **Action**: Decorate all new Adapter methods with `@trace_span` to gain visibility into external API latency and failure rates.
 
 ---

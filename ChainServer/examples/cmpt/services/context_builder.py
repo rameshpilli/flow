@@ -36,7 +36,7 @@ class ContextBuilderService:
         service = ContextBuilderService()
         output = await service.execute(request)
 
-    Or as a step in FlowForge:
+    Or as a step in AgentOrchestrator:
         @forge.step(produces=["context_builder_output"])
         async def context_builder(ctx):
             service = ContextBuilderService()

@@ -17,9 +17,9 @@ import pytest
 import sys
 sys.path.insert(0, "/Users/rameshpilli/Developer/ChainServer")
 
-from flowforge import FlowForge, ChainContext
-from flowforge.core.context import ExecutionSummary, StepResult
-from flowforge.core.registry import (
+from agentorchestrator import AgentOrchestrator, ChainContext
+from agentorchestrator.core.context import ExecutionSummary, StepResult
+from agentorchestrator.core.registry import (
     get_agent_registry,
     get_chain_registry,
     get_step_registry,
@@ -58,7 +58,7 @@ class TestCMPTChainIntegration:
     @pytest.mark.asyncio
     async def test_simple_chain_end_to_end(self):
         """Test a simple multi-step chain from start to finish."""
-        forge = FlowForge(name="test_integration", isolated=True)
+        forge = AgentOrchestrator(name="test_integration", isolated=True)
 
         # Track execution order
         execution_log = []
@@ -109,7 +109,7 @@ class TestCMPTChainIntegration:
     @pytest.mark.asyncio
     async def test_parallel_steps_with_mocked_http(self):
         """Test parallel data fetching with mocked HTTP responses."""
-        forge = FlowForge(name="test_parallel", isolated=True)
+        forge = AgentOrchestrator(name="test_parallel", isolated=True)
 
         # Mock HTTP responses
         mock_responses = {
@@ -165,7 +165,7 @@ class TestCMPTChainIntegration:
     @pytest.mark.asyncio
     async def test_error_handling_continue_mode(self):
         """Test continue mode with partial success."""
-        forge = FlowForge(name="test_continue", isolated=True)
+        forge = AgentOrchestrator(name="test_continue", isolated=True)
 
         @forge.step(name="step_a")
         async def step_a(ctx: ChainContext):
@@ -215,7 +215,7 @@ class TestCMPTChainIntegration:
     @pytest.mark.asyncio
     async def test_retry_behavior(self):
         """Test retry logic with eventual success."""
-        forge = FlowForge(name="test_retry", isolated=True)
+        forge = AgentOrchestrator(name="test_retry", isolated=True)
 
         attempt_count = [0]
 
@@ -290,7 +290,7 @@ class TestCMPTChainIntegration:
     @pytest.mark.asyncio
     async def test_step_result_rich_metadata(self):
         """Test that StepResult includes rich error metadata."""
-        forge = FlowForge(name="test_metadata", isolated=True)
+        forge = AgentOrchestrator(name="test_metadata", isolated=True)
 
         @forge.step(name="error_step")
         async def error_step(ctx: ChainContext):
@@ -323,7 +323,7 @@ class TestParallelismBenchmark:
     @pytest.mark.asyncio
     async def test_parallel_speedup(self):
         """Verify that parallel execution provides speedup over sequential."""
-        forge = FlowForge(name="test_benchmark", isolated=True)
+        forge = AgentOrchestrator(name="test_benchmark", isolated=True)
 
         STEP_DELAY = 0.1  # 100ms per step
         NUM_PARALLEL_STEPS = 5
@@ -371,7 +371,7 @@ class TestParallelismBenchmark:
     @pytest.mark.asyncio
     async def test_concurrency_limit_respected(self):
         """Test that max_concurrency limits are respected."""
-        forge = FlowForge(name="test_concurrency", isolated=True)
+        forge = AgentOrchestrator(name="test_concurrency", isolated=True)
 
         concurrent_count = [0]
         max_observed = [0]
