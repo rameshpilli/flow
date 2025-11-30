@@ -1856,22 +1856,22 @@ actual = str(config.llm_api_key)  # Actual value for API calls
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FLOWFORGE_SERVICE_NAME` | `agentorchestrator` | Service name for telemetry |
-| `FLOWFORGE_VERSION` | `1.0.0` | Service version |
-| `FLOWFORGE_ENV` | `development` | Environment (dev/staging/prod) |
+| `AO_SERVICE_NAME` | `agentorchestrator` | Service name for telemetry |
+| `AO_VERSION` | `1.0.0` | Service version |
+| `AO_ENV` | `development` | Environment (dev/staging/prod) |
 | `LLM_API_KEY` | - | LLM API key (secret, masked) |
 | `LLM_BASE_URL` | `http://localhost:8000` | LLM service URL |
 | `LLM_MODEL` | `gpt-4` | Default LLM model |
 | `LLM_TIMEOUT_MS` | `30000` | LLM request timeout |
 | `LLM_MAX_RETRIES` | `3` | Max retry attempts |
-| `FLOWFORGE_MAX_PARALLEL` | `10` | Max parallel steps |
-| `FLOWFORGE_DEFAULT_TIMEOUT_MS` | `30000` | Default step timeout |
+| `AO_MAX_PARALLEL` | `10` | Max parallel steps |
+| `AO_DEFAULT_TIMEOUT_MS` | `30000` | Default step timeout |
 | `OTEL_ENABLED` | `false` | Enable OpenTelemetry |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | - | OTLP endpoint URL |
 | `OTEL_SERVICE_NAME` | - | OTel service name |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `LOG_FORMAT` | `text` | Log format (text/json) |
-| `FLOWFORGE_DEBUG` | `false` | Debug mode |
+| `AO_DEBUG` | `false` | Debug mode |
 
 ### Secret Masking
 

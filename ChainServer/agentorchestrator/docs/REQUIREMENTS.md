@@ -105,10 +105,10 @@ pip install "agentorchestrator[all]"
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FLOWFORGE_SERVICE_NAME` | `agentorchestrator` | Service name for telemetry |
-| `FLOWFORGE_ENV` | `development` | Environment (development/staging/production) |
-| `FLOWFORGE_DEBUG` | `false` | Enable debug mode |
-| `FLOWFORGE_MAX_PARALLEL` | `10` | Max parallel step execution |
+| `AO_SERVICE_NAME` | `agentorchestrator` | Service name for telemetry |
+| `AO_ENV` | `development` | Environment (development/staging/production) |
+| `AO_DEBUG` | `false` | Enable debug mode |
+| `AO_MAX_PARALLEL` | `10` | Max parallel step execution |
 
 ### LLM Configuration
 
@@ -122,21 +122,21 @@ pip install "agentorchestrator[all]"
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FLOWFORGE_CACHE_ENABLED` | `true` | Enable response caching |
-| `FLOWFORGE_CACHE_TTL_SECONDS` | `300` | Cache TTL in seconds |
+| `AO_CACHE_ENABLED` | `true` | Enable response caching |
+| `AO_CACHE_TTL_SECONDS` | `300` | Cache TTL in seconds |
 
 ### Rate Limiting
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FLOWFORGE_RATE_LIMIT_ENABLED` | `false` | Enable rate limiting |
-| `FLOWFORGE_RATE_LIMIT_RPS` | `10.0` | Requests per second |
+| `AO_RATE_LIMIT_ENABLED` | `false` | Enable rate limiting |
+| `AO_RATE_LIMIT_RPS` | `10.0` | Requests per second |
 
 ### Retry Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FLOWFORGE_RETRY_MAX` | `3` | Max retry attempts |
+| `AO_RETRY_MAX` | `3` | Max retry attempts |
 
 ### Observability
 

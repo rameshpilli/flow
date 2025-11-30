@@ -1715,10 +1715,10 @@ print(config.retry_policy.max_retries)  # 3
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FLOWFORGE_ENV` | `development` | Environment name |
+| `AO_ENV` | `development` | Environment name |
 | `LLM_API_KEY` | - | LLM API key (masked) |
 | `LLM_BASE_URL` | `http://localhost:8000` | LLM service URL |
-| `FLOWFORGE_MAX_PARALLEL` | `10` | Max parallel steps |
+| `AO_MAX_PARALLEL` | `10` | Max parallel steps |
 | `OTEL_ENABLED` | `false` | Enable OpenTelemetry |
 | `LOG_FORMAT` | `text` | Log format (text/json) |
 

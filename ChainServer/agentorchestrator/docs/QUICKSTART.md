@@ -117,10 +117,10 @@ forge.use(CacheMiddleware(ttl_seconds=300))
 ## Testing
 
 ```python
-from agentorchestrator.testing import IsolatedForge
+from agentorchestrator.testing import IsolatedOrchestrator
 
 async def test_my_chain():
-    async with IsolatedForge() as forge:
+    async with IsolatedOrchestrator() as forge:
         @forge.step(name="test_step")
         async def test_step(ctx):
             return {"result": "ok"}

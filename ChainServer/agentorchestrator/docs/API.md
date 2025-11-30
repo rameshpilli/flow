@@ -336,7 +336,7 @@ print(stats["memory"]["used_memory_human"])
 
 ```python
 from agentorchestrator.testing import (
-    IsolatedForge,
+    IsolatedOrchestrator,
     MockAgent,
     MockMiddleware,
     mock_step,
@@ -348,7 +348,7 @@ from agentorchestrator.testing import (
 
 # Isolated testing
 async def test_my_chain():
-    async with IsolatedForge() as forge:
+    async with IsolatedOrchestrator() as forge:
         @forge.step(name="test_step")
         async def test_step(ctx):
             return {"done": True}
