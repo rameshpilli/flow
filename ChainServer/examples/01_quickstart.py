@@ -40,7 +40,7 @@ ao = AgentOrchestrator(name="quickstart", isolated=True)
 @ao.step
 async def fetch_data(ctx: ChainContext) -> dict:
     """Step 1: Fetch initial data from context."""
-    company = ctx.initial_data.get("company", "Unknown")
+    company = ctx.get("company", "Unknown")
     print(f"  📥 Fetching data for: {company}")
 
     # Simulate fetching data
@@ -161,7 +161,7 @@ async def demo_resumable():
     for run in runs:
         print(f"  • {run.run_id}: {run.chain_name} ({run.status})")
 
-    print("\n═" * 60 + "\n")
+    print("\n" + "═" * 60 + "\n")
     return result
 
 

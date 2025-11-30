@@ -1,245 +1,261 @@
 #!/usr/bin/env python3
 """
-Test the CMPT Chain integration with AgentOrchestrator.
+================================================================================
+03_CMPT_TESTS.PY - Test the CMPT Chain
+================================================================================
 
-Run with: python -m agentorchestrator.test_cmpt_chain
+PURPOSE:
+    Test the CMPT chain integration with AgentOrchestrator.
+    Demonstrates the complete flow:
+    1. Context Builder - extracts firm info, temporal context, personas
+    2. Content Prioritization - prioritizes sources, generates subqueries
+    3. Response Builder - executes agents, builds final response
 
-This demonstrates the complete flow:
-1. Context Builder - extracts firm info, temporal context, personas
-2. Content Prioritization - prioritizes sources, generates subqueries
-3. Response Builder - executes agents, builds final response
+RUN THIS EXAMPLE:
+    python examples/cmpt/03_cmpt_tests.py
+
+    OR via pytest:
+    pytest examples/cmpt/03_cmpt_tests.py -v
 """
 
 import asyncio
 import json
-import os
 import sys
+from pathlib import Path
 
-# Add parent to path for local testing
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from agentorchestrator.chains import CMPTChain
+from agentorchestrator import AgentOrchestrator
+from examples.cmpt.run import create_cmpt_chain
+from examples.cmpt.services import (
+    ChainRequest,
+    ContextBuilderService,
+    ContentPrioritizationService,
+    ResponseBuilderService,
+)
 
 
 def print_section(title: str, char: str = "="):
-    """Print a formatted section header"""
+    """Print a formatted section header."""
     width = 70
     print(f"\n{char * width}")
     print(f" {title}")
     print(f"{char * width}")
 
 
-def test_check():
-    """Test chain validation (like 'dg check defs')"""
-    print_section("CMPT Chain - Validation (forge.check)")
+# ============================================================
+# TEST: Chain Validation
+# ============================================================
 
-    chain = CMPTChain()
-    chain.check()
+def test_chain_validation():
+    """Test chain validation (like 'ao check')."""
+    print_section("CMPT Chain - Validation (ao.check)")
 
+    ao = AgentOrchestrator(name="cmpt_test", isolated=True)
+    create_cmpt_chain(ao)
 
-def test_list_defs():
-    """Test listing definitions (like 'dg list defs')"""
-    print_section("CMPT Chain - List Definitions (forge.list_defs)")
-
-    chain = CMPTChain()
-    chain.list_defs()
-
-
-def test_graph_ascii():
-    """Test ASCII DAG visualization"""
-    print_section("CMPT Chain - DAG Visualization (ASCII)")
-
-    chain = CMPTChain()
-    chain.graph("ascii")
+    # Validate chain
+    ao.check("cmpt_chain")
+    print("  ✓ Chain validation passed")
 
 
-def test_graph_mermaid():
-    """Test Mermaid DAG visualization"""
-    print_section("CMPT Chain - DAG Visualization (Mermaid)")
+# ============================================================
+# TEST: List Definitions
+# ============================================================
 
-    chain = CMPTChain()
-    chain.graph("mermaid")
+def test_list_definitions():
+    """Test listing definitions (like 'ao list')."""
+    print_section("CMPT Chain - List Definitions (ao.list_*)")
+
+    ao = AgentOrchestrator(name="cmpt_test", isolated=True)
+    create_cmpt_chain(ao)
+
+    print("\n  Steps:")
+    for step in ao.list_steps():
+        print(f"    - {step}")
+
+    print("\n  Chains:")
+    for chain in ao.list_chains():
+        print(f"    - {chain}")
 
 
-async def test_run():
-    """Test complete chain execution with mock data"""
+# ============================================================
+# TEST: DAG Visualization
+# ============================================================
+
+def test_dag_visualization():
+    """Test DAG visualization (like 'ao graph')."""
+    print_section("CMPT Chain - DAG Visualization")
+
+    ao = AgentOrchestrator(name="cmpt_test", isolated=True)
+    create_cmpt_chain(ao)
+
+    print("\n  ASCII DAG:")
+    dag = ao.graph("cmpt_chain")
+    print(dag)
+
+
+# ============================================================
+# TEST: Services Directly
+# ============================================================
+
+async def test_services_directly():
+    """Test the underlying services without AgentOrchestrator."""
+    print_section("CMPT Services - Direct Execution")
+
+    # Stage 1: Context Builder
+    print("\n  Stage 1: Context Builder")
+    print("  " + "-" * 40)
+
+    request = ChainRequest(
+        corporate_company_name="Apple Inc",
+        meeting_datetime="2025-01-15T10:00:00Z",
+    )
+
+    context_service = ContextBuilderService()
+    context_output = await context_service.execute(request)
+
+    print(f"    Company: {context_output.company_name}")
+    print(f"    Ticker: {context_output.ticker}")
+    print(f"    Industry: {context_output.company_info.industry if context_output.company_info else 'N/A'}")
+    print(f"    Quarter: Q{context_output.temporal_context.fiscal_quarter} {context_output.temporal_context.fiscal_year}" if context_output.temporal_context else "N/A")
+
+    # Stage 2: Content Prioritization
+    print("\n  Stage 2: Content Prioritization")
+    print("  " + "-" * 40)
+
+    priority_service = ContentPrioritizationService()
+    priority_output = await priority_service.execute(context_output)
+
+    print(f"    Sources: {len(priority_output.prioritized_sources)}")
+    for src in priority_output.prioritized_sources[:3]:
+        print(f"      - {src.source}: priority {src.priority}")
+    print(f"    Subqueries: {len(priority_output.subqueries)}")
+
+    # Stage 3: Response Builder
+    print("\n  Stage 3: Response Builder")
+    print("  " + "-" * 40)
+
+    response_service = ResponseBuilderService()
+    response_output = await response_service.execute(context_output, priority_output)
+
+    print(f"    Total Items: {response_output.total_items}")
+    print(f"    Agents Succeeded: {response_output.agents_succeeded}")
+    print(f"    Agents Failed: {response_output.agents_failed}")
+
+    print("\n  ✓ All services executed successfully")
+    return context_output, priority_output, response_output
+
+
+# ============================================================
+# TEST: Full Chain Execution
+# ============================================================
+
+async def test_full_chain():
+    """Test complete chain execution with AgentOrchestrator."""
     print_section("CMPT Chain - Full Execution")
 
-    chain = CMPTChain()
+    # Create orchestrator and register chain
+    ao = AgentOrchestrator(name="cmpt_test", isolated=True)
+    create_cmpt_chain(ao)
 
     print("\n  Input Request:")
     print("  " + "-" * 40)
-    print("  corporate_company_name: Apple Inc")
-    print("  meeting_datetime: 2025-01-15T10:00:00Z")
-    print("  rbc_employee_email: john.doe@rbc.com")
-    print("  corporate_client_email: jane.smith@apple.com")
+    print("    company: Apple Inc")
+    print("    meeting_date: 2025-01-15")
 
-    result = await chain.run(
-        corporate_company_name="Apple Inc",
-        meeting_datetime="2025-01-15T10:00:00Z",
-        rbc_employee_email="john.doe@rbc.com",
-        corporate_client_email="jane.smith@apple.com",
-    )
+    # Execute the chain
+    result = await ao.launch("cmpt_chain", {
+        "request": {
+            "corporate_company_name": "Apple Inc",
+            "meeting_datetime": "2025-01-15T10:00:00Z",
+        }
+    })
 
-    # Display detailed results
-    print_section("Execution Results", "-")
-
-    print(f"\n  Overall Status: {'SUCCESS' if result.success else 'FAILED'}")
-    if result.error:
-        print(f"  Error: {result.error}")
-
-    # Stage 1: Context Builder Output
-    print("\n  STAGE 1: Context Builder")
+    # Display results
+    print("\n  Execution Results:")
     print("  " + "-" * 40)
-    ctx_data = result.context_builder or {}
-    print(f"  Company Name: {ctx_data.get('company_name', 'N/A')}")
-    print(f"  Ticker: {ctx_data.get('ticker', 'N/A')}")
+    print(f"    Success: {result.get('success')}")
+    print(f"    Duration: {result.get('duration_ms', 0):.1f}ms")
 
-    if ctx_data.get("company_info"):
-        ci = ctx_data["company_info"]
-        print(f"  Industry: {ci.get('industry', 'N/A')}")
-        print(f"  Sector: {ci.get('sector', 'N/A')}")
-        print(f"  Market Cap: {ci.get('market_cap', 'N/A')}")
+    if result.get("results"):
+        print("\n  Step Results:")
+        for step_result in result["results"]:
+            status = "✓" if step_result.get("success") else "✗"
+            name = step_result.get("step", "unknown")
+            duration = step_result.get("duration_ms", 0)
+            print(f"    {status} {name}: {duration:.1f}ms")
 
-    if ctx_data.get("temporal_context"):
-        tc = ctx_data["temporal_context"]
-        print(f"  Current Quarter: {tc.get('current_quarter', 'N/A')}")
-        print(f"  Fiscal Year: {tc.get('fiscal_year', 'N/A')}")
-        print(f"  Days to Earnings: {tc.get('days_to_earnings', 'N/A')}")
+    # Show context data
+    ctx_data = result.get("context", {}).get("data", {})
+    if ctx_data.get("company_name"):
+        print(f"\n  Company: {ctx_data.get('company_name')}")
+        print(f"  Ticker: {ctx_data.get('ticker')}")
 
-    if ctx_data.get("rbc_persona"):
-        rp = ctx_data["rbc_persona"]
-        print(f"  RBC Persona: {rp.get('name', 'N/A')} ({rp.get('email', 'N/A')})")
-
-    if ctx_data.get("corporate_client_personas"):
-        for cp in ctx_data["corporate_client_personas"]:
-            print(f"  Client Persona: {cp.get('name', 'N/A')} ({cp.get('email', 'N/A')})")
-
-    # Stage 2: Content Prioritization Output
-    print("\n  STAGE 2: Content Prioritization")
-    print("  " + "-" * 40)
-    cp_data = result.content_prioritization or {}
-
-    if cp_data.get("prioritized_sources"):
-        print("  Prioritized Sources:")
-        for src in cp_data["prioritized_sources"]:
-            print(f"    - {src.get('source', 'N/A')}: {src.get('priority', 'N/A')}")
-
-    if cp_data.get("subqueries"):
-        print(f"  Subqueries Generated: {len(cp_data['subqueries'])}")
-        for sq in cp_data["subqueries"][:3]:  # Show first 3
-            print(f"    - Agent: {sq.get('agent', 'N/A')}, Query: {sq.get('query', 'N/A')[:40]}...")
-
-    if cp_data.get("prioritization_reasoning"):
-        print(f"  Reasoning: {cp_data['prioritization_reasoning'][:100]}...")
-
-    # Stage 3: Response Builder Output
-    print("\n  STAGE 3: Response Builder")
-    print("  " + "-" * 40)
-    resp_data = result.response_builder or {}
-
-    print(f"  Total Items Retrieved: {resp_data.get('total_items', 0)}")
-    print(f"  Agents Succeeded: {resp_data.get('agents_succeeded', 0)}")
-    print(f"  Agents Failed: {resp_data.get('agents_failed', 0)}")
-
-    if resp_data.get("agent_results"):
-        print("\n  Agent Results:")
-        for agent, ar in resp_data["agent_results"].items():
-            status = "SUCCESS" if ar.get("success") else "FAILED"
-            count = ar.get("item_count", 0)
-            duration = ar.get("duration_ms", 0)
-            print(f"    - {agent}: {status} ({count} items, {duration:.1f}ms)")
-
-    if resp_data.get("financial_metrics"):
-        fm = resp_data["financial_metrics"]
-        print("\n  Financial Metrics:")
-        print(f"    Latest Quarter: {fm.get('latest_quarter', 'N/A')}")
-        print(f"    EPS Beat: {fm.get('eps_beat', 'N/A')}")
-        print(f"    EPS Actual: ${fm.get('eps_actual', 'N/A')}")
-        print(f"    Revenue Actual: {fm.get('revenue_actual', 'N/A')}")
-
-    if resp_data.get("strategic_analysis"):
-        sa = resp_data["strategic_analysis"]
-        print("\n  Strategic Analysis:")
-        print(f"    Market Sentiment: {sa.get('market_sentiment', 'N/A')}")
-        if sa.get("key_themes"):
-            print(f"    Key Themes: {', '.join(sa['key_themes'])}")
-        if sa.get("risks"):
-            print(f"    Risks: {', '.join(sa['risks'][:3])}...")
-        if sa.get("opportunities"):
-            print(f"    Opportunities: {', '.join(sa['opportunities'][:3])}...")
-
-    # Timing Summary
-    print("\n  Timing Summary (ms):")
-    print("  " + "-" * 40)
-    if result.timings:
-        total = 0
-        for stage, ms in result.timings.items():
-            print(f"    {stage}: {ms:.2f}")
-            total += ms
-        print(f"    {'─' * 30}")
-        print(f"    Total: {total:.2f}")
-
-    # Final Prepared Content
-    print("\n  FINAL OUTPUT: Meeting Prep Content")
-    print("  " + "-" * 40)
-    prepared_content = resp_data.get("prepared_content", "N/A")
-    # Indent each line
-    for line in prepared_content.split("\n"):
-        print(f"  {line}")
-
+    print("\n  ✓ Chain executed successfully")
     return result
 
 
-async def test_run_detailed_json():
-    """Show raw JSON output for debugging"""
+# ============================================================
+# TEST: Raw JSON Output
+# ============================================================
+
+async def test_json_output():
+    """Show raw JSON output for debugging."""
     print_section("CMPT Chain - Raw JSON Output")
 
-    chain = CMPTChain()
+    ao = AgentOrchestrator(name="cmpt_test", isolated=True)
+    create_cmpt_chain(ao)
 
-    result = await chain.run(
-        corporate_company_name="Microsoft Corporation",
-        meeting_datetime="2025-02-20T14:30:00Z",
-    )
+    result = await ao.launch("cmpt_chain", {
+        "request": {
+            "corporate_company_name": "Microsoft Corporation",
+            "meeting_datetime": "2025-02-20T14:30:00Z",
+        }
+    })
 
-    # Pretty print the full response
-    result_dict = {
-        "success": result.success,
-        "error": result.error,
-        "timings": result.timings,
-        "context_builder": result.context_builder,
-        "content_prioritization": result.content_prioritization,
-        "response_builder": result.response_builder,
+    # Pretty print essential fields
+    output = {
+        "success": result.get("success"),
+        "duration_ms": result.get("duration_ms"),
+        "steps_executed": len(result.get("results", [])),
+        "company": result.get("context", {}).get("data", {}).get("company_name"),
     }
 
-    print("\n" + json.dumps(result_dict, indent=2, default=str))
+    print("\n" + json.dumps(output, indent=2, default=str))
+    return result
 
+
+# ============================================================
+# MAIN
+# ============================================================
 
 def main():
-    """Run all tests"""
+    """Run all tests."""
     print("\n" + "=" * 70)
-    print("     AgentOrchestrator CMPT Chain - End-to-End Test Suite")
+    print("     AgentOrchestrator CMPT Chain - Test Suite")
     print("=" * 70)
     print("\nThis test demonstrates the complete Client Meeting Prep chain flow.")
     print("All data is MOCKED - no external API calls are made.\n")
 
     # 1. Validation
-    test_check()
+    test_chain_validation()
 
     # 2. List definitions
-    test_list_defs()
+    test_list_definitions()
 
-    # 3. ASCII graph
-    test_graph_ascii()
+    # 3. DAG visualization
+    test_dag_visualization()
 
-    # 4. Mermaid graph
-    test_graph_mermaid()
+    # 4. Test services directly
+    asyncio.run(test_services_directly())
 
-    # 5. Run chain with detailed output
-    asyncio.run(test_run())
+    # 5. Run full chain
+    asyncio.run(test_full_chain())
 
-    # 6. Show raw JSON (optional, for debugging)
-    # asyncio.run(test_run_detailed_json())
+    # 6. Show JSON output (optional)
+    # asyncio.run(test_json_output())
 
     print_section("All Tests Completed Successfully!", "=")
     print("\nThe CMPT chain is fully functional with mock data.")
