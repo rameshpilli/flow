@@ -227,3 +227,219 @@ flowforge check    # Validate chain definitions
 | `flowforge/agents/base.py` | Agent base classes |
 | `flowforge/middleware/` | All middleware (cache, logger, etc.) |
 | `examples/cmpt_chain_tutorial.ipynb` | Full walkthrough notebook |
+
+---
+
+## Go Crazy: What You Can Build
+
+FlowForge is a general-purpose chain orchestration library. Here's what you can build beyond CMPT:
+
+### 1. Multi-Model AI Pipeline
+Route queries to different LLMs based on complexity, cost, or capability:
+```python
+@forge.step(name="classify_query")
+async def classify(ctx):
+    query = ctx.get("query")
+    # Simple queries → fast/cheap model, complex → powerful model
+    return {"model": "gpt-4" if is_complex(query) else "gpt-3.5-turbo"}
+
+@forge.step(name="route_to_model", deps=["classify_query"])
+async def route(ctx):
+    model = ctx.get("model")
+    llm = ctx.get_resource(f"llm_{model}")
+    return await llm.complete(ctx.get("query"))
+```
+
+### 2. Document Processing Pipeline
+```
+┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+│  Ingest  │───▶│  Parse   │───▶│  Chunk   │───▶│  Embed   │
+│  (S3/GCS)│    │(PDF/DOCX)│    │ (tokens) │    │(vectors) │
+└──────────┘    └──────────┘    └──────────┘    └──────────┘
+                                                      │
+┌──────────┐    ┌──────────┐    ┌──────────┐         │
+│  Answer  │◀───│ Retrieve │◀───│  Index   │◀────────┘
+│  (LLM)   │    │ (top-k)  │    │(Pinecone)│
+└──────────┘    └──────────┘    └──────────┘
+```
+```python
+@forge.chain(name="doc_pipeline")
+class DocPipeline:
+    steps = ["ingest", "parse", "chunk", "embed", "index"]
+    parallel_groups = [["chunk", "embed"]]  # These can overlap
+```
+
+### 3. Real-Time Trading Signal Generator
+```python
+@forge.agent(name="market_data")
+class MarketDataAgent(ResilientAgent):
+    # Circuit breaker prevents hammering failing exchange APIs
+    pass
+
+@forge.chain(name="trading_signals", error_handling="continue")
+class TradingChain:
+    steps = [
+        "fetch_prices",      # Market data
+        "fetch_sentiment",   # News/social sentiment
+        "fetch_fundamentals",# SEC filings
+        "generate_signals",  # ML model
+        "validate_risk",     # Risk checks
+        "publish_signals",   # Push to execution
+    ]
+```
+
+### 4. Customer Support Automation
+```python
+@forge.step(name="classify_ticket")
+async def classify(ctx):
+    return {"category": "billing", "priority": "high", "sentiment": "angry"}
+
+@forge.step(name="route_ticket", deps=["classify_ticket"])
+async def route(ctx):
+    if ctx.get("priority") == "high":
+        return {"action": "escalate_human"}
+    return {"action": "auto_respond"}
+
+@forge.step(name="generate_response", deps=["route_ticket"])
+async def respond(ctx):
+    if ctx.get("action") == "auto_respond":
+        return await llm.generate_support_response(ctx)
+    return {"response": None, "escalated": True}
+```
+
+### 5. Code Review Bot
+```python
+@forge.chain(name="code_review")
+class CodeReviewChain:
+    steps = [
+        "fetch_diff",           # GitHub PR diff
+        "parse_changes",        # AST analysis
+        "check_style",          # Linting
+        "check_security",       # SAST scan
+        "check_tests",          # Coverage delta
+        "generate_review",      # LLM summary
+        "post_comments",        # GitHub API
+    ]
+    parallel_groups = [
+        ["check_style", "check_security", "check_tests"],  # Run in parallel
+    ]
+```
+
+### 6. ETL with Validation
+```python
+@forge.step(name="extract", input_model=ExtractRequest, output_model=RawData)
+async def extract(ctx): ...
+
+@forge.step(name="transform", deps=["extract"], output_model=CleanData)
+async def transform(ctx):
+    # If this fails, chain stops (fail-fast with contracts)
+    ...
+
+@forge.step(name="load", deps=["transform"])
+async def load(ctx):
+    # Resumable: if load fails, resume from here (not re-extract)
+    ...
+```
+
+### 7. Multi-Tenant SaaS Workflows
+```python
+# Each tenant gets isolated registries
+async def handle_request(tenant_id: str, request: dict):
+    async with IsolatedForge() as forge:
+        # Load tenant-specific agents
+        load_tenant_agents(forge, tenant_id)
+
+        # Run with tenant's rate limits
+        forge.use(RateLimiterMiddleware(get_tenant_limits(tenant_id)))
+
+        return await forge.launch("workflow", request)
+```
+
+### 8. Agentic Loop (ReAct Pattern)
+```python
+@forge.step(name="think")
+async def think(ctx):
+    return await llm.generate_thought(ctx.get("observation"))
+
+@forge.step(name="act", deps=["think"])
+async def act(ctx):
+    action = ctx.get("thought")["action"]
+    tool = ctx.get_agent(action["tool"])
+    return await tool.execute(action["input"])
+
+@forge.step(name="observe", deps=["act"])
+async def observe(ctx):
+    result = ctx.get("action_result")
+    if is_final(result):
+        return {"done": True, "answer": result}
+    ctx.set("observation", result)
+    return {"done": False}
+
+# Loop until done (via chain composition)
+@forge.chain(name="react_loop")
+class ReactLoop:
+    steps = ["think", "act", "observe"]
+    loop_until = lambda ctx: ctx.get("done", False)  # Custom loop condition
+```
+
+### 9. Batch Processing with Progress
+```python
+@forge.step(name="process_batch")
+async def process_batch(ctx):
+    items = ctx.get("items")
+    results = []
+
+    for i, item in enumerate(items):
+        result = await process_one(item)
+        results.append(result)
+
+        # Checkpoint after each item (resumable on failure)
+        ctx.checkpoint({"processed": i + 1, "results": results})
+
+    return {"results": results}
+```
+
+### 10. A/B Testing LLM Prompts
+```python
+@forge.step(name="ab_test_prompt")
+async def ab_test(ctx):
+    variant = random.choice(["A", "B"])
+    prompt = PROMPTS[variant]
+
+    result = await llm.complete(prompt.format(**ctx.get("inputs")))
+
+    # Track for analysis
+    ctx.set("variant", variant, scope=ContextScope.CHAIN)
+    metrics.record("prompt_variant", variant)
+
+    return {"response": result, "variant": variant}
+```
+
+### Mix & Match Patterns
+
+| Pattern | Use Case | Key Features Used |
+|---------|----------|-------------------|
+| Fan-out/Fan-in | Query multiple sources, merge | `parallel_groups`, agents |
+| Pipeline | Sequential processing | `deps`, input/output contracts |
+| Router | Dynamic step selection | Conditional logic in steps |
+| Saga | Distributed transactions | `error_handling="continue"`, compensating steps |
+| Retry Loop | Iterative refinement | Chain composition, `loop_until` |
+| Batch | Process large datasets | Checkpointing, resumability |
+| Multi-tenant | SaaS isolation | `IsolatedForge`, per-tenant middleware |
+
+### The FlowForge Advantage
+
+| Without FlowForge | With FlowForge |
+|-------------------|----------------|
+| Manual retry/backoff code | `@forge.step(retry=3, backoff=2.0)` |
+| Custom parallel execution | `parallel_groups=[["a", "b", "c"]]` |
+| Ad-hoc error handling | `error_handling="continue"` / `"fail_fast"` |
+| No visibility into failures | `flowforge runs --status failed` |
+| Start from scratch on crash | `flowforge resume <run_id>` |
+| Scattered logging | `LoggerMiddleware` + `MetricsMiddleware` |
+| No rate limiting | `RateLimiterMiddleware` per-step |
+| Hardcoded dependencies | `resources=["llm", "db"]` injection |
+
+---
+
+**Bottom line**: If you're stitching together APIs, LLMs, databases, or any async operations with dependencies — FlowForge gives you the plumbing for free so you can focus on the logic.
