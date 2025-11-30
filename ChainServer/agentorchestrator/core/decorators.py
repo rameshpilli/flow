@@ -222,10 +222,10 @@ def middleware(
         middleware_name = name or cls.__name__
 
         # Add metadata to class
-        cls._flowforge_middleware = True
-        cls._flowforge_name = middleware_name
-        cls._flowforge_priority = priority
-        cls._flowforge_applies_to = applies_to
+        cls._ao_middleware = True
+        cls._ao_name = middleware_name
+        cls._ao_priority = priority
+        cls._ao_applies_to = applies_to
 
         logger.debug(f"Middleware registered: {middleware_name} (priority={priority})")
         return cls
@@ -248,9 +248,9 @@ def parallel(*step_names: str):
     """
 
     def decorator(cls: type[T]) -> type[T]:
-        if not hasattr(cls, "_flowforge_parallel_groups"):
-            cls._flowforge_parallel_groups = []
-        cls._flowforge_parallel_groups.append(list(step_names))
+        if not hasattr(cls, "_ao_parallel_groups"):
+            cls._ao_parallel_groups = []
+        cls._ao_parallel_groups.append(list(step_names))
         return cls
 
     return decorator
@@ -268,8 +268,8 @@ def depends_on(*step_names: str):
     """
 
     def decorator(func: F) -> F:
-        existing = getattr(func, "_flowforge_dependencies", [])
-        func._flowforge_dependencies = existing + list(step_names)
+        existing = getattr(func, "_ao_dependencies", [])
+        func._ao_dependencies = existing + list(step_names)
         return func
 
     return decorator
@@ -287,8 +287,8 @@ def produces(*context_keys: str):
     """
 
     def decorator(func: F) -> F:
-        existing = getattr(func, "_flowforge_produces", [])
-        func._flowforge_produces = existing + list(context_keys)
+        existing = getattr(func, "_ao_produces", [])
+        func._ao_produces = existing + list(context_keys)
         return func
 
     return decorator

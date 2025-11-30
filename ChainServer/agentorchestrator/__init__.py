@@ -153,4 +153,14 @@ def __getattr__(name: str):
         from agentorchestrator import utils
         return getattr(utils, name)
 
+    # Chains (CMPTChain etc.)
+    if name == "CMPTChain":
+        from agentorchestrator.chains import CMPTChain
+        return CMPTChain
+
+    # Services models (ChainRequest, ChainResponse, etc.)
+    if name in ("ChainRequest", "ChainResponse", "ChainRequestOverrides"):
+        from agentorchestrator import services
+        return getattr(services, name)
+
     raise AttributeError(f"module 'agentorchestrator' has no attribute '{name}'")

@@ -107,8 +107,8 @@ class HTTPAdapterAgent(BaseAgent):
     - Comprehensive logging
     """
 
-    _flowforge_name = "http_adapter"
-    _flowforge_version = "1.0.0"
+    _ao_name = "http_adapter"
+    _ao_version = "1.0.0"
 
     # Capability schema
     CAPABILITIES = {
@@ -172,7 +172,7 @@ class HTTPAdapterAgent(BaseAgent):
             from agentorchestrator.utils.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
 
             self._circuit = CircuitBreaker(
-                name=f"http_{self._flowforge_name}",
+                name=f"http_{self._ao_name}",
                 config=CircuitBreakerConfig(
                     failure_threshold=self._config.circuit_failure_threshold,
                     recovery_timeout=self._config.circuit_recovery_seconds,
@@ -377,7 +377,7 @@ class HTTPAdapterAgent(BaseAgent):
 
             return AgentResult(
                 data=result.get("data"),
-                source=self._flowforge_name,
+                source=self._ao_name,
                 query=query,
                 duration_ms=duration,
                 error=result.get("error") if not result.get("success") else None,
@@ -393,7 +393,7 @@ class HTTPAdapterAgent(BaseAgent):
             duration = (time.perf_counter() - start) * 1000
             return AgentResult(
                 data=None,
-                source=self._flowforge_name,
+                source=self._ao_name,
                 query=query,
                 duration_ms=duration,
                 error=str(e),
@@ -472,6 +472,6 @@ def create_http_agent(
     )
 
     agent = HTTPAdapterAgent(config)
-    agent._flowforge_name = name
+    agent._ao_name = name
 
     return agent

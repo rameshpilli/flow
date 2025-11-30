@@ -55,9 +55,9 @@ class BaseAgent(ABC):
                 ...
     """
 
-    _flowforge_agent = True
-    _flowforge_name: str = ""
-    _flowforge_version: str = "1.0.0"
+    _ao_agent = True
+    _ao_name: str = ""
+    _ao_version: str = "1.0.0"
 
     def __init__(self, config: dict[str, Any] | None = None):
         self.config = config or {}
@@ -99,7 +99,7 @@ class BaseAgent(ABC):
         return self._initialized
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(name={self._flowforge_name})"
+        return f"{self.__class__.__name__}(name={self._ao_name})"
 
 
 class CompositeAgent(BaseAgent):
@@ -144,7 +144,7 @@ class CompositeAgent(BaseAgent):
         errors = []
 
         for agent, result in zip(self.agents, results):
-            agent_name = getattr(agent, "_flowforge_name", agent.__class__.__name__)
+            agent_name = getattr(agent, "_ao_name", agent.__class__.__name__)
             if isinstance(result, Exception):
                 errors.append(f"{agent_name}: {result}")
             elif result.success:
@@ -223,14 +223,14 @@ class ResilientAgent(BaseAgent):
         super().__init__()
         self._wrapped_agent = agent
         self._config = config or ResilientAgentConfig()
-        self._flowforge_name = name or f"resilient_{getattr(agent, '_flowforge_name', agent.__class__.__name__)}"
+        self._ao_name = name or f"resilient_{getattr(agent, '_ao_name', agent.__class__.__name__)}"
 
         # Import here to avoid circular imports
         from agentorchestrator.utils.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
 
         # Create circuit breaker for this agent
         self._circuit = CircuitBreaker(
-            name=self._flowforge_name,
+            name=self._ao_name,
             config=CircuitBreakerConfig(
                 failure_threshold=self._config.circuit_failure_threshold,
                 recovery_timeout=self._config.circuit_recovery_seconds,
@@ -291,10 +291,10 @@ class ResilientAgent(BaseAgent):
             duration = (time.perf_counter() - start) * 1000
             return AgentResult(
                 data=None,
-                source=self._flowforge_name,
+                source=self._ao_name,
                 query=query,
                 duration_ms=duration,
-                error=f"Circuit breaker open for {self._flowforge_name}",
+                error=f"Circuit breaker open for {self._ao_name}",
                 metadata={"circuit_state": "open", "attempt": 0},
             )
 
@@ -316,10 +316,10 @@ class ResilientAgent(BaseAgent):
 
             except asyncio.TimeoutError:
                 last_error = asyncio.TimeoutError(
-                    f"Agent {self._flowforge_name} timed out after {self._config.timeout_seconds}s"
+                    f"Agent {self._ao_name} timed out after {self._config.timeout_seconds}s"
                 )
                 logger.warning(
-                    f"{self._flowforge_name} attempt {attempt}/{self._config.max_retries} "
+                    f"{self._ao_name} attempt {attempt}/{self._config.max_retries} "
                     f"timed out after {self._config.timeout_seconds}s"
                 )
             except CircuitBreakerError as e:
@@ -327,7 +327,7 @@ class ResilientAgent(BaseAgent):
                 duration = (time.perf_counter() - start) * 1000
                 return AgentResult(
                     data=None,
-                    source=self._flowforge_name,
+                    source=self._ao_name,
                     query=query,
                     duration_ms=duration,
                     error=str(e),
@@ -336,7 +336,7 @@ class ResilientAgent(BaseAgent):
             except Exception as e:
                 last_error = e
                 logger.warning(
-                    f"{self._flowforge_name} attempt {attempt}/{self._config.max_retries} "
+                    f"{self._ao_name} attempt {attempt}/{self._config.max_retries} "
                     f"failed: {e}"
                 )
 
@@ -349,7 +349,7 @@ class ResilientAgent(BaseAgent):
         duration = (time.perf_counter() - start) * 1000
         return AgentResult(
             data=None,
-            source=self._flowforge_name,
+            source=self._ao_name,
             query=query,
             duration_ms=duration,
             error=f"Failed after {attempt} attempts: {last_error}",
@@ -405,7 +405,7 @@ class ResilientCompositeAgent(BaseAgent):
         name: str = "resilient_composite",
     ):
         super().__init__()
-        self._flowforge_name = name
+        self._ao_name = name
         self._config = config or ResilientAgentConfig()
 
         # Wrap each agent with resilience
@@ -458,7 +458,7 @@ class ResilientCompositeAgent(BaseAgent):
         failure_count = 0
 
         for agent, result in zip(self._resilient_agents, results):
-            agent_name = agent._flowforge_name
+            agent_name = agent._ao_name
 
             if isinstance(result, Exception):
                 # Unexpected exception (should be caught by ResilientAgent)
@@ -494,7 +494,7 @@ class ResilientCompositeAgent(BaseAgent):
         # Build result with partial success info
         return AgentResult(
             data=combined_data,
-            source=self._flowforge_name,
+            source=self._ao_name,
             query=query,
             duration_ms=duration,
             error="; ".join(errors) if errors else None,
@@ -518,7 +518,7 @@ class ResilientCompositeAgent(BaseAgent):
     def get_agent_health(self) -> dict[str, dict[str, Any]]:
         """Get detailed health status for each agent."""
         return {
-            agent._flowforge_name: {
+            agent._ao_name: {
                 "initialized": agent._initialized,
                 "circuit_state": agent._circuit.state.value,
                 "circuit_stats": agent.circuit_stats,

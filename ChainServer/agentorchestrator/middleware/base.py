@@ -37,9 +37,9 @@ class Middleware(ABC):
                 print(f"Completed: {step_name} in {result.duration_ms}ms")
     """
 
-    _flowforge_middleware = True
-    _flowforge_priority = 100
-    _flowforge_applies_to: list[str] | None = None
+    _ao_middleware = True
+    _ao_priority = 100
+    _ao_applies_to: list[str] | None = None
 
     def __init__(self, priority: int = 100, applies_to: list[str] | None = None):
         """
@@ -49,8 +49,8 @@ class Middleware(ABC):
             priority: Execution priority (lower = earlier)
             applies_to: List of step names to apply to (None = all)
         """
-        self._flowforge_priority = priority
-        self._flowforge_applies_to = applies_to
+        self._ao_priority = priority
+        self._ao_applies_to = applies_to
 
     async def before(self, ctx: ChainContext, step_name: str) -> None:
         """
@@ -92,9 +92,9 @@ class Middleware(ABC):
 
     def should_apply(self, step_name: str) -> bool:
         """Check if this middleware should apply to a step"""
-        if self._flowforge_applies_to is None:
+        if self._ao_applies_to is None:
             return True
-        return step_name in self._flowforge_applies_to
+        return step_name in self._ao_applies_to
 
 
 class CompositeMiddleware(Middleware):
@@ -110,7 +110,7 @@ class CompositeMiddleware(Middleware):
 
     def __init__(self, middleware_list: list[Middleware]):
         super().__init__()
-        self._middleware = sorted(middleware_list, key=lambda m: m._flowforge_priority)
+        self._middleware = sorted(middleware_list, key=lambda m: m._ao_priority)
 
     async def before(self, ctx: ChainContext, step_name: str) -> None:
         for mw in self._middleware:

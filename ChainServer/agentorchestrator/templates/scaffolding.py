@@ -118,7 +118,7 @@ def get_readme(name: str, description: str) -> str:
 
 {description}
 
-Built with [AgentOrchestrator](https://github.com/flowforge/flowforge) - A DAG-based Chain Orchestration Framework.
+Built with [AgentOrchestrator](https://github.com/agentorchestrator/agentorchestrator) - A DAG-based Chain Orchestration Framework.
 
 ## Quick Start
 
@@ -1093,8 +1093,8 @@ class ExampleAgent(BaseAgent):
         example = "my_app.agents:ExampleAgent"
     """
 
-    _flowforge_name = "example_agent"
-    _flowforge_version = "1.0.0"
+    _agentorchestrator_name = "example_agent"
+    _agentorchestrator_version = "1.0.0"
 
     # Agent capability schema (for plugin discovery)
     CAPABILITIES = {
@@ -1143,7 +1143,7 @@ class ExampleAgent(BaseAgent):
 
         return AgentResult(
             data=data,
-            source=self._flowforge_name,
+            source=self._agentorchestrator_name,
             query=query,
             duration_ms=duration,
             metadata={
@@ -1330,7 +1330,7 @@ docs/_build/
 *.local
 
 # AgentOrchestrator
-.flowforge/
+.agentorchestrator/
 checkpoints/
 
 # Logs
@@ -1353,7 +1353,7 @@ app:
   name: {snake_name}
   environment: development
 
-flowforge:
+agentorchestrator:
   max_parallel: 10
   default_timeout_ms: 30000
   cache:

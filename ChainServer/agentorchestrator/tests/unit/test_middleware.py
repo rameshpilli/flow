@@ -28,21 +28,21 @@ class TestMiddlewareBase:
         """Test default middleware attributes."""
         mw = Middleware()
 
-        assert mw._flowforge_middleware is True
-        assert mw._flowforge_priority == 100
-        assert mw._flowforge_applies_to is None
+        assert mw._ao_middleware is True
+        assert mw._ao_priority == 100
+        assert mw._ao_applies_to is None
 
     def test_custom_priority(self):
         """Test setting custom priority."""
         mw = Middleware(priority=50)
 
-        assert mw._flowforge_priority == 50
+        assert mw._ao_priority == 50
 
     def test_applies_to_filter(self):
         """Test applies_to filter."""
         mw = Middleware(applies_to=["step1", "step2"])
 
-        assert mw._flowforge_applies_to == ["step1", "step2"]
+        assert mw._ao_applies_to == ["step1", "step2"]
         assert mw.should_apply("step1") is True
         assert mw.should_apply("step2") is True
         assert mw.should_apply("step3") is False

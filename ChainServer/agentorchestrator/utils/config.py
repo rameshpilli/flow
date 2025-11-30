@@ -69,7 +69,7 @@ class AWSSecretsManagerBackend(SecretBackend):
     AWS Secrets Manager backend.
 
     Usage:
-        backend = AWSSecretsManagerBackend(secret_name="prod/flowforge")
+        backend = AWSSecretsManagerBackend(secret_name="prod/agentorchestrator")
         set_secret_backend(backend)
 
     Requires: pip install boto3
@@ -142,7 +142,7 @@ class VaultSecretBackend(SecretBackend):
         backend = VaultSecretBackend(
             url="https://vault.example.com",
             token=os.getenv("VAULT_TOKEN"),
-            path="secret/data/flowforge"
+            path="secret/data/agentorchestrator"
         )
         set_secret_backend(backend)
 
@@ -153,7 +153,7 @@ class VaultSecretBackend(SecretBackend):
         self,
         url: str,
         token: str | None = None,
-        path: str = "secret/data/flowforge",
+        path: str = "secret/data/agentorchestrator",
         namespace: str | None = None,
     ):
         self.url = url
@@ -405,7 +405,7 @@ class AgentOrchestratorConfig:
 
     # Feature flags
     debug_mode: bool = False
-    debug_snapshot_dir: str = ".flowforge/snapshots"  # For debug context snapshots
+    debug_snapshot_dir: str = ".agentorchestrator/snapshots"  # For debug context snapshots
 
     @classmethod
     def from_env(cls) -> "AgentOrchestratorConfig":
@@ -463,7 +463,7 @@ class AgentOrchestratorConfig:
 
             # Debug
             ConfigField("FLOWFORGE_DEBUG", default="false"),
-            ConfigField("FLOWFORGE_DEBUG_SNAPSHOT_DIR", default=".flowforge/snapshots"),
+            ConfigField("FLOWFORGE_DEBUG_SNAPSHOT_DIR", default=".agentorchestrator/snapshots"),
         ]
 
         # Load all fields
@@ -523,7 +523,7 @@ class AgentOrchestratorConfig:
             log_level=values.get("LOG_LEVEL", "INFO"),
             log_format=values.get("LOG_FORMAT", "text"),
             debug_mode=values.get("FLOWFORGE_DEBUG", "false").lower() == "true",
-            debug_snapshot_dir=values.get("FLOWFORGE_DEBUG_SNAPSHOT_DIR", ".flowforge/snapshots"),
+            debug_snapshot_dir=values.get("FLOWFORGE_DEBUG_SNAPSHOT_DIR", ".agentorchestrator/snapshots"),
         )
 
     def to_safe_dict(self) -> dict[str, Any]:

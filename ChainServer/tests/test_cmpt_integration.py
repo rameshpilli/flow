@@ -73,7 +73,7 @@ class TestCMPTIntegration:
             )
         )
 
-        result = await forge.run("cmpt_full_chain", initial_context={"request": request})
+        result = await forge.run("cmpt_full_chain", {"request": request})
 
         # 4. Verify
         assert result["success"] is True, f"Chain failed with error: {result.get('error')}"

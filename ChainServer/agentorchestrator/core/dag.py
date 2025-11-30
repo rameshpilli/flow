@@ -355,7 +355,7 @@ class DAGExecutor:
         """Add middleware to the executor"""
         self._middleware.append(middleware)
         # Sort by priority
-        self._middleware.sort(key=lambda m: getattr(m, "_flowforge_priority", 100))
+        self._middleware.sort(key=lambda m: getattr(m, "_ao_priority", 100))
 
     async def execute(
         self,
@@ -864,7 +864,7 @@ class DAGExecutor:
         """
         for mw in self._middleware:
             if hasattr(mw, "before"):
-                applies = getattr(mw, "_flowforge_applies_to", None)
+                applies = getattr(mw, "_ao_applies_to", None)
                 if applies is None or step_name in applies:
                     try:
                         await mw.before(ctx, step_name)
@@ -885,7 +885,7 @@ class DAGExecutor:
         """
         for mw in self._middleware:
             if hasattr(mw, "after"):
-                applies = getattr(mw, "_flowforge_applies_to", None)
+                applies = getattr(mw, "_ao_applies_to", None)
                 if applies is None or step_name in applies:
                     try:
                         await mw.after(ctx, step_name, result)

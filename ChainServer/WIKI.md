@@ -47,6 +47,10 @@
 - [Examples](#examples)
 - [Configuration](#configuration)
 - [FAQ](#faq)
+- [Architecture Diagrams](#architecture-diagrams)
+- [Go Crazy: What You Can Build](#go-crazy-what-you-can-build)
+- [Quick Reference: Pattern → Features](#quick-reference-pattern--features)
+- [The AgentOrchestrator Advantage](#the-agentorchestrator-advantage)
 
 ---
 
@@ -2499,6 +2503,22 @@ agentorchestrator/
 │   ├── earnings_agent.py    # EarningsAgent
 │   └── data_agents.py       # Re-exports (backward compat)
 │
+├── services/                 # Re-exports from examples/cmpt/services
+│   ├── __init__.py          # Main exports
+│   ├── models.py            # ChainRequest, ChainResponse, etc.
+│   ├── context_builder.py   # ContextBuilderService
+│   ├── content_prioritization.py  # ContentPrioritizationService
+│   ├── response_builder.py  # ResponseBuilderService
+│   └── llm_gateway.py       # LLMGatewayClient
+│
+├── chains/                   # Pre-built chains
+│   ├── __init__.py          # Chain exports
+│   └── cmpt.py              # CMPTChain implementation
+│
+├── plugins/                  # Plugin adapters
+│   ├── http_adapter.py      # HTTP-based agent adapter
+│   └── mcp_adapter.py       # MCP protocol adapter
+│
 ├── utils/
 │   ├── circuit_breaker.py   # Circuit breaker
 │   ├── retry.py             # Retry decorators
@@ -2516,6 +2536,447 @@ agentorchestrator/
     ├── API.md               # API reference
     └── TROUBLESHOOTING.md   # Common issues
 ```
+
+---
+
+## Architecture Diagrams
+
+### Internal Structure
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              AgentOrchestrator Core                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                         Middleware Pipeline                           │  │
+│  │  Logger → Cache → TokenManager → Metrics → Tracing → RateLimiter     │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐    │
+│  │    Registries   │  │   DAG Executor  │  │    Resource Manager     │    │
+│  │                 │  │                 │  │                         │    │
+│  │ • AgentRegistry │  │ • Build graph   │  │ • HTTP clients (pooled) │    │
+│  │ • StepRegistry  │  │ • Resolve deps  │  │ • LLM clients           │    │
+│  │ • ChainRegistry │  │ • Parallel exec │  │ • DB connections        │    │
+│  │                 │  │ • Semaphore     │  │ • Lifecycle management  │    │
+│  └─────────────────┘  └─────────────────┘  └─────────────────────────┘    │
+│           │                    │                       │                    │
+│           └────────────────────┼───────────────────────┘                    │
+│                                ▼                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                        Chain Context                                  │  │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌────────────┐  │  │
+│  │  │   GLOBAL    │  │    CHAIN    │  │    STEP     │  │  Metadata  │  │  │
+│  │  │  (config)   │  │ (summaries) │  │ (temp data) │  │ (request_id│  │  │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘  └────────────┘  │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                │                                            │
+│                                ▼                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                         Run Store (Checkpoints)                       │  │
+│  │  • Save state after each step  • Resume failed runs  • Partial output│  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Execution Flow (CMPT Example)
+
+```
+Request                                                              Response
+   │                                                                     ▲
+   ▼                                                                     │
+┌──────────────────────────────────────────────────────────────────────────┐
+│                            CMPT Chain                                     │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─────────────────┐     ┌─────────────────────────────────────────┐    │
+│  │ Context Builder │     │         Content Prioritization          │    │
+│  │                 │     │                                         │    │
+│  │ • Company info  │────▶│ • Analyze query intent                  │    │
+│  │ • Temporal data │     │ • Score sources by relevance            │    │
+│  │ • Personas      │     │ • Generate prioritized subqueries       │    │
+│  └─────────────────┘     └─────────────────────────────────────────┘    │
+│                                           │                              │
+│                                           ▼                              │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                      Response Builder                              │  │
+│  │                                                                    │  │
+│  │   ┌─────────┐  ┌─────────┐  ┌──────────┐  ┌────────────┐         │  │
+│  │   │   SEC   │  │  News   │  │ Earnings │  │Transcripts │  ← Parallel│
+│  │   │  Agent  │  │  Agent  │  │  Agent   │  │   Agent    │         │  │
+│  │   └────┬────┘  └────┬────┘  └────┬─────┘  └─────┬──────┘         │  │
+│  │        │            │            │              │                 │  │
+│  │        └────────────┴─────┬──────┴──────────────┘                 │  │
+│  │                           ▼                                       │  │
+│  │              ┌─────────────────────────┐                          │  │
+│  │              │      LLM Synthesis      │                          │  │
+│  │              │  • Extract metrics      │                          │  │
+│  │              │  • Generate analysis    │                          │  │
+│  │              │  • Build final content  │                          │  │
+│  │              └─────────────────────────┘                          │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### User's Deployment View
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        Your Service / Kubernetes                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                         Your API Layer                               │   │
+│  │                    (FastAPI / Flask / gRPC)                          │   │
+│  │                                                                      │   │
+│  │   POST /meeting-prep  ──────┐                                        │   │
+│  │   POST /custom-chain  ──────┤                                        │   │
+│  │   GET  /health        ──────┤                                        │   │
+│  └─────────────────────────────┼────────────────────────────────────────┘   │
+│                                │                                            │
+│                                ▼                                            │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                     AgentOrchestrator (pip installed)                │   │
+│  │                                                                      │   │
+│  │   from agentorchestrator import AgentOrchestrator                    │   │
+│  │   from agentorchestrator.chains import CMPTChain                     │   │
+│  │                                                                      │   │
+│  │   ao = AgentOrchestrator()                                           │   │
+│  │   ao.use(LoggerMiddleware(), MetricsMiddleware())                    │   │
+│  │                                                                      │   │
+│  │   # Register your agents                                             │   │
+│  │   @ao.agent(name="my_news_agent")                                    │   │
+│  │   class MyNewsAgent: ...                                             │   │
+│  │                                                                      │   │
+│  │   result = await ao.launch("cmpt_chain", data)                       │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                │                                            │
+│                                ▼                                            │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
+│  │  Your APIs   │  │  Your LLM    │  │    Redis     │  │  Your DBs    │   │
+│  │  (SEC, News) │  │  (Gateway)   │  │  (Context)   │  │              │   │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Go Crazy: What You Can Build
+
+AgentOrchestrator is a general-purpose chain orchestration library. Here are complete, working examples you can adapt:
+
+### 1. Multi-Model AI Router
+
+Route queries to different LLMs based on complexity — use cheap/fast models for simple queries, powerful models for complex ones.
+
+```python
+from agentorchestrator import AgentOrchestrator
+
+ao = AgentOrchestrator(name="ai_router")
+
+@ao.step(name="classify_complexity")
+async def classify_complexity(ctx):
+    query = ctx.get("query")
+    complex_keywords = ["analyze", "compare", "explain why", "multi-step", "reasoning"]
+    is_complex = any(kw in query.lower() for kw in complex_keywords)
+
+    return {
+        "complexity": "high" if is_complex else "low",
+        "model": "gpt-4" if is_complex else "gpt-3.5-turbo",
+        "max_tokens": 2000 if is_complex else 500,
+    }
+
+@ao.step(name="generate_response", deps=["classify_complexity"])
+async def generate_response(ctx):
+    model = ctx.get("model")
+    max_tokens = ctx.get("max_tokens")
+    query = ctx.get("query")
+
+    llm = ao.get_resource("llm_client")
+    response = await llm.chat(
+        model=model,
+        messages=[{"role": "user", "content": query}],
+        max_tokens=max_tokens,
+    )
+
+    return {"response": response.content, "model_used": model}
+
+@ao.chain(name="smart_router")
+class SmartRouterChain:
+    steps = ["classify_complexity", "generate_response"]
+
+# Run
+result = await ao.launch("smart_router", {"query": "Explain quantum computing"})
+```
+
+### 2. RAG Document Pipeline
+
+Ingest documents, chunk, embed, index, and query — complete RAG pipeline.
+
+```python
+ao = AgentOrchestrator(name="rag_pipeline")
+
+@ao.step(name="ingest")
+async def ingest(ctx):
+    source = ctx.get("source")
+    documents = await fetch_documents(source)
+    return {"documents": documents, "count": len(documents)}
+
+@ao.step(name="chunk", deps=["ingest"])
+async def chunk(ctx):
+    documents = ctx.get("documents")
+    chunks = []
+    for doc in documents:
+        for i in range(0, len(doc["content"]), 500):
+            chunks.append({"doc_id": doc["id"], "text": doc["content"][i:i+500]})
+    return {"chunks": chunks}
+
+@ao.step(name="embed", deps=["chunk"])
+async def embed(ctx):
+    chunks = ctx.get("chunks")
+    embedder = ao.get_resource("embedder")
+    for chunk in chunks:
+        chunk["embedding"] = await embedder.embed(chunk["text"])
+    return {"chunks": chunks}
+
+@ao.step(name="index", deps=["embed"])
+async def index(ctx):
+    chunks = ctx.get("chunks")
+    vector_store = ao.get_resource("vector_store")
+    await vector_store.upsert(chunks)
+    return {"indexed": len(chunks)}
+
+@ao.chain(name="index_pipeline")
+class IndexPipeline:
+    steps = ["ingest", "chunk", "embed", "index"]
+```
+
+### 3. Customer Support Bot with Escalation
+
+Classify tickets, auto-respond to simple ones, escalate complex/angry ones.
+
+```python
+ao = AgentOrchestrator(name="support_bot")
+
+@ao.step(name="classify_ticket")
+async def classify_ticket(ctx):
+    ticket_text = ctx.get("ticket_text")
+    llm = ao.get_resource("llm_client")
+
+    response = await llm.chat(
+        messages=[{
+            "role": "system",
+            "content": 'Classify: {"priority": "low|medium|high", "sentiment": "positive|neutral|angry"}'
+        }, {"role": "user", "content": ticket_text}],
+        response_format={"type": "json_object"}
+    )
+    return json.loads(response.content)
+
+@ao.step(name="route_ticket", deps=["classify_ticket"])
+async def route_ticket(ctx):
+    priority = ctx.get("priority")
+    sentiment = ctx.get("sentiment")
+    needs_human = priority == "high" or sentiment == "angry"
+    return {"route": "human" if needs_human else "auto"}
+
+@ao.step(name="generate_auto_response", deps=["route_ticket"])
+async def generate_auto_response(ctx):
+    if ctx.get("route") == "human":
+        return {"response": None, "auto_responded": False}
+
+    llm = ao.get_resource("llm_client")
+    response = await llm.chat(messages=[{"role": "user", "content": ctx.get("ticket_text")}])
+    return {"response": response.content, "auto_responded": True}
+
+@ao.step(name="escalate_to_human", deps=["route_ticket"])
+async def escalate_to_human(ctx):
+    if ctx.get("route") != "human":
+        return {"escalated": False}
+
+    ticketing = ao.get_resource("ticketing_system")
+    ticket_id = await ticketing.create_ticket(
+        body=ctx.get("ticket_text"),
+        priority=ctx.get("priority"),
+    )
+    return {"escalated": True, "ticket_id": ticket_id}
+
+@ao.chain(name="support_chain")
+class SupportChain:
+    steps = ["classify_ticket", "route_ticket", "generate_auto_response", "escalate_to_human"]
+```
+
+### 4. Code Review Bot
+
+Fetch PR, run parallel checks (style, security, tests), generate AI review.
+
+```python
+ao = AgentOrchestrator(name="code_review_bot")
+
+@ao.step(name="fetch_pr")
+async def fetch_pr(ctx):
+    github = ao.get_agent("github_agent")
+    pr_data = await github.fetch(ctx.get("pr_url"))
+    return {"pr_title": pr_data["title"], "diff": pr_data["diff"]}
+
+@ao.step(name="check_style", deps=["fetch_pr"])
+async def check_style(ctx):
+    issues = await run_linter(ctx.get("diff"))
+    return {"style_issues": issues, "style_passed": len(issues) == 0}
+
+@ao.step(name="check_security", deps=["fetch_pr"])
+async def check_security(ctx):
+    vulns = await run_security_scan(ctx.get("diff"))
+    return {"security_issues": vulns, "security_passed": len(vulns) == 0}
+
+@ao.step(name="check_tests", deps=["fetch_pr"])
+async def check_tests(ctx):
+    coverage = await run_tests()
+    return {"coverage": coverage, "tests_passed": coverage > 80}
+
+@ao.step(name="generate_review", deps=["check_style", "check_security", "check_tests"])
+async def generate_review(ctx):
+    llm = ao.get_resource("llm_client")
+    all_passed = ctx.get("style_passed") and ctx.get("security_passed") and ctx.get("tests_passed")
+
+    response = await llm.chat(messages=[{
+        "role": "user",
+        "content": f"Review: {json.dumps(ctx.get_all())}"
+    }])
+    return {"review": response.content, "action": "APPROVE" if all_passed else "REQUEST_CHANGES"}
+
+@ao.chain(name="code_review")
+class CodeReviewChain:
+    steps = ["fetch_pr", "check_style", "check_security", "check_tests", "generate_review"]
+```
+
+### 5. ETL Pipeline with Validation & Resumability
+
+Extract, transform with validation, load — resumable on failure.
+
+```python
+from agentorchestrator import AgentOrchestrator
+from pydantic import BaseModel, validator
+
+ao = AgentOrchestrator(name="etl_pipeline")
+
+class CleanRecord(BaseModel):
+    id: str
+    email: str
+    amount: float
+
+    @validator("email")
+    def validate_email(cls, v):
+        if "@" not in v:
+            raise ValueError("Invalid email")
+        return v
+
+@ao.step(name="extract")
+async def extract(ctx):
+    db = ao.get_resource("source_db")
+    records = await db.query("SELECT * FROM raw_data")
+    return {"raw_records": records}
+
+@ao.step(name="transform", deps=["extract"])
+async def transform(ctx):
+    raw_records = ctx.get("raw_records")
+    clean, errors = [], []
+
+    for raw in raw_records:
+        try:
+            clean.append(CleanRecord(**raw).model_dump())
+        except Exception as e:
+            errors.append({"id": raw["id"], "error": str(e)})
+
+    return {"clean_records": clean, "errors": errors}
+
+@ao.step(name="load", deps=["transform"], retry=3)
+async def load(ctx):
+    dest_db = ao.get_resource("dest_db")
+    await dest_db.insert_many("clean_data", ctx.get("clean_records"))
+    return {"loaded": len(ctx.get("clean_records"))}
+
+@ao.chain(name="etl")
+class ETLChain:
+    steps = ["extract", "transform", "load"]
+
+# Run with resumability via CLI:
+# ao run etl --resumable
+# ao resume <run_id>  # If it fails
+```
+
+### 6. Multi-Tenant SaaS Workflow
+
+Isolated execution per tenant with tenant-specific rate limits.
+
+```python
+from agentorchestrator import AgentOrchestrator, IsolatedOrchestrator
+from agentorchestrator.middleware import RateLimiterMiddleware
+
+TENANT_CONFIGS = {
+    "free": {"rate_limit": 10, "max_tokens": 1000},
+    "pro": {"rate_limit": 100, "max_tokens": 4000},
+    "enterprise": {"rate_limit": 1000, "max_tokens": 8000},
+}
+
+async def handle_tenant_request(tenant_id: str, request: dict):
+    config = TENANT_CONFIGS.get(tenant_id, TENANT_CONFIGS["free"])
+
+    async with IsolatedOrchestrator(name=f"ao_{tenant_id}") as ao:
+        ao.use(RateLimiterMiddleware({"generate": {"rpm": config["rate_limit"]}}))
+
+        @ao.step(name="validate")
+        async def validate(ctx):
+            if ctx.get("max_tokens", 0) > config["max_tokens"]:
+                raise ValueError(f"Exceeds plan limit: {config['max_tokens']}")
+            return {"validated": True}
+
+        @ao.step(name="generate", deps=["validate"])
+        async def generate(ctx):
+            llm = get_llm_client()
+            return {"response": await llm.chat(messages=ctx.get("messages"))}
+
+        @ao.chain(name="tenant_workflow")
+        class TenantWorkflow:
+            steps = ["validate", "generate"]
+
+        return await ao.launch("tenant_workflow", request)
+```
+
+---
+
+## Quick Reference: Pattern → Features
+
+| Pattern | Example | Key Features |
+|---------|---------|--------------|
+| **Router** | Multi-model AI | Conditional logic in steps, resource injection |
+| **Pipeline** | RAG, ETL | `deps`, input/output contracts, sequential flow |
+| **Fan-out/Fan-in** | Code review | Parallel step execution, multiple agents |
+| **Saga** | Support bot | Error handling modes, compensating actions |
+| **Multi-tenant** | SaaS | `IsolatedOrchestrator`, per-tenant middleware |
+| **Resumable** | ETL | Run store, `ao resume`, partial output retrieval |
+
+---
+
+## The AgentOrchestrator Advantage
+
+| Without AgentOrchestrator | With AgentOrchestrator |
+|---------------------------|------------------------|
+| 50+ lines of retry/backoff code | `@ao.step(retry=3, backoff=2.0)` |
+| Manual asyncio.gather orchestration | Automatic parallel execution via DAG |
+| Custom error handling per service | `error_handling="continue"` / `"fail_fast"` |
+| No visibility into partial failures | `ao runs --status failed` |
+| Re-run entire pipeline on crash | `ao resume <run_id>` |
+| Scattered logging across services | `LoggerMiddleware` + `MetricsMiddleware` |
+| Per-service rate limiting | `RateLimiterMiddleware` with per-step config |
+| Hardcoded client initialization | `ao.register_resource()` + dependency injection |
+| Manual test isolation | `IsolatedOrchestrator` context manager |
+
+**Bottom line**: AgentOrchestrator handles the orchestration plumbing — retries, parallelism, context, logging, resumability — so you focus on your business logic.
 
 ---
 

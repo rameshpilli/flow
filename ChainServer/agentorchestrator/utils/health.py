@@ -264,7 +264,7 @@ async def check_redis_health() -> ComponentHealth:
         store = get_context_store()
 
         # Try a simple ping/set/get operation
-        test_key = "__flowforge_health_check__"
+        test_key = "__agentorchestrator_health_check__"
         test_value = {"timestamp": datetime.utcnow().isoformat()}
 
         await store.store(test_key, test_value, ttl_seconds=10)

@@ -1605,7 +1605,7 @@ Examples:
     )
     debug_parser.add_argument(
         "--snapshot-dir", "-s",
-        help="Directory for snapshots (default: .flowforge/snapshots)"
+        help="Directory for snapshots (default: .agentorchestrator/snapshots)"
     )
     debug_parser.add_argument(
         "--verbose", "-v", action="store_true", help="Show full tracebacks"

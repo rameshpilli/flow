@@ -113,8 +113,8 @@ class MCPAdapterAgent(BaseAgent):
     Supports both HTTP and stdio transports.
     """
 
-    _flowforge_name = "mcp_adapter"
-    _flowforge_version = "1.0.0"
+    _ao_name = "mcp_adapter"
+    _ao_version = "1.0.0"
 
     # Capability schema
     CAPABILITIES = {
@@ -151,7 +151,7 @@ class MCPAdapterAgent(BaseAgent):
         else:
             self._config = MCPAdapterConfig(name="mcp")
 
-        self._flowforge_name = self._config.name
+        self._ao_name = self._config.name
         self._http_client = None
         self._stdio_process = None
         self._tools: list[MCPTool] = []
@@ -444,7 +444,7 @@ class MCPAdapterAgent(BaseAgent):
 
             return AgentResult(
                 data=result,
-                source=self._flowforge_name,
+                source=self._ao_name,
                 query=query,
                 duration_ms=duration,
                 metadata={
@@ -457,7 +457,7 @@ class MCPAdapterAgent(BaseAgent):
             duration = (time.perf_counter() - start) * 1000
             return AgentResult(
                 data=None,
-                source=self._flowforge_name,
+                source=self._ao_name,
                 query=query,
                 duration_ms=duration,
                 error=str(e),
