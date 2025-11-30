@@ -112,6 +112,18 @@ from flowforge.services import (
     create_managed_client,
 )
 
+# Testing utilities (for user tests)
+from flowforge.testing import (
+    MockAgent,
+    MockMiddleware,
+    IsolatedForge,
+    mock_step,
+    mock_chain,
+    create_test_context,
+    assert_step_completed,
+    assert_chain_valid,
+)
+
 # Utilities
 from flowforge.utils import (
     # Timing
@@ -222,4 +234,13 @@ __all__ = [
     "get_tracer",
     "trace_span",
     "ChainTracer",
+    # Testing utilities
+    "MockAgent",
+    "IsolatedForge",
+    "mock_step",
+    "mock_chain",
+    "MockMiddleware",
+    "create_test_context",
+    "assert_step_completed",
+    "assert_chain_valid",
 ]

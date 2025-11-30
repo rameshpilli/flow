@@ -478,21 +478,32 @@ class ResumableChainRunner:
             initial_data=initial_data,
         )
 
-        # Define step callback for checkpointing
-        async def on_step_complete(step_name: str, result: StepResult):
-            step_cp = StepCheckpoint.from_step_result(result)
+        # Define step callback for checkpointing (must be sync as per DebugCallback protocol)
+        def on_step_complete(ctx: ChainContext, step_name: str, result_dict: dict):
+            """Sync callback that schedules async checkpoint save."""
+            # Create step checkpoint from result dict
+            step_cp = StepCheckpoint(
+                step_name=step_name,
+                status="completed" if result_dict.get("success") else "failed",
+                started_at=datetime.utcnow().isoformat(),
+                completed_at=datetime.utcnow().isoformat(),
+                output=result_dict.get("output"),
+                error=result_dict.get("error"),
+                error_type=result_dict.get("error_type"),
+            )
             checkpoint.add_step_checkpoint(step_cp)
             checkpoint.update_from_context(ctx)
 
+            # Schedule async save without blocking (fire-and-forget)
             if self._auto_checkpoint:
-                await self._store.save_checkpoint(checkpoint)
+                asyncio.create_task(self._store.save_checkpoint(checkpoint))
 
         # Execute with callback
         try:
             ctx = await self._executor.execute(
                 chain_name,
                 ctx,
-                debug_callback=lambda c, n, r: on_step_complete(n, r),
+                debug_callback=on_step_complete,
             )
 
             # Check success

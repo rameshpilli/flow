@@ -149,11 +149,14 @@ def create_test_context(
     Returns:
         Configured ChainContext
     """
-    return ChainContext(
+    ctx = ChainContext(
         request_id=request_id or f"test_{uuid.uuid4().hex[:8]}",
-        chain_name=chain_name,
         initial_data=initial_data or {},
     )
+    # Store chain_name in metadata if provided
+    if chain_name:
+        ctx.metadata["chain_name"] = chain_name
+    return ctx
 
 
 @dataclass

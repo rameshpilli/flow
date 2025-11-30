@@ -222,7 +222,11 @@ flowforge debug my_pipeline --snapshot-dir ./debug_output
 
 # Health check (returns exit code 1 if unhealthy)
 flowforge health
+flowforge health --detailed  # Include external dependencies (Redis, LLM)
 flowforge health --json
+
+# Diagnose common issues
+flowforge doctor
 
 # Version info
 flowforge version
@@ -1210,14 +1214,59 @@ See the `examples/` directory:
 
 ## Testing
 
-FlowForge provides isolated registries for testing:
+FlowForge includes a comprehensive testing utilities package:
 
 ```python
-import pytest
+from flowforge import (
+    # Test fixtures
+    MockAgent,
+    IsolatedForge,
+    mock_step,
+    mock_chain,
+    create_test_context,
+    # Assertions
+    assert_step_completed,
+    assert_chain_valid,
+)
+
+# Use MockAgent for predictable responses
+mock_news = MockAgent(
+    name="news_agent",
+    responses={"Apple": {"articles": [{"title": "Apple News"}]}},
+    default_response={"articles": []},
+)
+
+# Use IsolatedForge for test isolation
+async def test_my_chain():
+    async with IsolatedForge() as forge:
+        @forge.step(name="test_step")
+        async def test_step(ctx):
+            return {"result": "ok"}
+
+        @forge.chain(name="test_chain")
+        class TestChain:
+            steps = ["test_step"]
+
+        result = await forge.launch("test_chain", {})
+        assert_step_completed(result, "test_step")
+
+# Use mock_step to mock specific steps
+@mock_step("fetch_data", returns={"data": "mocked"})
+async def test_with_mocked_step():
+    result = await forge.launch("my_chain", {})
+    assert result["success"]
+
+# Create test contexts for unit testing steps
+ctx = create_test_context(initial_data={"company": "Apple"})
+```
+
+### Legacy Testing (temp_registries)
+
+```python
+import asyncio
 from flowforge import FlowForge
 
 def test_my_chain():
-    # Use temp_registries for isolated test
     with FlowForge.temp_registries("test") as forge:
         @forge.step(name="test_step")
         async def test_step(ctx):
@@ -1227,10 +1276,8 @@ def test_my_chain():
         class TestChain:
             steps = ["test_step"]
 
-        # Run test
         result = asyncio.run(forge.run("test_chain"))
         assert result["success"]
-    # Registries automatically cleaned up
 ```
 
 ## License

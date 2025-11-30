@@ -22,6 +22,15 @@ from typing import Any, AsyncIterator, Iterator, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "ChainContext",
+    "ContextScope",
+    "ContextEntry",
+    "ContextManager",
+    "StepResult",
+    "ExecutionSummary",
+]
+
 T = TypeVar("T")
 
 # Context variable for tracking current step per async task

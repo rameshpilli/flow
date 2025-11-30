@@ -8,6 +8,16 @@ from abc import ABC
 
 from flowforge.core.context import ChainContext, StepResult
 
+__all__ = [
+    "Middleware",
+    "SkipStep",
+]
+
+
+class SkipStep(Exception):
+    """Raise in middleware.before() to skip a step."""
+    pass
+
 
 class Middleware(ABC):
     """

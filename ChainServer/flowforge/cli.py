@@ -20,6 +20,7 @@ Usage:
     flowforge debug <chain_name>            # Debug with snapshots
     flowforge health                        # Basic health check
     flowforge health --detailed             # Full dependency health check
+    flowforge doctor                        # Diagnose common issues
     flowforge version
 """
 
@@ -845,6 +846,186 @@ def cmd_version(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """
+    Diagnose common issues with FlowForge setup.
+
+    Checks:
+    - Python version compatibility
+    - Required dependencies installed
+    - Optional dependencies status
+    - Environment variables configured
+    - Chain definitions valid
+    - Circular import detection
+    """
+    import platform
+
+    print(f"\n{'═' * 50}")
+    print(f"  FlowForge Doctor")
+    print(f"{'═' * 50}\n")
+
+    issues = []
+    warnings = []
+    checks_passed = 0
+    checks_total = 0
+
+    # 1. Python version check
+    checks_total += 1
+    py_version = platform.python_version()
+    py_major, py_minor = map(int, py_version.split('.')[:2])
+    if py_major >= 3 and py_minor >= 10:
+        print(f"  ✅ Python version: {py_version}")
+        checks_passed += 1
+    elif py_major >= 3 and py_minor >= 9:
+        print(f"  ⚠️  Python version: {py_version} (3.10+ recommended)")
+        warnings.append(f"Python {py_version} works but 3.10+ is recommended")
+        checks_passed += 1
+    else:
+        print(f"  ❌ Python version: {py_version} (requires 3.9+)")
+        issues.append(f"Python 3.9+ required, found {py_version}")
+
+    # 2. Required dependencies
+    required_deps = [
+        ("pydantic", "Data validation"),
+        ("httpx", "HTTP client"),
+        ("aiohttp", "Async HTTP"),
+    ]
+
+    for dep_name, dep_desc in required_deps:
+        checks_total += 1
+        try:
+            module = importlib.import_module(dep_name)
+            version = getattr(module, "__version__", "unknown")
+            print(f"  ✅ {dep_name}: {version} ({dep_desc})")
+            checks_passed += 1
+        except ImportError:
+            print(f"  ❌ {dep_name}: NOT INSTALLED ({dep_desc})")
+            issues.append(f"Required dependency '{dep_name}' not installed")
+
+    # 3. Optional dependencies
+    optional_deps = [
+        ("tiktoken", "Token counting"),
+        ("langchain", "LLM chains"),
+        ("opentelemetry", "Distributed tracing"),
+        ("structlog", "Structured logging"),
+        ("redis", "Redis context store"),
+    ]
+
+    for dep_name, dep_desc in optional_deps:
+        checks_total += 1
+        try:
+            module = importlib.import_module(dep_name)
+            version = getattr(module, "__version__", "installed")
+            print(f"  ✅ {dep_name}: {version} ({dep_desc})")
+            checks_passed += 1
+        except ImportError:
+            print(f"  ⚪ {dep_name}: not installed ({dep_desc}) - optional")
+            checks_passed += 1  # Optional, so still passes
+
+    # 4. Environment variables
+    print(f"\n  Environment Variables:")
+    env_vars = [
+        ("LLM_API_KEY", True, "LLM API authentication"),
+        ("LLM_BASE_URL", False, "LLM endpoint URL"),
+        ("FLOWFORGE_ENV", False, "Environment name"),
+        ("FLOWFORGE_DEBUG", False, "Debug mode"),
+    ]
+
+    for var_name, required, desc in env_vars:
+        checks_total += 1
+        value = os.getenv(var_name)
+        if value:
+            masked = "***" + value[-4:] if "KEY" in var_name or "TOKEN" in var_name else value
+            print(f"  ✅ {var_name}: {masked}")
+            checks_passed += 1
+        elif required:
+            print(f"  ⚠️  {var_name}: not set ({desc})")
+            warnings.append(f"{var_name} not set - required for {desc}")
+            checks_passed += 1  # Warning, not failure
+        else:
+            print(f"  ⚪ {var_name}: not set ({desc}) - optional")
+            checks_passed += 1
+
+    # 5. FlowForge imports
+    print(f"\n  FlowForge Imports:")
+    checks_total += 1
+    try:
+        from flowforge import FlowForge, get_forge
+        print(f"  ✅ FlowForge core imports successful")
+        checks_passed += 1
+    except ImportError as e:
+        print(f"  ❌ FlowForge import failed: {e}")
+        issues.append(f"FlowForge import error: {e}")
+
+    # 6. Check for circular imports (basic check)
+    checks_total += 1
+    try:
+        from flowforge.core import forge, context, dag, registry
+        from flowforge.middleware import base as mw_base
+        from flowforge.agents import base as agent_base
+        print(f"  ✅ No circular import issues detected")
+        checks_passed += 1
+    except ImportError as e:
+        print(f"  ❌ Circular import detected: {e}")
+        issues.append(f"Circular import: {e}")
+
+    # 7. Validate registered chains
+    print(f"\n  Registered Chains:")
+    checks_total += 1
+    try:
+        forge = get_forge()
+        chains = forge.list_chains()
+        if chains:
+            valid_count = 0
+            for chain_name in chains:
+                try:
+                    result = forge.check(chain_name)
+                    if result.get("valid"):
+                        print(f"  ✅ {chain_name}: valid")
+                        valid_count += 1
+                    else:
+                        errors = result.get("errors", [])
+                        print(f"  ❌ {chain_name}: invalid - {errors[0] if errors else 'unknown error'}")
+                        issues.append(f"Chain '{chain_name}' is invalid")
+                except Exception as e:
+                    print(f"  ❌ {chain_name}: validation error - {e}")
+                    issues.append(f"Chain '{chain_name}' validation failed: {e}")
+            if valid_count == len(chains):
+                checks_passed += 1
+        else:
+            print(f"  ⚪ No chains registered")
+            checks_passed += 1
+    except Exception as e:
+        print(f"  ❌ Could not check chains: {e}")
+        issues.append(f"Chain check failed: {e}")
+
+    # Summary
+    print(f"\n{'═' * 50}")
+    print(f"  Summary: {checks_passed}/{checks_total} checks passed")
+
+    if issues:
+        print(f"\n  ❌ Issues ({len(issues)}):")
+        for issue in issues:
+            print(f"     - {issue}")
+
+    if warnings:
+        print(f"\n  ⚠️  Warnings ({len(warnings)}):")
+        for warning in warnings:
+            print(f"     - {warning}")
+
+    if not issues and not warnings:
+        print(f"\n  🎉 All checks passed! FlowForge is ready to use.")
+    elif not issues:
+        print(f"\n  ✅ FlowForge is functional with minor warnings.")
+    else:
+        print(f"\n  ❌ Please fix the issues above before using FlowForge.")
+
+    print(f"{'═' * 50}\n")
+
+    # Return code: 0 if no issues, 1 if issues
+    return 1 if issues else 0
+
+
 def cmd_config(args: argparse.Namespace) -> int:
     """Show current configuration (secrets masked)."""
     from flowforge.utils.config import get_config, ConfigError
@@ -1361,6 +1542,13 @@ Examples:
         "--json", "-j", action="store_true", help="Output as JSON"
     )
     version_parser.set_defaults(func=cmd_version)
+
+    # doctor command
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Diagnose common issues with FlowForge setup"
+    )
+    doctor_parser.set_defaults(func=cmd_doctor)
 
     # config command
     config_parser = subparsers.add_parser("config", help="Show configuration (secrets masked)")

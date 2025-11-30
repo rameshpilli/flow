@@ -262,7 +262,11 @@ flowforge dev --watch --path ./myapp/
 ```bash
 # Health check (returns exit code 1 if unhealthy)
 flowforge health
+flowforge health --detailed  # Include external dependencies
 flowforge health --json
+
+# Diagnose common issues (Python version, dependencies, env vars, chains)
+flowforge doctor
 
 # Version info
 flowforge version
@@ -2830,6 +2834,22 @@ def test_middleware_tracking(forge, tracking_middleware):
 ---
 
 ## Troubleshooting
+
+### Quick Diagnosis
+
+Run the doctor command to diagnose common issues:
+
+```bash
+flowforge doctor
+```
+
+This checks:
+- Python version compatibility
+- Required and optional dependencies
+- Environment variables
+- FlowForge imports
+- Circular imports
+- Registered chain validity
 
 ### "Step not found"
 
