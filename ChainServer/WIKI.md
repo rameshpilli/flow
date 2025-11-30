@@ -32,7 +32,15 @@
 - [Production Features](#production-features)
   - [Resilience](#resilience)
   - [Resumability](#resumability)
+  - [Summarization](#summarization)
+  - [Token Management](#token-management)
+  - [Rate Limiting & Circuit Breakers](#rate-limiting--circuit-breakers)
+  - [Context Store (Redis Offloading)](#context-store-redis-offloading)
+  - [Health Checks](#health-checks)
+  - [Input/Output Validation](#inputoutput-validation)
   - [Observability](#observability)
+  - [Plugin System](#plugin-system)
+- [Middleware Reference](#middleware-reference)
 - [CLI Reference](#cli-reference)
 - [API Reference](#api-reference)
 - [Examples](#examples)
@@ -852,6 +860,700 @@ if not result["success"]:
 └────────────────────────────────────────────────────────────────┘
 ```
 
+### Summarization
+
+AgentOrchestrator includes a powerful summarization system for managing large outputs from agents and steps. This is critical when dealing with LLM context limits.
+
+**How Summarization Works:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         SUMMARIZATION FLOW                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Agent Output (e.g., 10,000 tokens)                                        │
+│       │                                                                     │
+│       ▼                                                                     │
+│   ┌────────────────────┐                                                    │
+│   │ Token Count Check  │  Uses tiktoken (or ~4 chars/token estimate)       │
+│   └─────────┬──────────┘                                                    │
+│             │                                                               │
+│    ┌────────┴────────┐                                                      │
+│    │                 │                                                      │
+│    ▼                 ▼                                                      │
+│ ≤ max_tokens     > max_tokens                                               │
+│ (pass through)        │                                                     │
+│                       ▼                                                     │
+│               ┌───────────────┐                                             │
+│               │ Split into    │  LangChain TokenTextSplitter               │
+│               │ Chunks        │  (2000 tokens, 200 overlap)                │
+│               └───────┬───────┘                                             │
+│                       │                                                     │
+│                       ▼                                                     │
+│               ┌───────────────┐                                             │
+│               │ Choose        │                                             │
+│               │ Strategy      │                                             │
+│               └───────┬───────┘                                             │
+│                       │                                                     │
+│     ┌─────────────────┼─────────────────┐                                   │
+│     ▼                 ▼                 ▼                                   │
+│  ┌──────┐       ┌───────────┐     ┌─────────┐                              │
+│  │STUFF │       │MAP_REDUCE │     │ REFINE  │                              │
+│  │      │       │ (default) │     │         │                              │
+│  └──────┘       └───────────┘     └─────────┘                              │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**The 3 Summarization Strategies:**
+
+| Strategy | How It Works | Best For | Speed |
+|----------|--------------|----------|-------|
+| **STUFF** | Single LLM call with all text | Small docs (< chunk_size) | Fastest |
+| **MAP_REDUCE** | Parallel chunk summaries → combine | Large docs, speed matters | Fast |
+| **REFINE** | Sequential refinement per chunk | Highest quality needed | Slowest |
+
+**MAP_REDUCE Flow (Default):**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           MAP_REDUCE STRATEGY                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Original Text (10,000 tokens)                                              │
+│       │                                                                     │
+│       ▼                                                                     │
+│  ┌────────────────────────────────────────────────────────┐                │
+│  │  CHUNKING (No LLM - just text splitting)               │                │
+│  │  • Splits by token count (2000 tokens/chunk)           │                │
+│  │  • 200 token overlap between chunks                    │                │
+│  │  • NO TEXT IS REMOVED - just divided into pieces       │                │
+│  └────────────────────────────────────────────────────────┘                │
+│       │                                                                     │
+│       ▼                                                                     │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐          │
+│  │ Chunk 1 │  │ Chunk 2 │  │ Chunk 3 │  │ Chunk 4 │  │ Chunk 5 │          │
+│  │ 2000 tk │  │ 2000 tk │  │ 2000 tk │  │ 2000 tk │  │ 2000 tk │          │
+│  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘          │
+│       │            │            │            │            │                │
+│       ▼            ▼            ▼            ▼            ▼                │
+│  ┌────────────────────────────────────────────────────────┐                │
+│  │  MAP PHASE (LLM calls - IN PARALLEL)                   │                │
+│  │  Each chunk → LLM → Summary of that chunk              │                │
+│  │  (5 parallel API calls using asyncio.gather)           │                │
+│  └────────────────────────────────────────────────────────┘                │
+│       │            │            │            │            │                │
+│       ▼            ▼            ▼            ▼            ▼                │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐          │
+│  │Summary 1│  │Summary 2│  │Summary 3│  │Summary 4│  │Summary 5│          │
+│  │ ~400 tk │  │ ~400 tk │  │ ~400 tk │  │ ~400 tk │  │ ~400 tk │          │
+│  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘          │
+│       │            │            │            │            │                │
+│       └────────────┴─────┬──────┴────────────┴────────────┘                │
+│                          ▼                                                  │
+│  ┌────────────────────────────────────────────────────────┐                │
+│  │  REDUCE PHASE (LLM call)                               │                │
+│  │  Combine all chunk summaries → Final summary           │                │
+│  └────────────────────────────────────────────────────────┘                │
+│                          │                                                  │
+│                          ▼                                                  │
+│                 ┌─────────────────┐                                        │
+│                 │  Final Summary  │                                        │
+│                 │   ~800 tokens   │                                        │
+│                 └─────────────────┘                                        │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key Insight - Chunking vs Summarization:**
+
+| Step | Uses LLM? | What Happens |
+|------|-----------|--------------|
+| **Chunking** | NO | Text is split into pieces (like cutting a book into chapters) |
+| **Map** | YES | Each chunk is summarized by LLM (parallel calls) |
+| **Reduce** | YES | All chunk summaries combined into final summary |
+
+The LLM sees ALL the original text - just in smaller bites that it can process.
+
+**Why Overlap Between Chunks?**
+
+```
+Chunk 1: "...the company reported Q3 revenue of $50B, which was..."
+                                           ↑ overlap ↓
+Chunk 2: "...revenue of $50B, which was a 10% increase from Q2..."
+```
+
+The 200-token overlap ensures context isn't lost at chunk boundaries.
+
+**Dependencies Used:**
+
+| Component | Library | Purpose |
+|-----------|---------|---------|
+| Text Splitting | `langchain-text-splitters` | TokenTextSplitter, RecursiveCharacterTextSplitter |
+| Token Counting | `tiktoken` | Accurate token estimation (falls back to len/4) |
+| LLM Orchestration | `langchain-core` | ChatPromptTemplate, StrOutputParser |
+| LLM Backend | Your choice | OpenAI, Anthropic, or LLM Gateway |
+
+**Domain-Specific Prompts:**
+
+The summarizer uses different prompts based on content type for better extraction:
+
+```python
+# Maps step names to content types
+step_content_types = {
+    "fetch_sec": "sec_filing",      # → Extracts revenue, margins, risks
+    "fetch_earnings": "earnings",   # → Extracts EPS, beats/misses
+    "fetch_news": "news",           # → Extracts events, dates, sentiment
+    "fetch_transcripts": "transcripts", # → Extracts management commentary
+    "fetch_pricing": "pricing",     # → Extracts multiples, targets
+}
+```
+
+**Usage Examples:**
+
+```python
+from agentorchestrator import (
+    SummarizerMiddleware,
+    create_openai_summarizer,
+    create_anthropic_summarizer,
+    create_gateway_summarizer,
+)
+
+# Option 1: OpenAI
+summarizer = create_openai_summarizer(model="gpt-4")
+
+# Option 2: Anthropic Claude
+summarizer = create_anthropic_summarizer(model="claude-3-sonnet-20240229")
+
+# Option 3: Enterprise LLM Gateway (with OAuth)
+summarizer = create_gateway_summarizer(
+    server_url="https://llm.company.com/v1",
+    oauth_endpoint="https://auth.company.com/oauth/token",
+    client_id="my-client-id",
+    client_secret="my-secret",
+)
+
+# Add to orchestrator
+ao.use(SummarizerMiddleware(
+    summarizer=summarizer,
+    max_tokens=4000,              # Trigger threshold
+    preserve_original=True,       # Keep original in context
+    step_content_types={          # Domain-specific prompts
+        "fetch_sec": "sec_filing",
+        "fetch_news": "news",
+    },
+))
+```
+
+**Accessing Original Data:**
+
+```python
+@ao.step(deps=["fetch_sec"])
+async def process_sec(ctx):
+    # Get summarized output (smaller, fits in context)
+    summary = ctx.get("sec_data")
+
+    # Access original if needed (stored as _original_{step}_output)
+    original = ctx.get("_original_fetch_sec_output")
+
+    # Check if summarization occurred
+    result = ctx.get_result("fetch_sec")
+    if result.metadata.get("summarized"):
+        print(f"Reduced from {result.metadata['original_tokens']} to {result.metadata['summarized_tokens']} tokens")
+```
+
+**Strategy Comparison:**
+
+```
+STUFF (Small docs):
+  Text ──▶ LLM ──▶ Summary
+
+  Pros: Simple, fast, preserves context
+  Cons: Limited by LLM context window
+  Use when: Text < 2000 tokens
+
+MAP_REDUCE (Default):
+  Text ──▶ [Chunk₁, Chunk₂, Chunk₃, ...]
+              │       │       │
+              ▼       ▼       ▼
+           [LLM]   [LLM]   [LLM]  (parallel)
+              │       │       │
+              ▼       ▼       ▼
+           [Sum₁]  [Sum₂]  [Sum₃]
+              └───────┼───────┘
+                      ▼
+                    [LLM] (reduce)
+                      │
+                      ▼
+                Final Summary
+
+  Pros: Fast (parallel), handles any size
+  Cons: May lose some nuance between chunks
+  Use when: Speed matters, large documents
+
+REFINE (Highest quality):
+  Chunk₁ ──▶ LLM ──▶ Summary₁
+                         │
+  Chunk₂ + Summary₁ ──▶ LLM ──▶ Summary₂
+                                    │
+  Chunk₃ + Summary₂ ──▶ LLM ──▶ Summary₃
+                                    │
+                                   ...
+                                    │
+                                    ▼
+                              Final Summary
+
+  Pros: Best quality, builds coherent narrative
+  Cons: Sequential (slow), more LLM calls
+  Use when: Quality is paramount
+```
+
+### Token Management
+
+The `TokenManagerMiddleware` tracks and manages token usage across your chain to stay within LLM context limits.
+
+**How Token Management Works:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         TOKEN MANAGEMENT FLOW                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Step Output                                                               │
+│       │                                                                     │
+│       ▼                                                                     │
+│   ┌────────────────────┐                                                    │
+│   │ Count Tokens       │  tiktoken or ~4 chars/token                       │
+│   └─────────┬──────────┘                                                    │
+│             │                                                               │
+│             ▼                                                               │
+│   ┌────────────────────┐                                                    │
+│   │ Update Budget      │  Track total_tokens, step_tokens                  │
+│   └─────────┬──────────┘                                                    │
+│             │                                                               │
+│    ┌────────┴────────┬────────────────┐                                     │
+│    ▼                 ▼                ▼                                     │
+│ < 80% budget     80-100% budget   > 100% budget                             │
+│ (pass through)   (warning + auto-  (auto-offload                            │
+│                   summarize)        to Redis)                               │
+│                                                                             │
+│   ┌─────────────────────────────────────────────────────────┐               │
+│   │  PRINCIPLE: NEVER lose data                             │               │
+│   │  • Large data → Redis (full preservation)               │               │
+│   │  • Context gets ContextRef (lightweight, ~500 bytes)    │               │
+│   │  • Ref contains summary + key fields + hash             │               │
+│   │  • Full data retrievable on demand                      │               │
+│   └─────────────────────────────────────────────────────────┘               │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Configuration:**
+
+```python
+from agentorchestrator import TokenManagerMiddleware
+from agentorchestrator.middleware import SummarizerMiddleware
+from agentorchestrator.core import RedisContextStore
+
+# Basic token tracking
+ao.use(TokenManagerMiddleware(
+    max_total_tokens=100000,       # Token budget for entire chain
+    warning_threshold=0.8,         # Warn at 80% usage
+))
+
+# With auto-summarization
+summarizer = SummarizerMiddleware(summarizer=create_openai_summarizer())
+ao.use(TokenManagerMiddleware(
+    max_total_tokens=100000,
+    auto_summarize=True,           # Auto-trigger summarization
+    summarizer=summarizer,
+))
+
+# With auto-offload to Redis
+store = RedisContextStore(redis_url="redis://localhost:6379")
+ao.use(TokenManagerMiddleware(
+    max_total_tokens=100000,
+    auto_offload=True,             # Offload to Redis when over limit
+    context_store=store,
+    offload_threshold_bytes=50000, # Size threshold for offloading
+))
+```
+
+**Usage Statistics:**
+
+```python
+# Get token usage after chain execution
+usage = token_middleware.get_usage()
+print(f"Total tokens: {usage['total_tokens']}")
+print(f"Per-step tokens: {usage['step_tokens']}")
+print(f"Budget utilization: {usage['utilization_percent']}%")
+```
+
+### Rate Limiting & Circuit Breakers
+
+Protect external services with rate limiting and circuit breakers.
+
+**Rate Limiting:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         RATE LIMITING                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Incoming Requests                                                         │
+│       │                                                                     │
+│       ▼                                                                     │
+│   ┌────────────────────┐                                                    │
+│   │ Token Bucket       │  Refills at requests_per_second rate              │
+│   │ Algorithm          │  Allows burst_size initial burst                  │
+│   └─────────┬──────────┘                                                    │
+│             │                                                               │
+│    ┌────────┴────────┐                                                      │
+│    ▼                 ▼                                                      │
+│ Tokens available   No tokens                                                │
+│ (proceed)          (wait or reject)                                         │
+│                                                                             │
+│   Concurrency Control:                                                      │
+│   ┌─────────────────────────────────────────────────────────┐               │
+│   │  Semaphore limits max_concurrent requests               │               │
+│   │  Prevents overwhelming backend services                 │               │
+│   └─────────────────────────────────────────────────────────┘               │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Circuit Breaker Pattern:**
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                         CIRCUIT BREAKER STATES                              │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│                    ┌──────────────────────┐                                 │
+│       ┌───────────▶│       CLOSED         │◀──────────┐                     │
+│       │            │   (Normal operation) │           │                     │
+│       │            └──────────┬───────────┘           │                     │
+│       │                       │                       │                     │
+│       │           5 consecutive failures              │                     │
+│       │                       │                       │                     │
+│       │                       ▼                       │                     │
+│       │            ┌──────────────────────┐           │                     │
+│   success          │        OPEN          │      2 successes                │
+│   (close)          │   (Fail fast mode)   │      in half-open               │
+│       │            └──────────┬───────────┘           │                     │
+│       │                       │                       │                     │
+│       │              After 60 seconds                 │                     │
+│       │                       │                       │                     │
+│       │                       ▼                       │                     │
+│       │            ┌──────────────────────┐           │                     │
+│       └────────────│     HALF_OPEN        │───────────┘                     │
+│                    │ (Testing recovery)   │                                 │
+│                    │  Allow 1 test call   │                                 │
+│                    └──────────────────────┘                                 │
+│                               │                                             │
+│                          if fails                                           │
+│                               │                                             │
+│                               ▼                                             │
+│                          Back to OPEN                                       │
+│                                                                             │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Configuration:**
+
+```python
+from agentorchestrator.middleware import (
+    RateLimiterMiddleware,
+    CircuitBreakerMiddleware,
+    RateLimitAndCircuitBreakerMiddleware,
+)
+
+# Rate limiting per step
+ao.use(RateLimiterMiddleware({
+    "fetch_sec": {
+        "requests_per_second": 10,    # Max 10 req/sec
+        "max_concurrent": 5,          # Max 5 concurrent
+        "burst_size": 20,             # Allow initial burst of 20
+        "wait_on_limit": True,        # Wait vs. raise exception
+        "max_wait_seconds": 30,       # Max wait time
+    },
+    "fetch_news": {
+        "requests_per_second": 5,
+        "max_concurrent": 3,
+    },
+}))
+
+# Circuit breaker per step
+ao.use(CircuitBreakerMiddleware({
+    "fetch_external_api": {
+        "failure_threshold": 5,        # Open after 5 failures
+        "success_threshold": 2,        # Close after 2 successes
+        "recovery_timeout_seconds": 60, # Wait 60s before testing
+        "half_open_max_requests": 1,   # Allow 1 test request
+    },
+}))
+
+# Combined protection (recommended)
+ao.use(RateLimitAndCircuitBreakerMiddleware(
+    rate_limits={
+        "fetch_sec": {"requests_per_second": 10, "max_concurrent": 5},
+    },
+    circuit_breakers={
+        "fetch_sec": {"failure_threshold": 5, "recovery_timeout_seconds": 60},
+    },
+))
+```
+
+**Get Statistics:**
+
+```python
+stats = rate_limiter.get_stats()
+# {'fetch_sec': {'requests': 150, 'rejected': 5, 'waited': 20}}
+
+circuit_states = circuit_breaker.get_circuit_states()
+# {'fetch_external_api': 'CLOSED', 'fetch_backup_api': 'HALF_OPEN'}
+```
+
+### Context Store (Redis Offloading)
+
+Large payloads are automatically offloaded to Redis, keeping the chain context lightweight.
+
+**How Context Store Works:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         CONTEXT STORE ARCHITECTURE                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Step produces large output (e.g., 1.2MB SEC filing)                       │
+│       │                                                                     │
+│       ▼                                                                     │
+│   ┌────────────────────────────────────────────────────────┐                │
+│   │  OffloadMiddleware checks size                          │                │
+│   │  1.2MB > 100KB threshold → Offload                      │                │
+│   └─────────────────────────┬──────────────────────────────┘                │
+│                             │                                               │
+│              ┌──────────────┴──────────────┐                                │
+│              ▼                             ▼                                │
+│   ┌──────────────────────┐      ┌──────────────────────┐                   │
+│   │      REDIS           │      │   CHAIN CONTEXT      │                   │
+│   │  (Full Data Store)   │      │   (Lightweight)      │                   │
+│   ├──────────────────────┤      ├──────────────────────┤                   │
+│   │ Key: ref_abc123      │      │ sec_data: ContextRef │                   │
+│   │ Value: {             │◀────▶│   ref_id: abc123     │                   │
+│   │   full SEC filing    │      │   size: 1.2MB        │                   │
+│   │   with all tables,   │      │   summary: "Q3..."   │                   │
+│   │   exhibits, etc.     │      │   key_fields: {      │                   │
+│   │ }                    │      │     revenue: $50B    │                   │
+│   │ TTL: 24 hours        │      │     eps: $1.42       │                   │
+│   └──────────────────────┘      │   }                  │                   │
+│                                 │   hash: sha256...    │                   │
+│                                 └──────────────────────┘                   │
+│                                          │                                  │
+│   Later steps can:                       │                                  │
+│   • Use summary/key_fields directly      │                                  │
+│   • Retrieve full data when needed  ─────┘                                  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**ContextRef Properties:**
+
+| Property | Description |
+|----------|-------------|
+| `ref_id` | Unique reference ID for Redis lookup |
+| `size_bytes` | Exact size of stored data |
+| `content_hash` | SHA256 for integrity verification |
+| `summary` | Human-readable summary (always preserved) |
+| `key_fields` | Critical extracted fields (revenue, dates, etc.) |
+| `item_count` | For lists: total items stored |
+| `omitted_count` | For lists: items not in key_fields |
+| `source_step` | Origin step name |
+| `ttl_seconds` | Time-to-live in Redis |
+
+**Configuration:**
+
+```python
+from agentorchestrator.core import RedisContextStore
+from agentorchestrator.middleware import OffloadMiddleware
+
+# Create Redis store
+store = RedisContextStore(
+    redis_url="redis://localhost:6379",
+    default_ttl=86400,  # 24 hours
+    prefix="ao:",       # Key prefix
+)
+
+# Add offload middleware
+ao.use(OffloadMiddleware(
+    store=store,
+    default_threshold_bytes=100_000,  # 100KB default
+    step_thresholds={
+        "fetch_sec": 50_000,           # Lower threshold for SEC
+        "fetch_news": 200_000,         # Higher for news
+    },
+))
+```
+
+**Retrieving Full Data:**
+
+```python
+@ao.step(deps=["fetch_sec"])
+async def analyze_sec(ctx):
+    # Get the ContextRef
+    sec_ref = ctx.get("sec_data")
+
+    # Use summary for quick decisions
+    if "material weakness" in sec_ref.summary:
+        # Need full data for detailed analysis
+        full_data = await store.retrieve(sec_ref)
+        # full_data contains the complete 1.2MB SEC filing
+
+    # Or just use key_fields
+    revenue = sec_ref.key_fields.get("revenue")
+    eps = sec_ref.key_fields.get("eps")
+```
+
+### Health Checks
+
+Comprehensive health monitoring for all dependencies.
+
+**Health Check Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         HEALTH CHECK SYSTEM                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ao health --detailed                                                      │
+│       │                                                                     │
+│       ▼                                                                     │
+│   ┌────────────────────────────────────────────────────────┐                │
+│   │  HealthAggregator (parallel checks)                     │                │
+│   └────────────────────────────────────────────────────────┘                │
+│       │           │           │           │           │                     │
+│       ▼           ▼           ▼           ▼           ▼                     │
+│   ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐               │
+│   │ Config │  │ Redis  │  │  LLM   │  │ Agents │  │ Chains │               │
+│   │ Check  │  │ Check  │  │Gateway │  │ Check  │  │ Check  │               │
+│   └────┬───┘  └────┬───┘  └────┬───┘  └────┬───┘  └────┬───┘               │
+│        │           │           │           │           │                    │
+│        ▼           ▼           ▼           ▼           ▼                    │
+│   ┌─────────────────────────────────────────────────────────┐               │
+│   │  Health Statuses:                                        │               │
+│   │  • HEALTHY   - All checks passed                        │               │
+│   │  • DEGRADED  - Some non-critical checks failed          │               │
+│   │  • UNHEALTHY - Critical checks failed                   │               │
+│   │  • UNKNOWN   - Check could not complete                 │               │
+│   └─────────────────────────────────────────────────────────┘               │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Usage:**
+
+```python
+from agentorchestrator.utils.health import (
+    HealthAggregator,
+    run_health_checks,
+    is_ready,
+    is_live,
+)
+
+# Quick health check
+health = await run_health_checks(ao)
+print(f"Status: {health.status}")  # HEALTHY, DEGRADED, UNHEALTHY
+print(f"Components: {health.components}")
+
+# Kubernetes probes
+if await is_ready(ao):
+    print("Ready to accept traffic")
+
+if await is_live(ao):
+    print("Application is alive")
+
+# Detailed health aggregator
+aggregator = HealthAggregator(ao, timeout_seconds=10)
+result = await aggregator.check_all()
+
+for component, status in result.components.items():
+    print(f"{component}: {status.status} ({status.latency_ms}ms)")
+    if status.details:
+        print(f"  Details: {status.details}")
+```
+
+**CLI:**
+
+```bash
+# Quick health check
+ao health
+# Status: HEALTHY ✓
+
+# Detailed output
+ao health --detailed
+# ┌────────────────────────────────────────────┐
+# │ Component      │ Status   │ Latency │ Details
+# ├────────────────────────────────────────────┤
+# │ config         │ HEALTHY  │ 1ms     │ Valid
+# │ redis          │ HEALTHY  │ 5ms     │ Connected
+# │ llm_gateway    │ HEALTHY  │ 150ms   │ Model: gpt-4
+# │ agents         │ DEGRADED │ 200ms   │ 2/3 healthy
+# │ chains         │ HEALTHY  │ 2ms     │ 5 chains valid
+# └────────────────────────────────────────────┘
+
+# JSON output for monitoring systems
+ao health --json
+```
+
+### Input/Output Validation
+
+Pydantic-based validation for step contracts.
+
+```python
+from pydantic import BaseModel
+from agentorchestrator.core import validates_input, validates_output
+
+class CompanyRequest(BaseModel):
+    company_name: str
+    ticker: str
+    include_financials: bool = True
+
+class CompanyData(BaseModel):
+    name: str
+    ticker: str
+    revenue: float
+    eps: float
+
+@ao.step
+@validates_input(CompanyRequest)
+@validates_output(CompanyData)
+async def fetch_company(ctx, request: CompanyRequest) -> CompanyData:
+    # request is already validated Pydantic model
+    data = await api.get_company(request.ticker)
+
+    # Output is validated before returning
+    return CompanyData(
+        name=data["name"],
+        ticker=request.ticker,
+        revenue=data["revenue"],
+        eps=data["eps"],
+    )
+```
+
+**Error Handling:**
+
+```python
+from agentorchestrator.core import ContractValidationError
+
+try:
+    result = await ao.launch("my_chain", {"invalid": "data"})
+except ContractValidationError as e:
+    print(f"Step: {e.step_name}")
+    print(f"Contract: {e.contract_type}")  # "input" or "output"
+    print(f"Errors: {e.errors}")
+    # [{'loc': ('company_name',), 'msg': 'field required', 'type': 'missing'}]
+```
+
 ### Observability
 
 **Structured Logging:**
@@ -896,6 +1598,192 @@ ao.use(MetricsMiddleware(
 # - chain_duration_ms
 # - retry_count
 # - error_count
+```
+
+### Plugin System
+
+Extend AgentOrchestrator with custom plugins via Python entry points.
+
+**Plugin Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         PLUGIN SYSTEM                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   pyproject.toml                                                            │
+│   ├── [project.entry-points."agentorchestrator.agents"]                    │
+│   ├── [project.entry-points."agentorchestrator.connectors"]                │
+│   └── [project.entry-points."agentorchestrator.middleware"]                │
+│                                                                             │
+│       │                                                                     │
+│       ▼                                                                     │
+│   ┌────────────────────────────────────────────────────────┐                │
+│   │  PluginManager                                          │                │
+│   │  • discover() - Find all installed plugins              │                │
+│   │  • load() - Import and instantiate                      │                │
+│   │  • get() - Retrieve by name                             │                │
+│   │  • list() - List all available                          │                │
+│   └────────────────────────────────────────────────────────┘                │
+│                                                                             │
+│   Entry Point Groups:                                                       │
+│   • agentorchestrator.agents     → Custom data agents                      │
+│   • agentorchestrator.connectors → Custom connectors                       │
+│   • agentorchestrator.middleware → Custom middleware                       │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Creating a Plugin:**
+
+```toml
+# In your package's pyproject.toml
+[project.entry-points."agentorchestrator.agents"]
+my_agent = "my_package.agents:MyCustomAgent"
+
+[project.entry-points."agentorchestrator.middleware"]
+my_middleware = "my_package.middleware:MyCustomMiddleware"
+```
+
+**Using Plugins:**
+
+```python
+from agentorchestrator.plugins import PluginManager
+
+# Discover all installed plugins
+manager = PluginManager()
+manager.discover()
+
+# List available plugins
+for plugin in manager.list("agents"):
+    print(f"{plugin.name}: {plugin.description}")
+
+# Load a specific plugin
+MyAgent = manager.load("my_agent", group="agents")
+agent = MyAgent()
+
+# Get plugin info
+info = manager.get_info("my_agent")
+print(f"Version: {info.version}")
+print(f"Capabilities: {info.capabilities}")
+```
+
+---
+
+## Middleware Reference
+
+Complete reference for all built-in middleware with priority ordering.
+
+**Middleware Execution Order:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         MIDDLEWARE STACK                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Request Flow (before hooks - ascending priority):                         │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │ CircuitBreaker(5) → RateLimiter(10) → Logger(10) → Cache(20)       │   │
+│   │       → TokenManager(15) → [Step Execution]                         │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│   Response Flow (after hooks - descending priority):                        │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │ [Step Result] → Summarizer(50) → TokenManager(15) → Cache(20)      │   │
+│   │       → Logger(10) → RateLimiter(10) → CircuitBreaker(5)           │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│   Priority: Lower number = earlier in before(), later in after()            │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Middleware Quick Reference:**
+
+| Middleware | Priority | Purpose | Key Options |
+|------------|----------|---------|-------------|
+| `CircuitBreakerMiddleware` | 5 | Prevent cascading failures | failure_threshold, recovery_timeout |
+| `RateLimiterMiddleware` | 10 | Rate limit API calls | requests_per_second, max_concurrent |
+| `LoggerMiddleware` | 10 | Structured logging | level, include_context |
+| `TokenManagerMiddleware` | 15 | Track token budget | max_total_tokens, auto_summarize |
+| `CacheMiddleware` | 20 | Cache step outputs | ttl_seconds, max_entries |
+| `MetricsMiddleware` | 30 | Collect metrics | backend, export_interval |
+| `SummarizerMiddleware` | 50 | Summarize large outputs | max_tokens, strategy |
+| `OffloadMiddleware` | 60 | Offload to Redis | threshold_bytes, store |
+
+**Recommended Production Stack:**
+
+```python
+from agentorchestrator import (
+    AgentOrchestrator,
+    LoggerMiddleware,
+    CacheMiddleware,
+    TokenManagerMiddleware,
+    SummarizerMiddleware,
+    create_openai_summarizer,
+)
+from agentorchestrator.middleware import (
+    RateLimiterMiddleware,
+    CircuitBreakerMiddleware,
+    MetricsMiddleware,
+    OffloadMiddleware,
+)
+from agentorchestrator.core import RedisContextStore
+
+ao = AgentOrchestrator(name="production", isolated=True)
+
+# Create dependencies
+store = RedisContextStore(redis_url="redis://localhost:6379")
+summarizer = create_openai_summarizer(model="gpt-4")
+
+# Add middleware stack (order doesn't matter - priority controls execution)
+ao.use(LoggerMiddleware(level="INFO"))
+ao.use(CacheMiddleware(ttl_seconds=300))
+ao.use(MetricsMiddleware())
+ao.use(RateLimiterMiddleware({
+    "fetch_sec": {"requests_per_second": 10, "max_concurrent": 5},
+    "fetch_news": {"requests_per_second": 20, "max_concurrent": 10},
+}))
+ao.use(CircuitBreakerMiddleware({
+    "fetch_sec": {"failure_threshold": 5},
+    "fetch_news": {"failure_threshold": 3},
+}))
+ao.use(TokenManagerMiddleware(
+    max_total_tokens=100000,
+    auto_summarize=True,
+    summarizer=SummarizerMiddleware(summarizer=summarizer),
+))
+ao.use(OffloadMiddleware(
+    store=store,
+    default_threshold_bytes=100_000,
+))
+```
+
+**Creating Custom Middleware:**
+
+```python
+from agentorchestrator.middleware import Middleware
+from agentorchestrator.core import ChainContext, StepResult
+
+class MyCustomMiddleware(Middleware):
+    def __init__(self, priority: int = 25, applies_to: list[str] = None):
+        super().__init__(priority=priority, applies_to=applies_to)
+        # applies_to: ["step1", "step2"] or None for all steps
+
+    async def before(self, ctx: ChainContext, step_name: str) -> None:
+        """Called before step execution."""
+        print(f"Starting {step_name}")
+
+    async def after(self, ctx: ChainContext, step_name: str, result: StepResult) -> None:
+        """Called after step execution (success or failure)."""
+        print(f"Finished {step_name}: {'success' if result.success else 'failed'}")
+
+    async def on_error(self, ctx: ChainContext, step_name: str, error: Exception) -> None:
+        """Called when step raises an exception."""
+        print(f"Error in {step_name}: {error}")
+
+# Register
+ao.use(MyCustomMiddleware(priority=35, applies_to=["important_step"]))
 ```
 
 ---
