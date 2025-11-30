@@ -205,31 +205,6 @@ def load_plugin(
         raise ImportError(f"Failed to load plugin '{name}': {e}") from e
 
 
-def load_plugin_class(
-    name: str,
-    group: str = AGENT_ENTRY_POINT,
-) -> type[Any]:
-    """
-    Load a plugin class without instantiating.
-
-    Args:
-        name: Plugin name
-        group: Entry point group
-
-    Returns:
-        Plugin class
-    """
-    plugins = discover_plugins(groups=[group])
-
-    if name not in plugins:
-        raise ValueError(f"Plugin '{name}' not found")
-
-    info = plugins[name]
-    module_path, class_name = info.module_path.rsplit(":", 1)
-    module = importlib.import_module(module_path)
-    return getattr(module, class_name)
-
-
 class PluginManager:
     """
     Manager for AgentOrchestrator plugins.

@@ -26,12 +26,6 @@ def to_pascal_case(name: str) -> str:
     return ''.join(word.capitalize() for word in re.split(r'[-_\s]+', name))
 
 
-def to_kebab_case(name: str) -> str:
-    """Convert snake_case or CamelCase to kebab-case."""
-    name = to_snake_case(name)
-    return name.replace('_', '-')
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 #                         PROJECT TEMPLATES
 # ═══════════════════════════════════════════════════════════════════════════════

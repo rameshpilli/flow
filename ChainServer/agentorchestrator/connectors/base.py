@@ -1,15 +1,8 @@
-"""
-AgentOrchestrator Base Connector
+"""AgentOrchestrator Base Connector."""
 
-Provides base classes for external service connectors.
-"""
-
-import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -68,96 +61,3 @@ class BaseConnector(ABC):
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.disconnect()
-
-
-class HTTPConnector(BaseConnector):
-    """
-    HTTP-based connector using aiohttp.
-
-    Usage:
-        config = ConnectorConfig(
-            name="ravenpack",
-            base_url="https://api.ravenpack.com",
-            api_key="...",
-        )
-        connector = HTTPConnector(config)
-        async with connector:
-            data = await connector.request("/v1/news", params={"q": "Apple"})
-    """
-
-    async def connect(self) -> None:
-        try:
-            import aiohttp
-
-            self._session = aiohttp.ClientSession(
-                base_url=self.config.base_url,
-                headers={
-                    **self.config.headers,
-                    "Authorization": f"Bearer {self.config.api_key}" if self.config.api_key else "",
-                },
-            )
-            logger.info(f"Connected to {self.config.name}")
-        except ImportError:
-            logger.warning("aiohttp not installed, using mock session")
-            self._session = MockSession()
-
-    async def disconnect(self) -> None:
-        if self._session and hasattr(self._session, "close"):
-            await self._session.close()
-        self._session = None
-        logger.info(f"Disconnected from {self.config.name}")
-
-    async def request(
-        self,
-        endpoint: str,
-        method: str = "GET",
-        params: dict | None = None,
-        data: dict | None = None,
-        **kwargs,
-    ) -> dict[str, Any]:
-        if not self._session:
-            raise RuntimeError("Connector not connected")
-
-        try:
-            timeout_seconds = self.config.timeout_ms / 1000
-
-            async with self._session.request(
-                method,
-                endpoint,
-                params=params,
-                json=data,
-                timeout=timeout_seconds,
-                **kwargs,
-            ) as response:
-                response.raise_for_status()
-                return await response.json()
-
-        except Exception as e:
-            logger.error(f"Request failed: {e}")
-            raise
-
-
-class MockSession:
-    """Mock session for testing without aiohttp"""
-
-    async def close(self):
-        pass
-
-    def request(self, *args, **kwargs):
-        return MockResponse()
-
-
-class MockResponse:
-    """Mock response for testing"""
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        pass
-
-    def raise_for_status(self):
-        pass
-
-    async def json(self):
-        return {"_mock": True}

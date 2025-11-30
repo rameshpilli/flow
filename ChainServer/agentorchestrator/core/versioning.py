@@ -498,18 +498,6 @@ class MigrationManager:
         return max(versions, key=lambda v: Version.parse(v.version))
 
 
-# Global migration manager
-_migration_manager: MigrationManager | None = None
-
-
-def get_migration_manager() -> MigrationManager:
-    """Get global migration manager."""
-    global _migration_manager
-    if _migration_manager is None:
-        _migration_manager = MigrationManager()
-    return _migration_manager
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 #                         VALIDATION / DRY-RUN
 # ═══════════════════════════════════════════════════════════════════════════════

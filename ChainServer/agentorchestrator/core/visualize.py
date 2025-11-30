@@ -180,36 +180,3 @@ class DAGVisualizer:
         padding = max(0, width - len(text))
         left = padding // 2
         return " " * left + text
-
-
-def print_dag_summary(chain_name: str = "meeting_prep_chain") -> str:
-    """Generate a compact summary for quick reference"""
-    chain_registry = get_chain_registry()
-    step_registry = get_step_registry()
-
-    chain_spec = chain_registry.get_spec(chain_name)
-    if not chain_spec:
-        return f"Chain not found: {chain_name}"
-
-    lines = [f"Chain: {chain_name}", "=" * 40]
-
-    viz = DAGVisualizer()
-    levels = viz._compute_levels(chain_spec.steps)
-
-    for level_idx, level in enumerate(levels):
-        is_parallel = len(level) > 1
-
-        if is_parallel:
-            lines.append("├── [PARALLEL]")
-            for step in level:
-                lines.append(f"│   ├── {step}")
-            lines.append("│   └── (joins)")
-        else:
-            prefix = "├──" if level_idx < len(levels) - 1 else "└──"
-            lines.append(f"{prefix} {level[0]}")
-
-        if level_idx < len(levels) - 1:
-            lines.append("│")
-            lines.append("▼")
-
-    return "\n".join(lines)
