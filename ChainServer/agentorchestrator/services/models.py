@@ -1,8 +1,8 @@
 """
-Re-export models from examples.cmpt.services for backward compatibility.
+Re-export models from cmpt.services for backward compatibility.
 """
 
-from examples.cmpt.services.models import (
+from cmpt.services.models import (
     AgentResult,
     ChainRequest,
     ChainRequestOverrides,

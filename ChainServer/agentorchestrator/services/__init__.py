@@ -1,17 +1,27 @@
 """
-AgentOrchestrator Services Module (CMPT example exports)
+AgentOrchestrator Services Module
 
-These classes are provided as a convenience bridge to the CMPT example implementation.
-They are not part of the minimal core; if the CMPT example code is not present, imports
-will fail with a clear error so you can vendor your own services instead.
+Core services for LLM integration, with optional CMPT example re-exports.
 
-Usage (when CMPT example is available):
-    from agentorchestrator.services import ChainRequest, ContextBuilderService
+Usage:
+    from agentorchestrator.services import LLMGatewayClient, get_llm_client
 """
 
+# Core LLM services (always available)
+from agentorchestrator.services.llm_gateway import (
+    LLMGatewayClient,
+    OAuthTokenManager,
+    create_managed_client,
+    get_default_llm_client,
+    get_llm_client,
+    init_default_llm_client,
+    set_default_llm_client,
+    timed_lru_cache,
+)
+
+# Optional: Re-export CMPT models/services if available
 try:
-    # Re-export from examples.cmpt.services for backward compatibility
-    from examples.cmpt.services import (
+    from cmpt.services import (
         # Models
         AgentResult,
         ChainRequest,
@@ -32,46 +42,13 @@ try:
         ContentPrioritizationService,
         ContextBuilderService,
         ResponseBuilderService,
-        # LLM Gateway
-        LLMGatewayClient,
-        OAuthTokenManager,
-        create_managed_client,
-        get_default_llm_client,
-        get_llm_client,
-        init_default_llm_client,
-        set_default_llm_client,
-        timed_lru_cache,
     )
-except ImportError as exc:  # pragma: no cover - executed only when example is absent
-    raise ImportError(
-        "The CMPT example services are not available. "
-        "These re-exports rely on examples/cmpt/services for illustrative purposes. "
-        "If you need production services, copy or implement your own instead of importing "
-        "agentorchestrator.services."
-    ) from exc
+    _CMPT_AVAILABLE = True
+except ImportError:
+    _CMPT_AVAILABLE = False
 
+# Core exports (always available)
 __all__ = [
-    # Models
-    "ChainRequest",
-    "ChainRequestOverrides",
-    "ChainResponse",
-    "CompanyInfo",
-    "TemporalContext",
-    "PersonaInfo",
-    "ContextBuilderInput",
-    "ContextBuilderOutput",
-    "PrioritizedSource",
-    "Subquery",
-    "ContentPrioritizationInput",
-    "ContentPrioritizationOutput",
-    "AgentResult",
-    "ResponseBuilderInput",
-    "ResponseBuilderOutput",
-    # Services
-    "ContextBuilderService",
-    "ContentPrioritizationService",
-    "ResponseBuilderService",
-    # LLM Gateway
     "LLMGatewayClient",
     "OAuthTokenManager",
     "get_llm_client",
@@ -81,3 +58,15 @@ __all__ = [
     "create_managed_client",
     "timed_lru_cache",
 ]
+
+# Add CMPT exports if available
+if _CMPT_AVAILABLE:
+    __all__.extend([
+        "ChainRequest", "ChainRequestOverrides", "ChainResponse",
+        "CompanyInfo", "TemporalContext", "PersonaInfo",
+        "ContextBuilderInput", "ContextBuilderOutput",
+        "PrioritizedSource", "Subquery",
+        "ContentPrioritizationInput", "ContentPrioritizationOutput",
+        "AgentResult", "ResponseBuilderInput", "ResponseBuilderOutput",
+        "ContextBuilderService", "ContentPrioritizationService", "ResponseBuilderService",
+    ])

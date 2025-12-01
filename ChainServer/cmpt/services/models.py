@@ -145,10 +145,23 @@ ChainRequest.model_rebuild()
 class ChainResponse(BaseModel):
     """Unified response model for the CMPT chain server"""
 
-    context_builder: dict[str, Any] | None = None
-    content_prioritization: dict[str, Any] | None = None
-    response_builder: dict[str, Any] | None = None
-    timings: dict[str, float] | None = None
+    # Company info
+    company_name: str | None = None
+    ticker: str | None = None
+
+    # Generated content
+    financial_metrics: dict[str, Any] | None = None
+    strategic_analysis: dict[str, Any] | None = None
+    prepared_content: str | None = None
+
+    # Agent results
+    agent_results: dict[str, Any] | None = None
+
+    # Validation
+    validation_results: dict[str, Any] | None = None
+
+    # Timing and status
+    timing_ms: dict[str, float] | None = None
     success: bool = True
     error: str | None = None
 
@@ -424,9 +437,23 @@ class ResponseBuilderOutput(BaseModel):
     )
     prepared_content: str | None = Field(None, description="Final prepared meeting content")
 
+    # Parsed data from agents
+    parsed_data_agent_chunks: dict[str, str] | None = Field(
+        None, description="Parsed content from each agent"
+    )
+
+    # Validation
+    validation_results: dict[str, Any] | None = Field(
+        None, description="Validation results for financial metrics"
+    )
+
     # Metadata
     agents_succeeded: int = Field(0, ge=0, description="Number of agents that succeeded")
     agents_failed: int = Field(0, ge=0, description="Number of agents that failed")
+    company_name: str | None = Field(None, description="Company name used for analysis")
+
+    # Cache info
+    cached: dict[str, Any] | None = Field(None, description="Cache hit info per agent")
 
     # Errors
     errors: dict[str, str] = Field(default_factory=dict, description="Errors by agent name")
@@ -434,4 +461,119 @@ class ResponseBuilderOutput(BaseModel):
     # Timing
     timing_ms: dict[str, float] | None = Field(
         None, description="Timing for each agent and LLM call"
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#                       LLM SCHEMA MODELS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class CitationDict(BaseModel):
+    """Structured citation with source tracking and reasoning"""
+    source_agent: list[str] = Field(
+        description="List of data agents used. Valid values: 'SEC_agent', 'earnings_agent', 'news_agent'"
+    )
+    source_content: list[str] = Field(
+        description="List of verbatim quotes from source chunks. DO NOT paraphrase."
+    )
+    reasoning: str = Field(
+        description="Explanation of how you derived this metric."
+    )
+
+
+class MetricWithCitation(BaseModel):
+    """A metric value with its citation"""
+    value: float | str | dict | None = None
+    citation: CitationDict | None = None
+
+
+class FinancialMetricsResponse(BaseModel):
+    """Structured response for financial metrics extraction"""
+
+    # Revenue metrics
+    current_annual_revenue: float | None = Field(None, description="Current annual revenue in billions USD")
+    current_annual_revenue_citation: CitationDict | None = None
+    current_annual_revenue_date: str | None = Field(None, description="Date of SEC filing (YYYY-MM-DD)")
+    current_annual_revenue_yoy_change: float | None = Field(None, description="YoY percentage change in revenue")
+
+    # Projected revenue
+    estimated_annual_revenue_next_year: float | None = Field(None, description="Projected revenue for next FY in billions USD")
+    estimated_annual_revenue_next_year_citation: CitationDict | None = None
+
+    # EBITDA
+    ebitda_margin: float | None = Field(None, description="EBITDA margin as percentage")
+    ebitda_margin_citation: CitationDict | None = None
+    ebitda_margin_yoy_change: float | None = Field(None, description="YoY change in EBITDA margin (percentage points)")
+
+    # Stock metrics
+    stock_price: float | None = Field(None, description="Most recent stock price in USD")
+    stock_price_citation: CitationDict | None = None
+    stock_price_daily_change: float | None = Field(None, description="Today's stock price change in USD")
+    stock_price_daily_change_percent: float | None = Field(None, description="Today's stock price percentage change")
+    stock_price_yoy_change: float | None = Field(None, description="YoY percentage change in stock price")
+
+    # Market cap
+    market_cap: float | None = Field(None, description="Market capitalization in billions USD")
+    market_cap_citation: CitationDict | None = None
+    market_cap_date: str | None = Field(None, description="Date of market cap calculation (YYYY-MM-DD)")
+
+    # Trajectory
+    revenue_growth_trajectory: dict[str, float | None] | None = Field(None, description="Quarterly revenue for last 7 quarters")
+    revenue_growth_trajectory_citation: CitationDict | None = None
+
+
+class StrategicAnalysisResponse(BaseModel):
+    """Structured response for strategic analysis"""
+
+    strength: list[str] = Field(
+        default_factory=list,
+        description="4-6 key competitive strengths from SWOT analysis"
+    )
+    weakness: list[str] = Field(
+        default_factory=list,
+        description="4-6 key vulnerabilities from SWOT analysis"
+    )
+    opportunity: list[str] = Field(
+        default_factory=list,
+        description="4-6 growth opportunities from SWOT analysis"
+    )
+    threat: list[str] = Field(
+        default_factory=list,
+        description="4-6 external threats from SWOT analysis"
+    )
+
+    investment_thesis: list[dict[str, list[str]]] = Field(
+        default_factory=list,
+        description="Investment thesis as list of dicts with subheading -> bullet points"
+    )
+
+    key_risk_highlights: list[str] = Field(
+        default_factory=list,
+        description="5-7 critical risks that could impact investment thesis"
+    )
+
+    strategic_opportunities: list[dict[str, list[str]]] = Field(
+        default_factory=list,
+        description="Strategic opportunities for company and RBC engagement"
+    )
+
+    recent_developments: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Recent firm-level developments with category, header, date, description, source_url"
+    )
+
+    sources: list[str] = Field(
+        default_factory=list,
+        description="List of all sources cited in the analysis"
+    )
+
+    news_summary: list[dict[str, list[str]]] = Field(
+        default_factory=list,
+        description="Summary of recent news organized by theme"
+    )
+
+    key_highlights: list[dict[str, list[str]]] = Field(
+        default_factory=list,
+        description="Key highlights from latest quarterly earnings"
     )

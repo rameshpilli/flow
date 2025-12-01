@@ -9,7 +9,7 @@ PURPOSE:
     your own production chains.
 
 HOW TO RUN:
-    python examples/cmpt/run.py --company "Apple Inc"
+    python cmpt/run.py --company "Apple Inc"
 
 FOLDER STRUCTURE:
     cmpt/
@@ -34,26 +34,29 @@ THE 3-STAGE PIPELINE:
 
 USAGE:
     # Option 1: Run directly
-    python examples/cmpt/run.py --company "Apple Inc"
+    python cmpt/run.py --company "Apple Inc"
 
     # Option 2: Import and use programmatically
-    from examples.cmpt.run import create_cmpt_chain
-    from agentorchestrator import AgentOrchestrator
+    from cmpt import run_cmpt_chain
+    result = await run_cmpt_chain("Apple Inc", "2025-01-15")
 
+    # Option 3: Register with your own orchestrator
+    from cmpt import register_cmpt_chain
+    from agentorchestrator import AgentOrchestrator
     ao = AgentOrchestrator(name="my_app")
-    create_cmpt_chain(ao)
+    register_cmpt_chain(ao)
     result = await ao.launch("cmpt_chain", {"request": {...}})
 
-    # Option 3: Use services directly (without AgentOrchestrator)
-    from examples.cmpt.services import ContextBuilderService
+    # Option 4: Use services directly (without AgentOrchestrator)
+    from cmpt.services import ContextBuilderService
     service = ContextBuilderService()
     output = await service.execute(request)
 """
 
-from examples.cmpt.run import create_cmpt_chain
+from cmpt.chain import register_cmpt_chain, run_cmpt_chain
 
 # Re-export services for direct use
-from examples.cmpt.services import (
+from cmpt.services import (
     ChainRequest,
     ChainResponse,
     ContextBuilderService,
@@ -62,7 +65,8 @@ from examples.cmpt.services import (
 )
 
 __all__ = [
-    "create_cmpt_chain",
+    "register_cmpt_chain",
+    "run_cmpt_chain",
     "ChainRequest",
     "ChainResponse",
     "ContextBuilderService",

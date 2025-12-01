@@ -16,7 +16,7 @@ from datetime import date, datetime
 from difflib import SequenceMatcher
 from typing import Any
 
-from examples.cmpt.services.models import (
+from cmpt.services.models import (
     ChainRequest,
     ChainRequestOverrides,
     CompanyInfo,
@@ -493,146 +493,65 @@ class ContextBuilderService:
     #                       USER OVERRIDE HELPERS
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def _apply_company_overrides(
-        self,
-        company_info: CompanyInfo,
-        overrides: ChainRequestOverrides,
-    ) -> CompanyInfo:
-        """
-        Apply user overrides to company info.
-
-        Overrides take precedence over API-extracted values.
-        """
-        # Create a dict from the existing company info
+    def _apply_company_overrides(self, company_info: CompanyInfo, overrides: ChainRequestOverrides) -> CompanyInfo:
+        """Apply user overrides to company info."""
         data = company_info.model_dump()
-
-        # Apply overrides where provided
-        if overrides.ticker:
-            data["ticker"] = overrides.ticker
-        if overrides.company_cik:
-            data["cik"] = overrides.company_cik
-        if overrides.industry:
-            data["industry"] = overrides.industry
-        if overrides.sector:
-            data["sector"] = overrides.sector
-
+        override_map = {"ticker": "ticker", "company_cik": "cik", "industry": "industry", "sector": "sector"}
+        for override_key, data_key in override_map.items():
+            if val := getattr(overrides, override_key, None):
+                data[data_key] = val
         return CompanyInfo(**data)
 
-    def _apply_temporal_overrides(
-        self,
-        temporal: TemporalContext,
-        overrides: ChainRequestOverrides,
-    ) -> TemporalContext:
-        """
-        Apply user overrides to temporal context.
-
-        Overrides take precedence over API-extracted values.
-        """
+    def _apply_temporal_overrides(self, temporal: TemporalContext, overrides: ChainRequestOverrides) -> TemporalContext:
+        """Apply user overrides to temporal context."""
         data = temporal.model_dump()
-
-        # Apply overrides where provided
         if overrides.fiscal_quarter:
-            # Normalize quarter format (Q1, Q2, etc.)
-            q = overrides.fiscal_quarter.upper().replace("Q", "").strip()
-            data["fiscal_quarter"] = q
+            data["fiscal_quarter"] = overrides.fiscal_quarter.upper().replace("Q", "").strip()
         if overrides.fiscal_year:
-            # Normalize year format
-            year = overrides.fiscal_year.upper().replace("FY", "").strip()
-            data["fiscal_year"] = year
+            data["fiscal_year"] = overrides.fiscal_year.upper().replace("FY", "").strip()
         if overrides.next_earnings_date:
             data["event_dt"] = overrides.next_earnings_date
         if overrides.news_lookback_days:
             data["news_lookback_days"] = overrides.news_lookback_days
         if overrides.filing_quarters:
             data["filing_quarters"] = overrides.filing_quarters
-
         return TemporalContext(**data)
 
-    def _create_temporal_from_overrides(
-        self,
-        meeting_datetime: str | None,
-        overrides: ChainRequestOverrides,
-    ) -> TemporalContext:
-        """
-        Create temporal context from user overrides when API is skipped.
-
-        Uses computed quarter from meeting date if not provided in overrides.
-        """
-        # Parse meeting date
-        meeting_date = None
-        if meeting_datetime:
-            try:
-                meeting_date = datetime.fromisoformat(
-                    meeting_datetime.replace("Z", "+00:00")
-                ).date()
-            except ValueError:
-                meeting_date = date.today()
-        else:
-            meeting_date = date.today()
-
-        # Compute quarter from meeting date if not overridden
-        if overrides.fiscal_quarter:
-            q = overrides.fiscal_quarter.upper().replace("Q", "").strip()
-            fiscal_quarter = q
-        else:
-            quarter = (meeting_date.month - 1) // 3 + 1
-            fiscal_quarter = str(quarter)
-
-        # Get fiscal year
-        if overrides.fiscal_year:
-            fiscal_year = overrides.fiscal_year.upper().replace("FY", "").strip()
-        else:
-            fiscal_year = str(meeting_date.year)
-
+    def _create_temporal_from_overrides(self, meeting_datetime: str | None, overrides: ChainRequestOverrides) -> TemporalContext:
+        """Create temporal context from user overrides when API is skipped."""
+        meeting_date = self._parse_date(meeting_datetime)
+        fiscal_quarter = overrides.fiscal_quarter.upper().replace("Q", "").strip() if overrides.fiscal_quarter else str((meeting_date.month - 1) // 3 + 1)
+        fiscal_year = overrides.fiscal_year.upper().replace("FY", "").strip() if overrides.fiscal_year else str(meeting_date.year)
         return TemporalContext(
-            meeting_date=str(meeting_date),
-            fiscal_quarter=fiscal_quarter,
-            fiscal_year=fiscal_year,
+            meeting_date=str(meeting_date), fiscal_quarter=fiscal_quarter, fiscal_year=fiscal_year,
             event_dt=overrides.next_earnings_date,
             news_lookback_days=overrides.news_lookback_days or self.DEFAULT_NEWS_LOOKBACK_DAYS,
             filing_quarters=overrides.filing_quarters or self.DEFAULT_FILING_QUARTERS,
         )
 
-    def _apply_rbc_persona_overrides(
-        self,
-        persona: PersonaInfo,
-        overrides: ChainRequestOverrides,
-    ) -> PersonaInfo:
-        """
-        Apply user overrides to RBC persona.
-        """
+    def _apply_persona_overrides(self, persona: PersonaInfo, name_override: str | None, role_override: str | None) -> PersonaInfo:
+        """Apply name/role overrides to a persona."""
         data = persona.model_dump()
-
-        if overrides.rbc_persona_name:
-            data["name"] = overrides.rbc_persona_name
-            parts = overrides.rbc_persona_name.split()
-            if parts:
-                data["first_name"] = parts[0]
-                data["last_name"] = parts[-1] if len(parts) > 1 else ""
-        if overrides.rbc_persona_role:
-            data["role"] = overrides.rbc_persona_role
-
+        if name_override:
+            data["name"] = name_override
+            parts = name_override.split()
+            data["first_name"] = parts[0] if parts else ""
+            data["last_name"] = parts[-1] if len(parts) > 1 else ""
+        if role_override:
+            data["role"] = role_override
         return PersonaInfo(**data)
 
-    def _apply_client_persona_overrides(
-        self,
-        persona: PersonaInfo,
-        overrides: ChainRequestOverrides,
-    ) -> PersonaInfo:
-        """
-        Apply user overrides to client persona.
+    def _apply_rbc_persona_overrides(self, persona: PersonaInfo, overrides: ChainRequestOverrides) -> PersonaInfo:
+        return self._apply_persona_overrides(persona, overrides.rbc_persona_name, overrides.rbc_persona_role)
 
-        Note: Only applies to the first client persona if multiple exist.
-        """
-        data = persona.model_dump()
+    def _apply_client_persona_overrides(self, persona: PersonaInfo, overrides: ChainRequestOverrides) -> PersonaInfo:
+        return self._apply_persona_overrides(persona, overrides.client_persona_name, overrides.client_persona_role)
 
-        if overrides.client_persona_name:
-            data["name"] = overrides.client_persona_name
-            parts = overrides.client_persona_name.split()
-            if parts:
-                data["first_name"] = parts[0]
-                data["last_name"] = parts[-1] if len(parts) > 1 else ""
-        if overrides.client_persona_role:
-            data["role"] = overrides.client_persona_role
-
-        return PersonaInfo(**data)
+    def _parse_date(self, date_str: str | None) -> date:
+        """Parse date string or return today's date."""
+        if date_str:
+            try:
+                return datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
+            except ValueError:
+                pass
+        return date.today()

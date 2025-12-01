@@ -27,8 +27,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from agentorchestrator import AgentOrchestrator
-from examples.cmpt.run import create_cmpt_chain
-from examples.cmpt.services import (
+from cmpt.run import create_cmpt_chain
+from cmpt.services import (
     ChainRequest,
     ContextBuilderService,
     ContentPrioritizationService,
