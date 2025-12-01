@@ -12,10 +12,10 @@ PURPOSE:
     3. Response Builder - executes agents, builds final response
 
 RUN THIS EXAMPLE:
-    python examples/cmpt/03_cmpt_tests.py
+    python cmpt/03_cmpt_tests.py
 
     OR via pytest:
-    pytest examples/cmpt/03_cmpt_tests.py -v
+    pytest cmpt/03_cmpt_tests.py -v
 """
 
 import asyncio
@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from agentorchestrator import AgentOrchestrator
-from cmpt.run import create_cmpt_chain
+from cmpt.chain import register_cmpt_chain
 from cmpt.services import (
     ChainRequest,
     ContextBuilderService,
@@ -53,7 +53,7 @@ def test_chain_validation():
     print_section("CMPT Chain - Validation (ao.check)")
 
     ao = AgentOrchestrator(name="cmpt_test", isolated=True)
-    create_cmpt_chain(ao)
+    register_cmpt_chain(ao)
 
     # Validate chain
     ao.check("cmpt_chain")
@@ -69,7 +69,7 @@ def test_list_definitions():
     print_section("CMPT Chain - List Definitions (ao.list_*)")
 
     ao = AgentOrchestrator(name="cmpt_test", isolated=True)
-    create_cmpt_chain(ao)
+    register_cmpt_chain(ao)
 
     print("\n  Steps:")
     for step in ao.list_steps():
@@ -89,7 +89,7 @@ def test_dag_visualization():
     print_section("CMPT Chain - DAG Visualization")
 
     ao = AgentOrchestrator(name="cmpt_test", isolated=True)
-    create_cmpt_chain(ao)
+    register_cmpt_chain(ao)
 
     print("\n  ASCII DAG:")
     dag = ao.graph("cmpt_chain")
@@ -158,7 +158,7 @@ async def test_full_chain():
 
     # Create orchestrator and register chain
     ao = AgentOrchestrator(name="cmpt_test", isolated=True)
-    create_cmpt_chain(ao)
+    register_cmpt_chain(ao)
 
     print("\n  Input Request:")
     print("  " + "-" * 40)
@@ -206,7 +206,7 @@ async def test_json_output():
     print_section("CMPT Chain - Raw JSON Output")
 
     ao = AgentOrchestrator(name="cmpt_test", isolated=True)
-    create_cmpt_chain(ao)
+    register_cmpt_chain(ao)
 
     result = await ao.launch("cmpt_chain", {
         "request": {

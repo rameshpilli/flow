@@ -96,11 +96,11 @@ class ContentPrioritizationService:
             prioritized_sources=prioritized_sources,
             subqueries=subqueries,
             subqueries_by_agent=subqueries_by_agent,
+            priority_distribution=temporal_priority,  # Proper model field, survives serialization
             grid_config=self.grid_config,
             prioritization_reasoning=self._generate_reasoning(context, prioritized_sources),
             timing_ms={"total": (datetime.now() - start_time).total_seconds() * 1000},
         )
-        output._temporal_source_prioritizer = temporal_priority
         return output
 
     def _get_temporal_priority(self, meeting_date: str, earnings_date: str | None) -> dict:

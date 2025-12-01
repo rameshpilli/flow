@@ -121,8 +121,8 @@ class ResponseBuilderService:
         errors: dict[str, str] = {}
         company_name = context.company_name or "Unknown Company"
 
-        # Get priority distribution
-        priority_distribution = getattr(prioritization, '_temporal_source_prioritizer', None)
+        # Get priority distribution from proper model field
+        priority_distribution = prioritization.priority_distribution or None
 
         # Step 1: Execute agents
         agent_start = datetime.now()
@@ -181,32 +181,46 @@ class ResponseBuilderService:
         )
 
     async def _execute_agents(self, subqueries: list[Subquery]) -> list[AgentResult]:
-        """Execute agents for each subquery."""
+        """Execute agents for each subquery concurrently with proper params and timeouts."""
         import asyncio
 
-        results = []
-        for sq in subqueries:
+        async def fetch_one(sq: Subquery) -> AgentResult:
+            """Fetch single agent with timeout and params from subquery."""
             agent = self.agents.get(sq.agent)
-            if agent:
-                try:
-                    ao_result: AOAgentResult = await agent.fetch(sq.query)
-                    results.append(AgentResult(
-                        agent=sq.agent,
-                        success=ao_result.success,
-                        data=ao_result.data if isinstance(ao_result.data, dict) else {"items": ao_result.data},
-                        items=ao_result.data if isinstance(ao_result.data, list) else [],
-                        item_count=len(ao_result.data) if isinstance(ao_result.data, list) else 0,
-                        query=sq.query,
-                        source=ao_result.source,
-                        duration_ms=ao_result.duration_ms,
-                        error=ao_result.error,
-                    ))
-                except Exception as e:
-                    results.append(AgentResult(agent=sq.agent, success=False, error=str(e), query=sq.query))
-            else:
-                # Mock data for testing
-                results.append(self._get_mock_result(sq))
-        return results
+            if not agent:
+                return self._get_mock_result(sq)
+
+            timeout_sec = sq.timeout_ms / 1000.0
+            try:
+                # Pass subquery params to agent.fetch and honor timeout
+                ao_result: AOAgentResult = await asyncio.wait_for(
+                    agent.fetch(sq.query, **sq.params),
+                    timeout=timeout_sec,
+                )
+                return AgentResult(
+                    agent=sq.agent,
+                    success=ao_result.success,
+                    data=ao_result.data if isinstance(ao_result.data, dict) else {"items": ao_result.data},
+                    items=ao_result.data if isinstance(ao_result.data, list) else [],
+                    item_count=len(ao_result.data) if isinstance(ao_result.data, list) else 0,
+                    query=sq.query,
+                    source=ao_result.source,
+                    duration_ms=ao_result.duration_ms,
+                    error=ao_result.error,
+                )
+            except asyncio.TimeoutError:
+                return AgentResult(
+                    agent=sq.agent,
+                    success=False,
+                    error=f"Agent {sq.agent} timed out after {timeout_sec}s",
+                    query=sq.query,
+                )
+            except Exception as e:
+                return AgentResult(agent=sq.agent, success=False, error=str(e), query=sq.query)
+
+        # Execute all agents concurrently
+        tasks = [fetch_one(sq) for sq in subqueries]
+        return await asyncio.gather(*tasks)
 
     def _get_mock_result(self, sq: Subquery) -> AgentResult:
         """Return mock data for testing."""

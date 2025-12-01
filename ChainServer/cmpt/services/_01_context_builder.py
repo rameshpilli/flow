@@ -193,6 +193,7 @@ class ContextBuilderService:
                         company_name=request.corporate_company_name,
                         ticker=ticker,
                         meeting_datetime=request.meeting_datetime,
+                        earnings_date_override=overrides.next_earnings_date,  # Pass override
                     ),
                     timeout=temporal_timeout,
                 )
@@ -308,6 +309,7 @@ class ContextBuilderService:
         company_name: str | None = None,
         ticker: str | None = None,
         meeting_datetime: str | None = None,
+        earnings_date_override: str | None = None,
     ) -> tuple[TemporalContext | None, str | None]:
         """
         Extract temporal context based on company and meeting date.
@@ -320,29 +322,41 @@ class ContextBuilderService:
 
         try:
             # Parse meeting date
-            meeting_date = None
-            if meeting_datetime:
-                try:
-                    meeting_date = datetime.fromisoformat(
-                        meeting_datetime.replace("Z", "+00:00")
-                    ).date()
-                except ValueError:
-                    meeting_date = date.today()
-            else:
-                meeting_date = date.today()
+            meeting_date = self._parse_date(meeting_datetime)
 
             # Determine current quarter
             quarter = (meeting_date.month - 1) // 3 + 1
             fiscal_quarter = str(quarter)
             fiscal_year = str(meeting_date.year)
 
-            # In production, call earnings calendar API
-            # For now, create mock temporal context
+            # In production, call earnings calendar API to get event_dt
+            # For now, simulate with a mock date ~30 days from meeting
+            # This would be replaced by actual API call
+            event_dt: str | None = None
+            days_to_earnings: int | None = None
+
+            if earnings_date_override:
+                # Use override if provided
+                event_dt = earnings_date_override
+            elif self.earnings_calendar_url:
+                # In production: call earnings calendar API
+                # event_dt = await self._call_earnings_api(ticker or company_name)
+                pass
+
+            # Compute days_to_earnings if we have an earnings date
+            if event_dt:
+                try:
+                    earnings_date = datetime.strptime(event_dt, "%Y-%m-%d").date()
+                    days_to_earnings = (earnings_date - meeting_date).days
+                except ValueError:
+                    logger.warning(f"Invalid earnings date format: {event_dt}")
+
             result = TemporalContext(
                 meeting_date=str(meeting_date),
+                event_dt=event_dt,
                 fiscal_quarter=fiscal_quarter,
                 fiscal_year=fiscal_year,
-                days_to_earnings=None,  # Would come from API
+                days_to_earnings=days_to_earnings,
                 news_lookback_days=self.DEFAULT_NEWS_LOOKBACK_DAYS,
                 filing_quarters=self.DEFAULT_FILING_QUARTERS,
             )
@@ -522,9 +536,20 @@ class ContextBuilderService:
         meeting_date = self._parse_date(meeting_datetime)
         fiscal_quarter = overrides.fiscal_quarter.upper().replace("Q", "").strip() if overrides.fiscal_quarter else str((meeting_date.month - 1) // 3 + 1)
         fiscal_year = overrides.fiscal_year.upper().replace("FY", "").strip() if overrides.fiscal_year else str(meeting_date.year)
+
+        # Compute days_to_earnings if override provides earnings date
+        days_to_earnings: int | None = None
+        if overrides.next_earnings_date:
+            try:
+                earnings_date = datetime.strptime(overrides.next_earnings_date, "%Y-%m-%d").date()
+                days_to_earnings = (earnings_date - meeting_date).days
+            except ValueError:
+                pass
+
         return TemporalContext(
             meeting_date=str(meeting_date), fiscal_quarter=fiscal_quarter, fiscal_year=fiscal_year,
             event_dt=overrides.next_earnings_date,
+            days_to_earnings=days_to_earnings,
             news_lookback_days=overrides.news_lookback_days or self.DEFAULT_NEWS_LOOKBACK_DAYS,
             filing_quarters=overrides.filing_quarters or self.DEFAULT_FILING_QUARTERS,
         )

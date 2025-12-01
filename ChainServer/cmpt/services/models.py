@@ -363,6 +363,12 @@ class ContentPrioritizationOutput(BaseModel):
         default_factory=dict, description="Subqueries grouped by agent"
     )
 
+    # Priority distribution for strategic analysis (persists through serialization)
+    priority_distribution: dict[str, int] = Field(
+        default_factory=dict,
+        description="Agent priority weights based on temporal context (e.g., earnings_agent: 50, news_agent: 30)"
+    )
+
     # Grid configuration used
     grid_config: dict[str, Any] | None = Field(None, description="Grid configuration applied")
 
