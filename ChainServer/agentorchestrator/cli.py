@@ -35,6 +35,66 @@ import time
 from pathlib import Path
 
 
+_definition_paths: list[Path] | None = None
+_observability_configured = False
+
+
+def _env_flag(key: str, default: bool = False) -> bool:
+    """Return True if env var is truthy."""
+    return os.getenv(key, str(default)).lower() in ("1", "true", "yes", "on")
+
+
+def _set_definition_paths(paths: list[str | Path]) -> None:
+    """Store explicit definition paths provided via CLI."""
+    global _definition_paths
+    validated: list[Path] = []
+    for raw in paths:
+        path = Path(raw).expanduser()
+        if not path.exists():
+            raise ValueError(f"Definition path not found: {path}")
+        if path.is_dir():
+            if not (path / "__init__.py").exists():
+                raise ValueError(f"Directory must be a package with __init__.py: {path}")
+        elif path.suffix != ".py":
+            raise ValueError(f"Definition path must be a Python file or package: {path}")
+        validated.append(path)
+    _definition_paths = validated
+
+
+def _configure_observability_from_env() -> None:
+    """Enable logging/tracing when env flags are set."""
+    global _observability_configured
+    if _observability_configured:
+        return
+
+    if _env_flag("AO_ENABLE_LOGGING"):
+        from agentorchestrator.utils.logging import configure_logging
+
+        level = os.getenv("AO_LOG_LEVEL", "INFO")
+        json_output = _env_flag("AO_LOG_JSON")
+        include_timestamp = not _env_flag("AO_LOG_NO_TIMESTAMP")
+        configure_logging(level=level, json_output=json_output, include_timestamp=include_timestamp)
+
+    if _env_flag("AO_ENABLE_TRACING"):
+        from agentorchestrator.utils.tracing import configure_tracing
+
+        service_name = os.getenv("AO_TRACE_SERVICE", "agentorchestrator")
+        configure_tracing(service_name=service_name)
+
+    _observability_configured = True
+
+
+def _import_definition_path(path: Path) -> None:
+    """Import a single definition path (file or package)."""
+    if path.is_dir():
+        init_file = path / "__init__.py"
+        module_name = path.name
+        _import_module_from_path(module_name, init_file)
+    else:
+        module_name = path.stem
+        _import_module_from_path(module_name, path)
+
+
 def get_orchestrator():
     """
     Get or create the AgentOrchestrator instance, importing chain definitions.
@@ -54,15 +114,19 @@ def get_orchestrator():
     ]
 
     # Import definition files using importlib.util (no sys.path manipulation)
-    for def_file in definition_files:
-        file_path = cwd / def_file
-        if file_path.exists():
-            _import_module_from_path(def_file.replace(".py", ""), file_path)
+    if _definition_paths:
+        for path in _definition_paths:
+            _import_definition_path(path)
+    else:
+        for def_file in definition_files:
+            file_path = cwd / def_file
+            if file_path.exists():
+                _import_module_from_path(def_file.replace(".py", ""), file_path)
 
-    # Check for a chains/ directory with __init__.py
-    chains_dir = cwd / "chains"
-    if chains_dir.is_dir() and (chains_dir / "__init__.py").exists():
-        _import_module_from_path("chains", chains_dir / "__init__.py")
+        # Check for a chains/ directory with __init__.py
+        chains_dir = cwd / "chains"
+        if chains_dir.is_dir() and (chains_dir / "__init__.py").exists():
+            _import_module_from_path("chains", chains_dir / "__init__.py")
 
     # Import CMPT chain by default if nothing else was imported
     try:
@@ -70,6 +134,7 @@ def get_orchestrator():
     except ImportError:
         pass
 
+    _configure_observability_from_env()
     return _get_orchestrator()
 
 
@@ -1351,6 +1416,10 @@ Examples:
     parser.add_argument(
         "--version", action="version", version="%(prog)s 0.1.0"
     )
+    parser.add_argument(
+        "--definitions", "-D", action="append",
+        help="Explicit paths to chain definitions (file or package). Overrides auto-discovery.",
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -1613,6 +1682,13 @@ Examples:
     debug_parser.set_defaults(func=cmd_debug)
 
     args = parser.parse_args()
+
+    if args.definitions:
+        try:
+            _set_definition_paths(args.definitions)
+        except ValueError as e:
+            print(f"Error: {e}")
+            return 1
 
     if not args.command:
         parser.print_help()

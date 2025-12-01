@@ -23,6 +23,21 @@ python examples/cmpt/run.py --company "Apple Inc"
 pytest agentorchestrator/tests/ -v
 ```
 
+## Developer Setup
+
+```bash
+python3 -m venv agentorchestrator/.venv
+source agentorchestrator/.venv/bin/activate
+
+# Install framework + dev tools (ruff/pytest)
+pip install -e "agentorchestrator[dev]"
+
+# Run the full suite
+python -m pytest
+# Optional: lint
+ruff check agentorchestrator
+```
+
 ## Project Structure
 
 ```
@@ -124,6 +139,9 @@ ao run my_chain --data '{"name": "Test"}'
 # Validate chain definitions
 ao check
 
+# Run with explicit chain definitions
+ao --definitions ./chains.py run my_chain
+
 # List registered components
 ao list
 
@@ -135,6 +153,69 @@ ao new agent my_agent
 ao new chain my_chain
 ao new project my_project
 ```
+
+### CMPT example services (transitional)
+
+The `agentorchestrator.services` module re-exports the CMPT example services/models for convenience. It depends on the example code under `examples/cmpt`; if that folder isn’t present (e.g., in a trimmed install), import will fail. For production, vendor your own services instead of relying on these re-exports.
+
+Example: putting your own services outside this repo
+
+```
+myapp/
+├── downstream_services/
+│   ├── __init__.py
+│   ├── models.py            # Pydantic models
+│   └── context_builder.py   # Your ContextBuilderService
+└── main.py
+```
+
+`downstream_services/context_builder.py`:
+
+```python
+from pydantic import BaseModel
+from agentorchestrator.core.context import ChainContext
+
+
+class ChainRequest(BaseModel):
+    corporate_company_name: str
+    meeting_datetime: str | None = None
+
+
+class ContextBuilderService:
+    async def execute(self, request: ChainRequest):
+        # Your logic here (call APIs, enrich, etc.)
+        return {"company_name": request.corporate_company_name}
+```
+
+`main.py`:
+
+```python
+from agentorchestrator import AgentOrchestrator
+from downstream_services.context_builder import ChainRequest, ContextBuilderService
+
+ao = AgentOrchestrator(name="my_app")
+
+@ao.step(name="context_builder", produces=["context_output"])
+async def context_builder_step(ctx):
+    request_data = ctx.get("request", {})
+    request = ChainRequest(**request_data)
+    output = await ContextBuilderService().execute(request)
+    ctx.set("context_output", output)
+    return output
+
+@ao.chain(name="my_chain")
+class MyChain:
+    steps = ["context_builder"]
+
+# run
+# asyncio.run(ao.launch("my_chain", {"request": {"corporate_company_name": "Acme"}}))
+```
+
+This keeps your domain services in your own package while still using AgentOrchestrator for orchestration.
+
+### Observability toggles
+
+Set `AO_ENABLE_LOGGING=true` to auto-enable structured logging (optionally `AO_LOG_JSON=true`) or `AO_ENABLE_TRACING=true` to wire OpenTelemetry tracing with `AO_TRACE_SERVICE` naming. These flags are picked up automatically by the CLI when it instantiates the orchestrator.
 
 ## Documentation
 

@@ -302,6 +302,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
    ```python
    from agentorchestrator.core.versioning import MigrationManager
 
+   # Create a manager per service (no global helper)
    manager = MigrationManager()
 
    @manager.migration("1.0.0", "2.0.0")
