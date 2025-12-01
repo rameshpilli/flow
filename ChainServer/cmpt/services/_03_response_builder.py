@@ -181,22 +181,24 @@ class ResponseBuilderService:
         )
 
     async def _execute_agents(self, subqueries: list[Subquery]) -> list[AgentResult]:
-        """Execute agents for each subquery concurrently with proper params and timeouts."""
+        """Execute agents for each subquery concurrently with proper params.
+
+        Note: Timeout/retry handling is delegated to ResilientAgent wrapper.
+        We don't add another asyncio.wait_for here to avoid cutting retries short.
+        The Subquery.timeout_ms is used to configure the ResilientAgent's timeout.
+        """
         import asyncio
 
         async def fetch_one(sq: Subquery) -> AgentResult:
-            """Fetch single agent with timeout and params from subquery."""
+            """Fetch single agent with params from subquery."""
             agent = self.agents.get(sq.agent)
             if not agent:
                 return self._get_mock_result(sq)
 
-            timeout_sec = sq.timeout_ms / 1000.0
             try:
-                # Pass subquery params to agent.fetch and honor timeout
-                ao_result: AOAgentResult = await asyncio.wait_for(
-                    agent.fetch(sq.query, **sq.params),
-                    timeout=timeout_sec,
-                )
+                # Pass subquery params to agent.fetch
+                # ResilientAgent handles timeout/retries internally
+                ao_result: AOAgentResult = await agent.fetch(sq.query, **sq.params)
                 return AgentResult(
                     agent=sq.agent,
                     success=ao_result.success,
@@ -207,13 +209,6 @@ class ResponseBuilderService:
                     source=ao_result.source,
                     duration_ms=ao_result.duration_ms,
                     error=ao_result.error,
-                )
-            except asyncio.TimeoutError:
-                return AgentResult(
-                    agent=sq.agent,
-                    success=False,
-                    error=f"Agent {sq.agent} timed out after {timeout_sec}s",
-                    query=sq.query,
                 )
             except Exception as e:
                 return AgentResult(agent=sq.agent, success=False, error=str(e), query=sq.query)

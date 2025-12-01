@@ -29,6 +29,8 @@ from typing import Any
 
 from agentorchestrator import AgentOrchestrator
 
+from agentorchestrator.services.llm_gateway import get_llm_client
+
 from cmpt.services import (
     # Models
     ChainRequest,
@@ -51,6 +53,7 @@ def register_cmpt_chain(
     ao: AgentOrchestrator,
     use_mcp: bool = False,
     mcp_config: dict[str, str] | None = None,
+    llm_client: Any | None = None,
 ) -> None:
     """
     Register the CMPT chain with an AgentOrchestrator instance.
@@ -63,6 +66,8 @@ def register_cmpt_chain(
         ao: AgentOrchestrator instance to register with
         use_mcp: Whether to use MCP agents (production) or mock agents
         mcp_config: Optional MCP configuration with agent URLs
+        llm_client: Optional LLM client for financial metrics/strategic analysis.
+                    If not provided, attempts to get default client via get_llm_client().
 
     Example:
         ao = AgentOrchestrator(name="cmpt")
@@ -77,9 +82,12 @@ def register_cmpt_chain(
     # INITIALIZE SERVICES
     # ══════════════════════════════════════════════════════════════════════════
 
+    # Get LLM client - use provided, or fall back to default/global client
+    effective_llm_client = llm_client or get_llm_client()
+
     context_builder_service = ContextBuilderService()
     content_prioritization_service = ContentPrioritizationService()
-    response_builder_service = ResponseBuilderService()
+    response_builder_service = ResponseBuilderService(llm_client=effective_llm_client)
 
     # ══════════════════════════════════════════════════════════════════════════
     # REGISTER AGENTS (Optional - for MCP mode)
@@ -303,6 +311,7 @@ async def run_cmpt_chain(
     meeting_date: str | None = None,
     use_mcp: bool = False,
     mcp_config: dict[str, str] | None = None,
+    llm_client: Any | None = None,
 ) -> dict[str, Any]:
     """
     Convenience function to run the CMPT chain.
@@ -312,6 +321,7 @@ async def run_cmpt_chain(
         meeting_date: Optional meeting date (YYYY-MM-DD format)
         use_mcp: Whether to use MCP agents
         mcp_config: Optional MCP URLs
+        llm_client: Optional LLM client for metrics/analysis generation
 
     Returns:
         Chain execution result
@@ -325,8 +335,8 @@ async def run_cmpt_chain(
     # Create orchestrator
     ao = AgentOrchestrator(name="cmpt", isolated=True)
 
-    # Register chain
-    register_cmpt_chain(ao, use_mcp=use_mcp, mcp_config=mcp_config)
+    # Register chain with LLM client
+    register_cmpt_chain(ao, use_mcp=use_mcp, mcp_config=mcp_config, llm_client=llm_client)
 
     # Build request
     request = {
@@ -345,6 +355,7 @@ def run_cmpt_chain_sync(
     meeting_date: str | None = None,
     use_mcp: bool = False,
     mcp_config: dict[str, str] | None = None,
+    llm_client: Any | None = None,
 ) -> dict[str, Any]:
     """
     Synchronous version of run_cmpt_chain.
@@ -354,4 +365,4 @@ def run_cmpt_chain_sync(
     """
     import asyncio
 
-    return asyncio.run(run_cmpt_chain(company_name, meeting_date, use_mcp, mcp_config))
+    return asyncio.run(run_cmpt_chain(company_name, meeting_date, use_mcp, mcp_config, llm_client))

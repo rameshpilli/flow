@@ -157,14 +157,56 @@ class ContentPrioritizationService:
         return sources
 
     def _generate_subqueries(self, context: ContextBuilderOutput, sources: list[PrioritizedSource]) -> list[Subquery]:
-        """Generate subqueries for each data source."""
+        """Generate subqueries for each data source with temporal context."""
         company_name, ticker = context.company_name or "", context.ticker or ""
+        temporal = context.temporal_context
+
+        # Extract temporal context for agents
+        fiscal_year = temporal.fiscal_year if temporal else str(datetime.now().year)
+        fiscal_quarter = f"Q{temporal.fiscal_quarter}" if temporal and temporal.fiscal_quarter else "Q1"
+        news_lookback = temporal.news_lookback_days if temporal else 30
+        filing_quarters = temporal.filing_quarters if temporal else 8
 
         source_config = {
-            DataSource.SEC_FILING: ("sec_filing", 30000, lambda s: {"ticker": ticker, "quarters": s.lookback_quarters or 8, "types": s.include_types or ["10-K", "10-Q"], "max_results": s.max_results or 20}),
-            DataSource.NEWS: ("news", 20000, lambda s: {"ticker": ticker, "days": s.lookback_days or 30, "sentiment": True, "max_results": s.max_results or 50}),
-            DataSource.EARNINGS: ("earnings", 20000, lambda s: {"ticker": ticker, "include_estimates": True, "include_historical": True, "quarters": s.lookback_quarters or 4}),
-            DataSource.TRANSCRIPTS: ("transcripts", 30000, lambda s: {"ticker": ticker, "quarters": s.lookback_quarters or 4, "types": ["earnings_call", "investor_day"]}),
+            DataSource.SEC_FILING: (
+                ToolName.SEC_TOOL.value, 30000,
+                lambda s: {
+                    "ticker": ticker,
+                    "quarters": s.lookback_quarters or filing_quarters,
+                    "types": s.include_types or ["10-K", "10-Q"],
+                    "max_results": s.max_results or 20,
+                }
+            ),
+            DataSource.NEWS: (
+                ToolName.NEWS_TOOL.value, 20000,
+                lambda s: {
+                    "ticker": ticker,
+                    "days": s.lookback_days or news_lookback,
+                    "sentiment": True,
+                    "max_results": s.max_results or 50,
+                }
+            ),
+            DataSource.EARNINGS: (
+                ToolName.EARNINGS_TOOL.value, 20000,
+                lambda s: {
+                    "ticker": ticker,
+                    "fiscal_year": fiscal_year,
+                    "fiscal_quarter": fiscal_quarter,
+                    "include_estimates": True,
+                    "include_historical": True,
+                    "quarters": s.lookback_quarters or 4,
+                }
+            ),
+            DataSource.TRANSCRIPTS: (
+                "transcripts", 30000,
+                lambda s: {
+                    "ticker": ticker,
+                    "fiscal_year": fiscal_year,
+                    "fiscal_quarter": fiscal_quarter,
+                    "quarters": s.lookback_quarters or 4,
+                    "types": ["earnings_call", "investor_day"],
+                }
+            ),
         }
 
         return [

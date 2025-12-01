@@ -24,11 +24,17 @@ class SECFilingAgent(MCPAgent):
     _ao_name = ToolName.SEC_TOOL.value
 
     async def fetch(self, query: str, **kwargs) -> AgentResult:
-        """Fetch SEC filings for a company."""
+        """Fetch SEC filings for a company using params from Subquery."""
         start = time.perf_counter()
         try:
             if self.connector:
-                args = {"reporting_entity": query, "retrieve": kwargs.get("quarters", 8)}
+                # Use params from Subquery (propagated from GRID config)
+                args = {
+                    "reporting_entity": kwargs.get("ticker") or query,
+                    "retrieve": kwargs.get("quarters", 8),
+                    "filing_types": kwargs.get("types", ["10-K", "10-Q"]),
+                    "max_results": kwargs.get("max_results", 20),
+                }
                 result = await self.connector.call_tool("search_sec", args)
                 return AgentResult(data=result, source=self._ao_name, query=query, duration_ms=(time.perf_counter() - start) * 1000)
             return AgentResult(data={"items": []}, source=self._ao_name, query=query, duration_ms=(time.perf_counter() - start) * 1000, error="No MCP connector")
@@ -43,13 +49,23 @@ class EarningsAgent(MCPAgent):
     _ao_name = ToolName.EARNINGS_TOOL.value
 
     async def fetch(self, query: str, **kwargs) -> AgentResult:
-        """Fetch earnings transcripts for a company."""
+        """Fetch earnings transcripts for a company using params from Subquery."""
         start = time.perf_counter()
+        # Use params from Subquery (propagated from temporal context)
+        ticker = kwargs.get("ticker") or query
         fiscal_year = kwargs.get("fiscal_year", "2025")
         fiscal_quarter = kwargs.get("fiscal_quarter", "Q1")
+        quarters = kwargs.get("quarters", 4)
         try:
             if self.connector:
-                args = {"query": f"Earnings transcript for {query} {fiscal_year} {fiscal_quarter}"}
+                args = {
+                    "ticker": ticker,
+                    "fiscal_year": fiscal_year,
+                    "fiscal_quarter": fiscal_quarter,
+                    "quarters": quarters,
+                    "include_estimates": kwargs.get("include_estimates", True),
+                    "include_historical": kwargs.get("include_historical", True),
+                }
                 result = await self.connector.call_tool("get_transcript", args)
                 return AgentResult(data=result, source=self._ao_name, query=query, duration_ms=(time.perf_counter() - start) * 1000)
             return AgentResult(data={"items": []}, source=self._ao_name, query=query, duration_ms=(time.perf_counter() - start) * 1000, error="No MCP connector")
@@ -64,11 +80,21 @@ class NewsAgent(MCPAgent):
     _ao_name = ToolName.NEWS_TOOL.value
 
     async def fetch(self, query: str, **kwargs) -> AgentResult:
-        """Fetch news articles for a company."""
+        """Fetch news articles for a company using params from Subquery."""
         start = time.perf_counter()
+        # Use params from Subquery (propagated from GRID config)
+        ticker = kwargs.get("ticker") or query
+        days = kwargs.get("days", 30)
+        max_results = kwargs.get("max_results", 50)
         try:
             if self.connector:
-                args = {"search_query": f"{query} news", "entities": [query]}
+                args = {
+                    "search_query": f"{ticker} news",
+                    "entities": [ticker],
+                    "days": days,
+                    "max_results": max_results,
+                    "sentiment": kwargs.get("sentiment", True),
+                }
                 result = await self.connector.call_tool("search_news", args)
                 return AgentResult(data=result, source=self._ao_name, query=query, duration_ms=(time.perf_counter() - start) * 1000)
             return AgentResult(data={"items": []}, source=self._ao_name, query=query, duration_ms=(time.perf_counter() - start) * 1000, error="No MCP connector")
