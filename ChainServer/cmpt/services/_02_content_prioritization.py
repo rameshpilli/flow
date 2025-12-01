@@ -131,16 +131,20 @@ class ContentPrioritizationService:
         if temporal and temporal.days_to_earnings is not None:
             near_earnings = temporal.days_to_earnings / 7 <= self.grid_config.get("earnings_proximity_weeks", 2)
 
-        # Get market cap for news lookback
+        # Get market cap for news lookback (fallback)
         market_cap_key = (company.market_cap.lower().replace(" ", "_") if company and company.market_cap else "large_cap")
         if market_cap_key not in self.grid_config.get("news_lookback_days", {}):
             market_cap_key = "large_cap"
-        news_lookback = self.grid_config["news_lookback_days"].get(market_cap_key, 30)
+        default_news_lookback = self.grid_config["news_lookback_days"].get(market_cap_key, 30)
+
+        # Use temporal context overrides if available, otherwise use GRID defaults
+        news_lookback = temporal.news_lookback_days if temporal else default_news_lookback
+        filing_quarters = temporal.filing_quarters if temporal else self.grid_config["filing_quarters"]["revenue"]
 
         sources = [
             PrioritizedSource(
                 source=DataSource.SEC_FILING, priority=Priority.PRIMARY if near_earnings else Priority.SECONDARY,
-                enabled=True, lookback_quarters=self.grid_config["filing_quarters"]["revenue"],
+                enabled=True, lookback_quarters=filing_quarters,
                 max_results=self.grid_config["max_filing_results"], include_types=self.grid_config["include_filing_types"],
             ),
             PrioritizedSource(
