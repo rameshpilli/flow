@@ -79,7 +79,24 @@ def register_cmpt_chain(
     """
 
     # ══════════════════════════════════════════════════════════════════════════
-    # INITIALIZE SERVICES
+    # CREATE AGENTS (always created, MCP URLs optional)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # Create agents - if MCP URLs provided, they'll connect to real services
+    # Otherwise they'll return "No MCP connector" errors (handled gracefully)
+    agents: dict[str, Any] = {}
+    if use_mcp:
+        agents = create_cmpt_agents(
+            sec_url=mcp_config.get("sec_url") if mcp_config else None,
+            earnings_url=mcp_config.get("earnings_url") if mcp_config else None,
+            news_url=mcp_config.get("news_url") if mcp_config else None,
+        )
+        for name, agent in agents.items():
+            ao.register_agent(name, agent)
+            logger.info(f"Registered MCP agent: {name}")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # INITIALIZE SERVICES (after agents are created)
     # ══════════════════════════════════════════════════════════════════════════
 
     # Get LLM client - use provided, or fall back to default/global client
@@ -87,21 +104,11 @@ def register_cmpt_chain(
 
     context_builder_service = ContextBuilderService()
     content_prioritization_service = ContentPrioritizationService()
-    response_builder_service = ResponseBuilderService(llm_client=effective_llm_client)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # REGISTER AGENTS (Optional - for MCP mode)
-    # ══════════════════════════════════════════════════════════════════════════
-
-    if use_mcp and mcp_config:
-        agents = create_cmpt_agents(
-            sec_url=mcp_config.get("sec_url"),
-            earnings_url=mcp_config.get("earnings_url"),
-            news_url=mcp_config.get("news_url"),
-        )
-        for name, agent in agents.items():
-            ao.register_agent(name, agent)
-            logger.info(f"Registered MCP agent: {name}")
+    # Pass agents to ResponseBuilderService so it can execute them
+    response_builder_service = ResponseBuilderService(
+        llm_client=effective_llm_client,
+        agents=agents,
+    )
 
     # ══════════════════════════════════════════════════════════════════════════
     # STEP 1: CONTEXT BUILDER
