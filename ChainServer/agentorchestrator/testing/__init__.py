@@ -51,6 +51,13 @@ from agentorchestrator.testing.mocks import (
     mock_chain,
     mock_step,
 )
+from agentorchestrator.testing.agent_test_suite import (
+    AgentTestSuite,
+    TestConfig,
+    TestResult,
+    generate_test_suite,
+    testable,
+)
 
 __all__ = [
     # Mocks
@@ -69,4 +76,10 @@ __all__ = [
     "assert_step_failed",
     "assert_context_has",
     "assert_chain_valid",
+    # Agent Test Suite
+    "AgentTestSuite",
+    "TestConfig",
+    "TestResult",
+    "generate_test_suite",
+    "testable",
 ]

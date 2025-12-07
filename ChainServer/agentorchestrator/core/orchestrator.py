@@ -299,18 +299,42 @@ class AgentOrchestrator:
         name: str | None = None,
         description: str = "",
         group: str | None = None,
+        resilient: bool = False,
+        resilient_config: dict[str, Any] | None = None,
     ) -> type[T] | Callable[[type[T]], type[T]]:
         """
         Register a data agent (similar to Dagster's resource).
 
+        Args:
+            cls: Agent class (auto-provided when used without parentheses)
+            name: Custom agent name (default: class name)
+            description: Agent description
+            group: Group name for organization
+            resilient: If True, auto-wrap instances in ResilientAgent
+            resilient_config: Config for ResilientAgent (timeout_seconds, max_retries, etc.)
+
         Usage:
-            @fg.agent
+            @ao.agent
             class NewsAgent:
                 async def fetch(self, query: str) -> dict: ...
 
-            @fg.agent(name="sec_agent", group="financial")
+            @ao.agent(name="sec_agent", group="financial")
             class SECFilingAgent:
                 async def fetch(self, query: str) -> dict: ...
+                
+            @ao.agent(
+                name="earnings_agent",
+                resilient=True,
+                resilient_config={"timeout_seconds": 30.0, "max_retries": 2}
+            )
+            class EarningsAgent(MCPAgent):
+                def __init__(self, mcp_url: str | None = None, **kwargs):
+                    super().__init__(**kwargs)
+                    if mcp_url:
+                        self.connector_config = ConnectorConfig(
+                            name="earnings_mcp",
+                            base_url=mcp_url
+                        )
         """
 
         def decorator(cls: type[T]) -> type[T]:
@@ -320,6 +344,8 @@ class AgentOrchestrator:
                 agent_class=cls,
                 description=description,
                 group=group,
+                resilient=resilient,
+                resilient_config=resilient_config or {},
             )
             cls._fg_name = agent_name
             cls._fg_type = "agent"
@@ -844,6 +870,26 @@ class AgentOrchestrator:
             )
             return factory
         return decorator
+
+    def get_agent(self, name: str, **init_kwargs) -> Any:
+        """
+        Get an agent instance by name with runtime configuration.
+        
+        Args:
+            name: Registered agent name
+            **init_kwargs: Arguments passed to agent constructor (e.g., mcp_url)
+            
+        Returns:
+            Agent instance (auto-wrapped in ResilientAgent if configured)
+            
+        Usage:
+            # Get agent with runtime config
+            sec_agent = ao.get_agent("sec_filing_agent", mcp_url="http://sec-mcp:8000")
+            
+            # Get agent without config (for mock mode)
+            sec_agent = ao.get_agent("sec_filing_agent")
+        """
+        return self._agent_registry.get_agent(name, **init_kwargs)
 
     def use(self, middleware: Any) -> "AgentOrchestrator":
         """Add middleware to the execution pipeline"""

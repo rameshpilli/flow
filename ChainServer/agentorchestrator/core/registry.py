@@ -75,11 +75,29 @@ class AgentSpec:
     capabilities: list[str] = field(default_factory=list)
     input_schema: dict | None = None
     output_schema: dict | None = None
+    resilient: bool = False  # Auto-wrap in ResilientAgent
+    resilient_config: dict[str, Any] = field(default_factory=dict)  # Config for ResilientAgent
 
     def get_instance(self, **kwargs) -> Any:
-        """Get or create agent instance"""
+        """
+        Get or create agent instance with optional resilience wrapping.
+        
+        Args:
+            **kwargs: Arguments passed to agent constructor
+            
+        Returns:
+            Agent instance (wrapped in ResilientAgent if resilient=True)
+        """
         if self.instance is None:
+            # Create base agent instance
             self.instance = self.agent_class(**kwargs)
+            
+            # Auto-wrap in ResilientAgent if configured
+            if self.resilient:
+                from agentorchestrator.agents.base import ResilientAgent, ResilientAgentConfig
+                config = ResilientAgentConfig(**self.resilient_config)
+                self.instance = ResilientAgent(agent=self.instance, config=config)
+        
         return self.instance
 
 
@@ -244,10 +262,27 @@ class AgentRegistry(BaseRegistry):
         config: dict[str, Any] | None = None,
         aliases: list[str] | None = None,
         group: str | None = None,
+        resilient: bool = False,
+        resilient_config: dict[str, Any] | None = None,
         strict: bool = False,
         **kwargs,  # Accept extra kwargs for forward compatibility
     ) -> None:
-        """Register a new agent"""
+        """
+        Register a new agent with optional resilience wrapping.
+        
+        Args:
+            name: Agent name
+            agent_class: Agent class to register
+            version: Version string
+            description: Description of agent
+            capabilities: List of agent capabilities
+            config: Configuration dict
+            aliases: Alternative names
+            group: Group name for organization
+            resilient: If True, auto-wrap instances in ResilientAgent
+            resilient_config: Config dict for ResilientAgent (timeout_seconds, max_retries, etc.)
+            strict: If True, raise error if already registered
+        """
         metadata = ComponentMetadata(
             name=name,
             version=version,
@@ -259,6 +294,8 @@ class AgentRegistry(BaseRegistry):
             metadata=metadata,
             agent_class=agent_class,
             capabilities=capabilities or [],
+            resilient=resilient,
+            resilient_config=resilient_config or {},
         )
         self.register(name, spec, aliases, strict=strict)
 
