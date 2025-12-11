@@ -45,6 +45,17 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class MCPCacheEntry:
+    """A cached MCP tool call result."""
+
+    key: str
+    value: Any
+    created_at: float
+    expires_at: float
+    hit_count: int = 0
+
+
+@dataclass
 class MCPAdapterConfig:
     """
     Configuration for MCP adapter agent.
@@ -60,6 +71,10 @@ class MCPAdapterConfig:
         headers: Additional HTTP headers
         env: Environment variables for stdio transport
         verify_ssl: Whether to verify SSL certificates (set False for internal/self-signed certs)
+        cache_enabled: Enable caching for tool calls
+        cache_ttl_seconds: Cache TTL in seconds (default: 1 hour)
+        cache_max_entries: Maximum cache entries
+        cacheable_tools: List of tool names to cache (None = cache all)
     """
 
     name: str
@@ -72,6 +87,11 @@ class MCPAdapterConfig:
     headers: dict[str, str] = field(default_factory=dict)
     env: dict[str, str] = field(default_factory=dict)
     verify_ssl: bool = True
+    # Caching configuration
+    cache_enabled: bool = True
+    cache_ttl_seconds: int = 3600  # 1 hour default
+    cache_max_entries: int = 500
+    cacheable_tools: list[str] | None = None  # None = cache all tools
 
 
 @dataclass
@@ -162,6 +182,10 @@ class MCPAdapterAgent(BaseAgent):
         self._session_id: str | None = None
         self._mcp_session = None  # MCP ClientSession from SDK
         self._streams = None  # Keep reference to streams for cleanup
+
+        # Caching
+        self._cache: dict[str, MCPCacheEntry] = {}
+        self._cache_stats = {"hits": 0, "misses": 0, "evictions": 0}
 
     async def initialize(self) -> None:
         """Initialize MCP connection using official SDK."""
@@ -748,6 +772,7 @@ class MCPAdapterAgent(BaseAgent):
         self,
         tool_name: str,
         arguments: dict[str, Any] | None = None,
+        skip_cache: bool = False,
     ) -> dict[str, Any]:
         """
         Call an MCP tool using the official SDK.
@@ -755,21 +780,32 @@ class MCPAdapterAgent(BaseAgent):
         Args:
             tool_name: Name of the tool
             arguments: Tool arguments
+            skip_cache: If True, bypass cache and force fresh call
 
         Returns:
             Tool result
         """
         if not self._mcp_session:
             raise RuntimeError("MCP session not initialized")
-        
+
+        # Check cache first (if enabled and tool is cacheable)
+        cache_key = None
+        if self._config.cache_enabled and not skip_cache and self._is_cacheable(tool_name):
+            cache_key = self._make_cache_key(tool_name, arguments)
+            cached = self._get_cached(cache_key)
+            if cached is not None:
+                logger.debug(f"Cache hit for {tool_name}: {cache_key}")
+                return cached
+
         try:
             # Call tool using MCP SDK
             result = await self._mcp_session.call_tool(
                 name=tool_name,
                 arguments=arguments or {}
             )
-            
+
             # Extract content from result
+            response: dict[str, Any] = {}
             if result and result.content:
                 # Convert MCP content to dict format
                 content_list = []
@@ -778,14 +814,121 @@ class MCPAdapterAgent(BaseAgent):
                         content_list.append({"text": content_item.text})
                     else:
                         content_list.append(content_item.model_dump() if hasattr(content_item, 'model_dump') else str(content_item))
-                
-                return {"content": content_list}
-            
-            return {}
-            
+
+                response = {"content": content_list}
+
+            # Cache the result
+            if cache_key is not None:
+                self._set_cached(cache_key, response)
+                logger.debug(f"Cached result for {tool_name}: {cache_key}")
+
+            return response
+
         except Exception as e:
             logger.error(f"Error calling tool {tool_name}: {e}")
             raise
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #                         CACHING METHODS
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def _is_cacheable(self, tool_name: str) -> bool:
+        """Check if a tool should be cached."""
+        if self._config.cacheable_tools is None:
+            return True  # Cache all tools by default
+        return tool_name in self._config.cacheable_tools
+
+    def _make_cache_key(self, tool_name: str, arguments: dict[str, Any] | None) -> str:
+        """Generate a cache key from tool name and arguments."""
+        import hashlib
+        args_str = json.dumps(arguments or {}, sort_keys=True, default=str)
+        args_hash = hashlib.md5(args_str.encode()).hexdigest()[:16]
+        return f"{self._config.name}:{tool_name}:{args_hash}"
+
+    def _get_cached(self, key: str) -> dict[str, Any] | None:
+        """Get a cached result if valid."""
+        entry = self._cache.get(key)
+        if entry is None:
+            self._cache_stats["misses"] += 1
+            return None
+
+        # Check expiration
+        if time.time() > entry.expires_at:
+            del self._cache[key]
+            self._cache_stats["misses"] += 1
+            return None
+
+        entry.hit_count += 1
+        self._cache_stats["hits"] += 1
+        return entry.value
+
+    def _set_cached(self, key: str, value: dict[str, Any]) -> None:
+        """Cache a result."""
+        # Evict oldest if at capacity
+        if len(self._cache) >= self._config.cache_max_entries:
+            self._evict_oldest()
+
+        now = time.time()
+        self._cache[key] = MCPCacheEntry(
+            key=key,
+            value=value,
+            created_at=now,
+            expires_at=now + self._config.cache_ttl_seconds,
+        )
+
+    def _evict_oldest(self) -> None:
+        """Evict the oldest cache entry."""
+        if not self._cache:
+            return
+        oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k].created_at)
+        del self._cache[oldest_key]
+        self._cache_stats["evictions"] += 1
+
+    def invalidate_cache(
+        self,
+        tool_name: str | None = None,
+        key: str | None = None,
+    ) -> int:
+        """
+        Invalidate cache entries.
+
+        Args:
+            tool_name: Invalidate all entries for a tool
+            key: Specific cache key to invalidate
+
+        Returns:
+            Number of entries invalidated
+        """
+        if key:
+            if key in self._cache:
+                del self._cache[key]
+                return 1
+            return 0
+
+        if tool_name:
+            prefix = f"{self._config.name}:{tool_name}:"
+            keys_to_delete = [k for k in self._cache if k.startswith(prefix)]
+            for k in keys_to_delete:
+                del self._cache[k]
+            return len(keys_to_delete)
+
+        # Invalidate all
+        count = len(self._cache)
+        self._cache.clear()
+        return count
+
+    def get_cache_stats(self) -> dict[str, Any]:
+        """Get cache statistics."""
+        total = self._cache_stats["hits"] + self._cache_stats["misses"]
+        return {
+            "entries": len(self._cache),
+            "max_entries": self._config.cache_max_entries,
+            "ttl_seconds": self._config.cache_ttl_seconds,
+            "hits": self._cache_stats["hits"],
+            "misses": self._cache_stats["misses"],
+            "evictions": self._cache_stats["evictions"],
+            "hit_rate": self._cache_stats["hits"] / total if total > 0 else 0,
+        }
 
     async def read_resource(self, uri: str) -> dict[str, Any]:
         """

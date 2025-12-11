@@ -1,5 +1,12 @@
 """AgentOrchestrator Middleware Module"""
 
+from agentorchestrator.middleware.analytics import (
+    FileUsageBackend,
+    InMemoryUsageBackend,
+    UsageAnalyticsMiddleware,
+    UsageBackend,
+    UsageRecord,
+)
 from agentorchestrator.middleware.base import Middleware
 from agentorchestrator.middleware.cache import CacheMiddleware
 from agentorchestrator.middleware.logger import LoggerMiddleware
@@ -46,6 +53,12 @@ from agentorchestrator.middleware.token_manager import TokenManagerMiddleware
 __all__ = [
     # Base
     "Middleware",
+    # Usage Analytics
+    "UsageAnalyticsMiddleware",
+    "UsageBackend",
+    "UsageRecord",
+    "InMemoryUsageBackend",
+    "FileUsageBackend",
     # Metrics/Instrumentation
     "MetricsMiddleware",
     "MetricsBackend",
