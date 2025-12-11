@@ -160,7 +160,7 @@ def create_test_context(
 @dataclass
 class SampleChainRequest:
     """
-    Sample chain request data for testing CMPT flows.
+    Sample chain request data for testing chain flows.
 
     Provides realistic test data for common scenarios.
     """

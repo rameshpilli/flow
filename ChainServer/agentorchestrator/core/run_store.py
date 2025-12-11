@@ -403,7 +403,7 @@ class ResumableChainRunner:
         runner = ResumableChainRunner(store=store)
 
         # Run a chain
-        result = await runner.run("cmpt_pipeline", data={"company": "Apple"})
+        result = await runner.run("my_pipeline", data={"key": "value"})
 
         # If it fails, resume later
         result = await runner.resume(run_id="run_abc123")

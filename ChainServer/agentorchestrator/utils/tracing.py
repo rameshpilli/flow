@@ -203,7 +203,7 @@ class ChainTracer:
     Specialized tracer for chain execution.
 
     Usage:
-        tracer = ChainTracer("cmpt_chain", request_id="abc123")
+        tracer = ChainTracer("my_chain", request_id="abc123")
         with tracer.chain_span():
             with tracer.step_span("fetch_data"):
                 result = await fetch_data()

@@ -66,6 +66,12 @@ from agentorchestrator.utils import (
     get_logger,
 )
 
+# =============================================================================
+# LLM - LCEL chain builders (optional, requires langchain-core)
+# =============================================================================
+# Import lazily to avoid requiring langchain-core for all users
+# Use: from agentorchestrator.llm import create_extraction_chain
+
 __version__ = "0.1.0"
 
 # Focused public API (~30 exports instead of 75+)
@@ -133,6 +139,13 @@ def __getattr__(name: str):
         from agentorchestrator.middleware import summarizer
         return getattr(summarizer, name)
 
+    # LLM module (LCEL chains)
+    if name in ("create_extraction_chain", "create_text_chain", "ChainConfig",
+                "get_default_llm", "get_openai_llm", "get_anthropic_llm",
+                "set_default_llm", "LLMProvider"):
+        from agentorchestrator import llm
+        return getattr(llm, name)
+
     # Resources
     if name in ("Resource", "ResourceManager", "ResourceScope",
                 "get_resource_manager", "reset_resource_manager"):
@@ -152,15 +165,5 @@ def __getattr__(name: str):
                 "configure_tracing", "get_tracer", "trace_span", "ChainTracer"):
         from agentorchestrator import utils
         return getattr(utils, name)
-
-    # Chains (CMPTChain etc.)
-    if name == "CMPTChain":
-        from agentorchestrator.chains import CMPTChain
-        return CMPTChain
-
-    # Services models (ChainRequest, ChainResponse, etc.)
-    if name in ("ChainRequest", "ChainResponse", "ChainRequestOverrides"):
-        from agentorchestrator import services
-        return getattr(services, name)
 
     raise AttributeError(f"module 'agentorchestrator' has no attribute '{name}'")

@@ -583,7 +583,7 @@ def create_domain_aware_middleware(
     **kwargs,
 ) -> SummarizerMiddleware:
     """
-    Create a summarizer middleware pre-configured for CMPT chain agents.
+    Create a summarizer middleware pre-configured for financial data agents.
 
     Maps each agent step to its domain-specific prompts:
     - sec_filing: Extracts revenue, margins, guidance, risks

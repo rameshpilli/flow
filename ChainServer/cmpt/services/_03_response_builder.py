@@ -4,7 +4,7 @@ Response Builder Service
 Stage 3 of the CMPT chain: Execute agents and build the final response.
 
 This service uses AgentOrchestrator's agent framework (BaseAgent, ResilientAgent)
-and only contains CMPT-specific logic for financial metrics and strategic analysis.
+and LCEL chains for LLM interactions with built-in retry and type-safe parsing.
 """
 
 import json
@@ -51,64 +51,91 @@ def combine_agent_chunks(agent_results: dict[str, AgentResult]) -> dict[str, str
     return result
 
 
-def build_financial_metrics_prompt(company_name: str, agent_chunks: dict[str, str]) -> str:
-    """Build the financial metrics extraction prompt."""
-    data = DATA_FOR_FINANCIAL_METRICS_PROMPT.format(
-        SEC_AGENT_CONTENT=agent_chunks.get(ToolName.SEC_TOOL.value, "No data"),
-        EARNINGS_AGENT_CONTENT=agent_chunks.get(ToolName.EARNINGS_TOOL.value, "No data"),
-        NEWS_AGENT_CONTENT=agent_chunks.get(ToolName.NEWS_TOOL.value, "No data"),
-    )
-    return FINANCIAL_METRICS_PROMPT.format(COMPANY_NAME=company_name, DATA_FOR_FINANCIAL_METRICS=data)
-
-
-def build_strategic_analysis_prompt(
-    company_name: str,
-    agent_chunks: dict[str, str],
-    priority_distribution: dict[str, int] | None = None,
-) -> str:
-    """Build the strategic analysis prompt."""
-    if priority_distribution is None:
-        priority_distribution = {ToolName.NEWS_TOOL.value: 60, ToolName.EARNINGS_TOOL.value: 20, ToolName.SEC_TOOL.value: 20}
-
-    data = DATA_FOR_STRATEGIC_ANALYSIS_PROMPT.format(
-        NEWS_percentage=priority_distribution.get(ToolName.NEWS_TOOL.value, 60),
-        NEWS_AGENT_CONTENT=agent_chunks.get(ToolName.NEWS_TOOL.value, "No data"),
-        EARNINGS_percentage=priority_distribution.get(ToolName.EARNINGS_TOOL.value, 20),
-        EARNINGS_AGENT_CONTENT=agent_chunks.get(ToolName.EARNINGS_TOOL.value, "No data"),
-        SEC_percentage=priority_distribution.get(ToolName.SEC_TOOL.value, 20),
-    )
-    return STRATEGIC_ANALYSIS_PROMPT.format(COMPANY_NAME=company_name, DATA_FOR_STRATEGIC_ANALYSIS=data)
-
-
 class ResponseBuilderService:
     """
     Stage 3: Build the final meeting prep response.
 
     This service:
     1. Executes data agents to fetch SEC filings, earnings, news
-    2. Uses LLM to extract financial metrics
-    3. Uses LLM to generate strategic analysis
+    2. Uses LCEL chains to extract financial metrics (with retry/fallback)
+    3. Uses LCEL chains to generate strategic analysis (with retry/fallback)
     4. Builds the final prepared content
 
     Usage:
-        service = ResponseBuilderService(llm_client=my_llm)
+        # With LCEL chains (recommended)
+        service = ResponseBuilderService(llm=my_langchain_llm)
+
+        # With legacy LLM client (backward compatible)
+        service = ResponseBuilderService(llm_client=my_legacy_client)
+
         output = await service.execute(context_output, prioritization_output)
     """
 
     def __init__(
         self,
-        llm_client: Any | None = None,
+        llm: Any | None = None,
+        llm_client: Any | None = None,  # Legacy support
         agents: dict[str, Any] | None = None,
+        fallback_llm: Any | None = None,
+        retries: int = 3,
     ):
         """
         Initialize the response builder.
 
         Args:
-            llm_client: LLM client for structured output (from agentorchestrator.services.llm_gateway)
-            agents: Dictionary of agent name -> agent instance (from agentorchestrator.agents.base)
+            llm: LangChain chat model for LCEL chains (recommended)
+            llm_client: Legacy LLM client (backward compatible)
+            agents: Dictionary of agent name -> agent instance
+            fallback_llm: Optional fallback LLM if primary fails
+            retries: Number of retry attempts (default: 3)
         """
-        self.llm_client = llm_client
+        self.llm = llm
+        self.llm_client = llm_client  # Legacy support
         self.agents = agents or {}
+        self.fallback_llm = fallback_llm
+        self.retries = retries
+
+        # Build LCEL chains if LLM is provided
+        self._financial_metrics_chain = None
+        self._strategic_analysis_chain = None
+
+        if self.llm is not None:
+            self._build_chains()
+
+    def _build_chains(self) -> None:
+        """Build LCEL chains for LLM interactions."""
+        try:
+            from agentorchestrator.llm import create_extraction_chain, ChainConfig
+
+            config = ChainConfig(retries=self.retries)
+
+            # Financial metrics extraction chain
+            # Note: We use a simplified template here since we build the full prompt dynamically
+            self._financial_metrics_chain = create_extraction_chain(
+                prompt_template="{prompt}",
+                response_model=FinancialMetricsResponse,
+                llm=self.llm,
+                system_prompt=FINANCIAL_METRICS_SYSTEM_PROMPT,
+                fallback_llm=self.fallback_llm,
+                config=config,
+            )
+
+            # Strategic analysis chain
+            self._strategic_analysis_chain = create_extraction_chain(
+                prompt_template="{prompt}",
+                response_model=StrategicAnalysisResponse,
+                llm=self.llm,
+                system_prompt=STRATEGIC_ANALYSIS_SYSTEM_PROMPT,
+                fallback_llm=self.fallback_llm,
+                config=config,
+            )
+
+            logger.info("LCEL chains built successfully (with retry and fallback support)")
+
+        except ImportError as e:
+            logger.warning(f"Could not build LCEL chains: {e}. Falling back to legacy mode.")
+            self._financial_metrics_chain = None
+            self._strategic_analysis_chain = None
 
     async def execute(
         self,
@@ -228,40 +255,116 @@ class ResponseBuilderService:
         return AgentResult(agent=sq.agent, success=True, data={"items": items}, items=items, item_count=len(items), query=sq.query, source="mock")
 
     async def _extract_financial_metrics(self, company_name: str, agent_chunks: dict[str, str]) -> dict[str, Any]:
-        """Extract financial metrics using LLM."""
-        if self.llm_client:
+        """Extract financial metrics using LCEL chain or legacy client."""
+        prompt = self._build_financial_metrics_prompt(company_name, agent_chunks)
+
+        # Try LCEL chain first (recommended path)
+        if self._financial_metrics_chain is not None:
             try:
-                prompt = build_financial_metrics_prompt(company_name, agent_chunks)
-                if hasattr(self.llm_client, 'generate_structured_async'):
-                    response = await self.llm_client.generate_structured_async(
-                        prompt=prompt, system_prompt=FINANCIAL_METRICS_SYSTEM_PROMPT, response_model=FinancialMetricsResponse
-                    )
-                    return response.model_dump() if hasattr(response, 'model_dump') else dict(response)
-                else:
-                    response = await self.llm_client.generate_async(f"{FINANCIAL_METRICS_SYSTEM_PROMPT}\n\n{prompt}")
-                    return self._parse_json(response) or {}
+                result: FinancialMetricsResponse = await self._financial_metrics_chain.ainvoke({"prompt": prompt})
+                logger.debug("Financial metrics extracted via LCEL chain")
+                return result.model_dump()
             except Exception as e:
-                logger.warning(f"LLM metrics extraction failed: {e}")
+                logger.warning(f"LCEL chain failed for financial metrics: {e}")
+                # Fall through to legacy if LCEL fails
+
+        # Legacy path (backward compatibility)
+        if self.llm_client is not None:
+            return await self._extract_financial_metrics_legacy(prompt)
+
         return {}
+
+    async def _extract_financial_metrics_legacy(self, prompt: str) -> dict[str, Any]:
+        """Legacy extraction using llm_client (backward compatibility)."""
+        try:
+            if hasattr(self.llm_client, 'generate_structured_async'):
+                response = await self.llm_client.generate_structured_async(
+                    prompt=prompt,
+                    system_prompt=FINANCIAL_METRICS_SYSTEM_PROMPT,
+                    response_model=FinancialMetricsResponse
+                )
+                return response.model_dump() if hasattr(response, 'model_dump') else dict(response)
+            else:
+                response = await self.llm_client.generate_async(
+                    f"{FINANCIAL_METRICS_SYSTEM_PROMPT}\n\n{prompt}"
+                )
+                return self._parse_json(response) or {}
+        except Exception as e:
+            logger.warning(f"Legacy LLM metrics extraction failed: {e}")
+            return {}
 
     async def _generate_strategic_analysis(
         self, company_name: str, agent_chunks: dict[str, str], priority_distribution: dict[str, int] | None
     ) -> dict[str, Any]:
-        """Generate strategic analysis using LLM."""
-        if self.llm_client:
+        """Generate strategic analysis using LCEL chain or legacy client."""
+        prompt = self._build_strategic_analysis_prompt(company_name, agent_chunks, priority_distribution)
+
+        # Try LCEL chain first (recommended path)
+        if self._strategic_analysis_chain is not None:
             try:
-                prompt = build_strategic_analysis_prompt(company_name, agent_chunks, priority_distribution)
-                if hasattr(self.llm_client, 'generate_structured_async'):
-                    response = await self.llm_client.generate_structured_async(
-                        prompt=prompt, system_prompt=STRATEGIC_ANALYSIS_SYSTEM_PROMPT, response_model=StrategicAnalysisResponse
-                    )
-                    return response.model_dump() if hasattr(response, 'model_dump') else dict(response)
-                else:
-                    response = await self.llm_client.generate_async(f"{STRATEGIC_ANALYSIS_SYSTEM_PROMPT}\n\n{prompt}")
-                    return self._parse_json(response) or {}
+                result: StrategicAnalysisResponse = await self._strategic_analysis_chain.ainvoke({"prompt": prompt})
+                logger.debug("Strategic analysis generated via LCEL chain")
+                return result.model_dump()
             except Exception as e:
-                logger.warning(f"LLM strategic analysis failed: {e}")
+                logger.warning(f"LCEL chain failed for strategic analysis: {e}")
+                # Fall through to legacy if LCEL fails
+
+        # Legacy path (backward compatibility)
+        if self.llm_client is not None:
+            return await self._generate_strategic_analysis_legacy(prompt)
+
         return {"strength": [], "weakness": [], "opportunity": [], "threat": []}
+
+    async def _generate_strategic_analysis_legacy(self, prompt: str) -> dict[str, Any]:
+        """Legacy analysis using llm_client (backward compatibility)."""
+        try:
+            if hasattr(self.llm_client, 'generate_structured_async'):
+                response = await self.llm_client.generate_structured_async(
+                    prompt=prompt,
+                    system_prompt=STRATEGIC_ANALYSIS_SYSTEM_PROMPT,
+                    response_model=StrategicAnalysisResponse
+                )
+                return response.model_dump() if hasattr(response, 'model_dump') else dict(response)
+            else:
+                response = await self.llm_client.generate_async(
+                    f"{STRATEGIC_ANALYSIS_SYSTEM_PROMPT}\n\n{prompt}"
+                )
+                return self._parse_json(response) or {}
+        except Exception as e:
+            logger.warning(f"Legacy LLM strategic analysis failed: {e}")
+            return {"strength": [], "weakness": [], "opportunity": [], "threat": []}
+
+    def _build_financial_metrics_prompt(self, company_name: str, agent_chunks: dict[str, str]) -> str:
+        """Build the financial metrics extraction prompt."""
+        data = DATA_FOR_FINANCIAL_METRICS_PROMPT.format(
+            SEC_AGENT_CONTENT=agent_chunks.get(ToolName.SEC_TOOL.value, "No data"),
+            EARNINGS_AGENT_CONTENT=agent_chunks.get(ToolName.EARNINGS_TOOL.value, "No data"),
+            NEWS_AGENT_CONTENT=agent_chunks.get(ToolName.NEWS_TOOL.value, "No data"),
+        )
+        return FINANCIAL_METRICS_PROMPT.format(COMPANY_NAME=company_name, DATA_FOR_FINANCIAL_METRICS=data)
+
+    def _build_strategic_analysis_prompt(
+        self,
+        company_name: str,
+        agent_chunks: dict[str, str],
+        priority_distribution: dict[str, int] | None = None,
+    ) -> str:
+        """Build the strategic analysis prompt."""
+        if priority_distribution is None:
+            priority_distribution = {
+                ToolName.NEWS_TOOL.value: 60,
+                ToolName.EARNINGS_TOOL.value: 20,
+                ToolName.SEC_TOOL.value: 20
+            }
+
+        data = DATA_FOR_STRATEGIC_ANALYSIS_PROMPT.format(
+            NEWS_percentage=priority_distribution.get(ToolName.NEWS_TOOL.value, 60),
+            NEWS_AGENT_CONTENT=agent_chunks.get(ToolName.NEWS_TOOL.value, "No data"),
+            EARNINGS_percentage=priority_distribution.get(ToolName.EARNINGS_TOOL.value, 20),
+            EARNINGS_AGENT_CONTENT=agent_chunks.get(ToolName.EARNINGS_TOOL.value, "No data"),
+            SEC_percentage=priority_distribution.get(ToolName.SEC_TOOL.value, 20),
+        )
+        return STRATEGIC_ANALYSIS_PROMPT.format(COMPANY_NAME=company_name, DATA_FOR_STRATEGIC_ANALYSIS=data)
 
     def _build_prepared_content(self, company_name: str, metrics: dict, analysis: dict) -> str:
         """Build markdown meeting prep content."""
@@ -280,7 +383,7 @@ class ResponseBuilderService:
         return "\n".join(sections)
 
     def _parse_json(self, response: str) -> dict | None:
-        """Parse JSON from LLM response."""
+        """Parse JSON from LLM response (legacy fallback only)."""
         import re
         try:
             return json.loads(response)
@@ -292,3 +395,33 @@ class ResponseBuilderService:
                 except json.JSONDecodeError:
                     pass
         return None
+
+
+# Keep module-level helper functions for backward compatibility
+def build_financial_metrics_prompt(company_name: str, agent_chunks: dict[str, str]) -> str:
+    """Build the financial metrics extraction prompt (deprecated, use service method)."""
+    data = DATA_FOR_FINANCIAL_METRICS_PROMPT.format(
+        SEC_AGENT_CONTENT=agent_chunks.get(ToolName.SEC_TOOL.value, "No data"),
+        EARNINGS_AGENT_CONTENT=agent_chunks.get(ToolName.EARNINGS_TOOL.value, "No data"),
+        NEWS_AGENT_CONTENT=agent_chunks.get(ToolName.NEWS_TOOL.value, "No data"),
+    )
+    return FINANCIAL_METRICS_PROMPT.format(COMPANY_NAME=company_name, DATA_FOR_FINANCIAL_METRICS=data)
+
+
+def build_strategic_analysis_prompt(
+    company_name: str,
+    agent_chunks: dict[str, str],
+    priority_distribution: dict[str, int] | None = None,
+) -> str:
+    """Build the strategic analysis prompt (deprecated, use service method)."""
+    if priority_distribution is None:
+        priority_distribution = {ToolName.NEWS_TOOL.value: 60, ToolName.EARNINGS_TOOL.value: 20, ToolName.SEC_TOOL.value: 20}
+
+    data = DATA_FOR_STRATEGIC_ANALYSIS_PROMPT.format(
+        NEWS_percentage=priority_distribution.get(ToolName.NEWS_TOOL.value, 60),
+        NEWS_AGENT_CONTENT=agent_chunks.get(ToolName.NEWS_TOOL.value, "No data"),
+        EARNINGS_percentage=priority_distribution.get(ToolName.EARNINGS_TOOL.value, 20),
+        EARNINGS_AGENT_CONTENT=agent_chunks.get(ToolName.EARNINGS_TOOL.value, "No data"),
+        SEC_percentage=priority_distribution.get(ToolName.SEC_TOOL.value, 20),
+    )
+    return STRATEGIC_ANALYSIS_PROMPT.format(COMPANY_NAME=company_name, DATA_FOR_STRATEGIC_ANALYSIS=data)

@@ -1,15 +1,17 @@
 """
 AgentOrchestrator Chains Module
 
-Provides pre-built chain implementations.
+Provides base classes and utilities for building chains.
 
-Usage:
-    from agentorchestrator.chains import CMPTChain
+For application-specific chains, create them in your own package.
+Example:
+    from agentorchestrator import AgentOrchestrator
 
-    chain = CMPTChain()
-    result = await chain.run(corporate_company_name="Apple Inc")
+    ao = AgentOrchestrator(name="my_app")
+
+    @ao.chain(name="my_chain")
+    class MyChain:
+        steps = ["step1", "step2"]
 """
 
-from agentorchestrator.chains.cmpt import CMPTChain
-
-__all__ = ["CMPTChain"]
+__all__: list[str] = []

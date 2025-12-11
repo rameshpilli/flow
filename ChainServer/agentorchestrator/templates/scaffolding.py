@@ -5,7 +5,7 @@ Generates complete project structures for new AgentOrchestrator applications.
 
 Usage:
     ao new project my_app
-    ao new project my_app --template cmpt
+    ao new project my_app --template minimal
     ao new project my_app --with-api --with-docker
 """
 
@@ -1387,7 +1387,7 @@ def generate_project(
         with_api: Include FastAPI server
         with_docker: Include Docker files
         with_ci: Include CI/CD configuration
-        template: Template to use (default, cmpt)
+        template: Template to use (default, minimal)
 
     Returns:
         List of created file paths

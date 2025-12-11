@@ -120,7 +120,7 @@ class LogContext:
     Context manager for adding structured context to logs.
 
     Usage:
-        with LogContext(request_id="abc123", chain="cmpt"):
+        with LogContext(request_id="abc123", chain="my_chain"):
             logger.info("Starting chain")  # Includes request_id and chain
     """
 
@@ -168,7 +168,7 @@ class ChainLogger:
     Specialized logger for chain execution with automatic context.
 
     Usage:
-        logger = ChainLogger("cmpt_chain", request_id="abc123")
+        logger = ChainLogger("my_chain", request_id="abc123")
         logger.step_start("fetch_data")
         logger.step_complete("fetch_data", duration_ms=150)
     """

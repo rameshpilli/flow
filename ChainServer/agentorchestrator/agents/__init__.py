@@ -1,26 +1,14 @@
 """
 AgentOrchestrator Agents Module
 
-Provides base classes and pre-built agents for data fetching.
+Provides base classes for building data agents.
 
 Base Classes:
     - BaseAgent: Abstract base for all agents
     - AgentResult: Standard result container
     - CompositeAgent: Combines multiple agents
     - ResilientAgent: Adds retry/circuit breaker to any agent
-
-Pre-built Agents:
-    - SECFilingAgent: Fetches SEC filings (10K, 10Q, 8K)
-    - NewsAgent: Fetches news articles with sentiment
-    - EarningsAgent: Fetches earnings data and estimates
-
-Folder Structure:
-    agents/
-    ├── __init__.py          # This file - exports all agents
-    ├── base.py              # BaseAgent, AgentResult, ResilientAgent
-    ├── sec_agent.py         # SECFilingAgent
-    ├── news_agent.py        # NewsAgent
-    └── earnings_agent.py    # EarningsAgent
+    - ResilientCompositeAgent: Composite with built-in resilience
 
 Usage:
     from agentorchestrator.agents import BaseAgent, AgentResult
@@ -29,6 +17,14 @@ Usage:
         async def fetch(self, query: str, **kwargs) -> AgentResult:
             data = await self.call_api(query)
             return AgentResult(data=data, source="my_source", query=query)
+
+    # Wrap with resilience
+    from agentorchestrator.agents import ResilientAgent, ResilientAgentConfig
+
+    resilient = ResilientAgent(
+        agent=MyAgent(),
+        config=ResilientAgentConfig(timeout_seconds=10, max_retries=3),
+    )
 """
 
 from agentorchestrator.agents.base import (
@@ -41,11 +37,6 @@ from agentorchestrator.agents.base import (
     ResilientCompositeAgent,
 )
 
-# Individual agent imports (split into separate files for clarity)
-from agentorchestrator.agents.sec_agent import SECFilingAgent
-from agentorchestrator.agents.news_agent import NewsAgent
-from agentorchestrator.agents.earnings_agent import EarningsAgent
-
 __all__ = [
     # Base classes
     "BaseAgent",
@@ -56,8 +47,4 @@ __all__ = [
     "ResilientAgentConfig",
     "ResilienceConfig",  # Alias for ResilientAgentConfig
     "ResilientCompositeAgent",
-    # Data agents
-    "SECFilingAgent",
-    "NewsAgent",
-    "EarningsAgent",
 ]

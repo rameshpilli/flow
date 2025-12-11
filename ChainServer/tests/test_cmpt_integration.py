@@ -95,3 +95,4 @@ class TestCMPTIntegration:
         assert "Apple Inc" in final_response.prepared_content
         assert "Financial Highlights" in final_response.prepared_content
 
+

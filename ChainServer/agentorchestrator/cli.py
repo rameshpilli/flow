@@ -128,12 +128,6 @@ def get_orchestrator():
         if chains_dir.is_dir() and (chains_dir / "__init__.py").exists():
             _import_module_from_path("chains", chains_dir / "__init__.py")
 
-    # Import CMPT chain by default if nothing else was imported
-    try:
-        from agentorchestrator.chains import CMPTChain  # noqa: F401
-    except ImportError:
-        pass
-
     _configure_observability_from_env()
     return _get_orchestrator()
 
@@ -1397,19 +1391,19 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  ao run cmpt_chain --company "Apple Inc"
-  ao run cmpt_chain --resumable --company "Apple Inc"  # With checkpointing
-  ao resume run_abc123                                  # Resume failed run
-  ao runs --status failed                               # List failed runs
-  ao run-info run_abc123                                # Show run details
-  ao run-output run_abc123                              # Get partial outputs
+  ao run my_chain --data '{"key": "value"}'
+  ao run my_chain --resumable --data '{"key": "value"}'  # With checkpointing
+  ao resume run_abc123                                    # Resume failed run
+  ao runs --status failed                                 # List failed runs
+  ao run-info run_abc123                                  # Show run details
+  ao run-output run_abc123                                # Get partial outputs
   ao check
   ao list
-  ao graph cmpt_chain --format mermaid
+  ao graph my_chain --format mermaid
   ao new agent MyCustomAgent
   ao new chain DataPipeline
   ao dev --watch
-  ao debug cmpt_chain --company "Apple Inc"
+  ao debug my_chain --data '{"key": "value"}'
         """,
     )
 
@@ -1581,7 +1575,7 @@ Examples:
     )
     new_project_parser.add_argument(
         "--template", "-t",
-        choices=["default", "cmpt"],
+        choices=["default", "minimal"],
         default="default",
         help="Project template (default: default)"
     )

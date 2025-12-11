@@ -48,6 +48,7 @@
 - [Configuration](#configuration)
 - [FAQ](#faq)
 - [Architecture Diagrams](#architecture-diagrams)
+- [Framework Comparison](#framework-comparison)
 - [Go Crazy: What You Can Build](#go-crazy-what-you-can-build)
 - [Quick Reference: Pattern → Features](#quick-reference-pattern--features)
 - [The AgentOrchestrator Advantage](#the-agentorchestrator-advantage)
@@ -2995,3 +2996,382 @@ MIT License - see [LICENSE](LICENSE) for details.
 ---
 
 *Built with Python 3.10+ | Async-first | Production-ready*
+
+---
+
+## Framework Comparison
+
+### How AgentOrchestrator Compares to Other Frameworks
+
+AgentOrchestrator is designed for **DAG-based workflow orchestration** with production resilience. Here's how it compares to other popular AI orchestration frameworks:
+
+- [LangGraph](https://www.langchain.com/langgraph) - MIT licensed, focuses on stateful agent graphs with cycles
+- [CrewAI](https://www.crewai.com/) - MIT licensed, focuses on role-based multi-agent collaboration
+- [Semantic Kernel](https://github.com/microsoft/semantic-kernel) - MIT licensed, Microsoft's multi-language AI SDK
+- [ControlFlow](https://www.prefect.io/controlflow) - Apache 2.0, Prefect's LLM orchestration (archived Aug 2025)
+
+### What They Have That We Don't
+
+| Feature | Who Has It | Gap for AgentOrchestrator |
+|---------|-----------|---------------------------|
+| Cyclic Graphs | LangGraph | ⚠️ **Yes** - We only support DAG (acyclic) |
+| Time-Travel Debugging | LangGraph | ⚠️ **Yes** - Rewind state to any checkpoint |
+| Human-in-the-Loop Interrupts | LangGraph, CrewAI | ⚠️ **Partial** - We have resumable runs but no pause/approve pattern |
+| Role-Based Agents | CrewAI | ❌ **No** - Not our use case (orchestration, not role-play) |
+| Agent-to-Agent Messaging | CrewAI, Semantic Kernel | ⚠️ **Yes** - Our steps communicate via context, not direct messaging |
+| Multi-Language SDK | Semantic Kernel (C#, Python, Java) | ❌ **No** - Python-only is fine for our use case |
+| Model Context Protocol (MCP) | Semantic Kernel, LangGraph | ✅ **We have this** |
+| Native Observability Dashboard | All of them | ⚠️ **Yes** - We have tracing hooks but no built-in UI |
+
+### What We Already Have
+
+| Feature | LangGraph | CrewAI | Semantic Kernel | ControlFlow | AgentOrchestrator |
+|---------|-----------|--------|-----------------|-------------|-------------------|
+| DAG Execution | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Parallel Step Execution | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Checkpointing/Resume | ✅ | ❌ | ✅ | ✅ | ✅ |
+| Middleware/Hooks | ✅ | ❌ | ✅ (filters) | ✅ | ✅ |
+| Context/State Management | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Circuit Breaker | ❌ | ❌ | ❌ | ✅ (via Prefect) | ✅ |
+| Rate Limiting | ❌ | ❌ | ❌ | ❌ | ✅ |
+| MCP Support | ✅ | ❌ | ✅ | ❌ | ✅ |
+| Decorator-based API | ❌ | ❌ | ❌ | ✅ | ✅ |
+
+### Our Differentiators
+
+| Strength | Description |
+|----------|-------------|
+| **Simpler API** | `@ao.step()` decorator vs LangGraph's graph builder complexity |
+| **Pythonic** | Native Python patterns vs role-play abstractions |
+| **Middleware Stack** | Built-in cache, rate limit, circuit breaker, summarization |
+| **Production Resilience** | Retry policies, circuit breakers, health checks out of the box |
+| **No Lock-in** | Uses LangChain at runtime for LLM calls, not a competing abstraction |
+
+
+
+CMPT Application Logs - What They Look Like
+Scenario 1: Successful Chain Execution
+================================================================================
+                         CMPT CHAIN - SUCCESSFUL RUN
+================================================================================
+
+2025-12-10T14:32:15.123Z | INFO | agentorchestrator.chain.cmpt | Chain started
+    request_id: req_abc123
+    chain: cmpt_chain
+    total_steps: 3
+    input: {"company": "Apple Inc", "meeting_date": "2025-12-15"}
+
+--------------------------------------------------------------------------------
+STAGE 1: CONTEXT BUILDER
+--------------------------------------------------------------------------------
+
+2025-12-10T14:32:15.125Z | INFO | agentorchestrator.execution | [req_abc123] Starting step: context_builder
+    event: step_start
+    step: context_builder
+
+2025-12-10T14:32:15.130Z | DEBUG | agentorchestrator.chain.cmpt | Looking up company
+    company_input: "Apple Inc"
+    
+2025-12-10T14:32:15.250Z | DEBUG | agentorchestrator.chain.cmpt | Company resolved
+    ticker: AAPL
+    cik: 0000320193
+    sector: Technology
+    market_cap: 3.2T
+
+2025-12-10T14:32:15.255Z | DEBUG | agentorchestrator.chain.cmpt | Temporal context extracted
+    fiscal_year: 2024
+    fiscal_quarter: Q4
+    earnings_date: 2025-01-30
+
+2025-12-10T14:32:15.280Z | INFO | agentorchestrator.execution | [req_abc123] Step context_builder completed in 155.00ms
+    event: step_complete
+    step: context_builder
+    success: true
+    duration_ms: 155.00
+    output_keys: [company_name, ticker, temporal_context, persona]
+
+--------------------------------------------------------------------------------
+STAGE 2: CONTENT PRIORITIZATION
+--------------------------------------------------------------------------------
+
+2025-12-10T14:32:15.282Z | INFO | agentorchestrator.execution | [req_abc123] Starting step: content_prioritization
+    event: step_start
+    step: content_prioritization
+
+2025-12-10T14:32:15.290Z | DEBUG | agentorchestrator.chain.cmpt | Computing source priorities
+    days_to_earnings: 51
+    market_cap_tier: large_cap
+
+2025-12-10T14:32:15.295Z | DEBUG | agentorchestrator.chain.cmpt | Priority distribution calculated
+    priorities:
+      news_tool: 60%
+      earnings_tool: 20%
+      sec_tool: 20%
+
+2025-12-10T14:32:15.310Z | DEBUG | agentorchestrator.chain.cmpt | Subqueries generated
+    subqueries:
+      - agent: sec_tool, query: "AAPL 10-K filings", params: {filing_type: "10-K", limit: 4}
+      - agent: earnings_tool, query: "AAPL earnings", params: {quarters: 4}
+      - agent: news_tool, query: "Apple Inc news", params: {days: 30}
+
+2025-12-10T14:32:15.350Z | INFO | agentorchestrator.execution | [req_abc123] Step content_prioritization completed in 68.00ms
+    event: step_complete
+    step: content_prioritization
+    success: true
+    duration_ms: 68.00
+
+--------------------------------------------------------------------------------
+STAGE 3: RESPONSE BUILDER (Parallel Agent Execution)
+--------------------------------------------------------------------------------
+
+2025-12-10T14:32:15.352Z | INFO | agentorchestrator.execution | [req_abc123] Starting step: response_builder
+    event: step_start
+    step: response_builder
+
+2025-12-10T14:32:15.355Z | INFO | agentorchestrator.agents | Executing 3 agents in parallel
+    agents: [sec_tool, earnings_tool, news_tool]
+
+  ┌─────────────────────────────────────────────────────────────────────────────
+  │ PARALLEL AGENT EXECUTION
+  ├─────────────────────────────────────────────────────────────────────────────
+  │
+  │ [sec_tool]      ████████████████████░░░░░░░░░░  650ms  ✓ 4 filings
+  │ [earnings_tool] ████████████░░░░░░░░░░░░░░░░░░  420ms  ✓ 4 quarters  
+  │ [news_tool]     ██████████████████████████████  890ms  ✓ 12 articles
+  │
+  └─────────────────────────────────────────────────────────────────────────────
+
+2025-12-10T14:32:16.245Z | INFO | agentorchestrator.agents | Agent execution complete
+    agents_succeeded: 3
+    agents_failed: 0
+    total_duration_ms: 890  (bounded by slowest)
+
+2025-12-10T14:32:16.250Z | DEBUG | agentorchestrator.chain.cmpt | Combining agent chunks
+    sec_tool: 15,234 chars
+    earnings_tool: 8,456 chars
+    news_tool: 22,891 chars
+
+2025-12-10T14:32:16.255Z | INFO | agentorchestrator.middleware.summarizer | Summarizing content
+    strategy: MAP_REDUCE
+    input_tokens: 12,450
+    
+2025-12-10T14:32:17.100Z | INFO | agentorchestrator.middleware.summarizer | Summarization complete
+    output_tokens: 2,340
+    reduction_ratio: 81%
+
+2025-12-10T14:32:17.105Z | INFO | agentorchestrator.llm | Extracting financial metrics via LCEL chain
+    chain: financial_metrics_chain
+    model: gpt-4o
+    retries_configured: 3
+
+2025-12-10T14:32:18.500Z | INFO | agentorchestrator.llm | Financial metrics extracted
+    duration_ms: 1395
+    fields_extracted: [revenue, eps, stock_price, margins, guidance]
+
+2025-12-10T14:32:18.505Z | INFO | agentorchestrator.llm | Generating strategic analysis via LCEL chain
+    chain: strategic_analysis_chain
+    model: gpt-4o
+
+2025-12-10T14:32:19.800Z | INFO | agentorchestrator.llm | Strategic analysis complete
+    duration_ms: 1295
+    swot_items: {strengths: 4, weaknesses: 2, opportunities: 3, threats: 2}
+
+2025-12-10T14:32:19.850Z | INFO | agentorchestrator.execution | [req_abc123] Step response_builder completed in 4498.00ms
+    event: step_complete
+    step: response_builder
+    success: true
+    duration_ms: 4498.00
+
+================================================================================
+                              CHAIN COMPLETE
+================================================================================
+
+2025-12-10T14:32:19.852Z | INFO | agentorchestrator.chain.cmpt | Chain completed
+    request_id: req_abc123
+    chain: cmpt_chain
+    success: true
+    total_duration_ms: 4729
+    steps_executed: 3
+    steps_succeeded: 3
+    steps_failed: 0
+
+TIMING BREAKDOWN:
+    ├── context_builder:        155ms  (3.3%)
+    ├── content_prioritization:  68ms  (1.4%)
+    └── response_builder:      4498ms (95.3%)
+        ├── agent_execution:    890ms
+        ├── summarization:      845ms
+        ├── financial_metrics: 1395ms
+        └── strategic_analysis:1295ms
+
+OUTPUT SUMMARY:
+    company: Apple Inc (AAPL)
+    financial_metrics: ✓
+    strategic_analysis: ✓ (4 strengths, 2 weaknesses, 3 opportunities, 2 threats)
+    prepared_content: 2,340 chars
+Scenario 2: Partial Agent Failure (Resilient)
+================================================================================
+                    CMPT CHAIN - PARTIAL FAILURE (RECOVERED)
+================================================================================
+
+2025-12-10T14:35:00.000Z | INFO | agentorchestrator.chain.cmpt | Chain started
+    request_id: req_def456
+    chain: cmpt_chain
+    input: {"company": "Tesla Inc"}
+
+[... context_builder and content_prioritization succeed ...]
+
+--------------------------------------------------------------------------------
+STAGE 3: RESPONSE BUILDER (Partial Agent Failure)
+--------------------------------------------------------------------------------
+
+2025-12-10T14:35:00.500Z | INFO | agentorchestrator.agents | Executing 3 agents in parallel
+
+  ┌─────────────────────────────────────────────────────────────────────────────
+  │ PARALLEL AGENT EXECUTION (with failures)
+  ├─────────────────────────────────────────────────────────────────────────────
+  │
+  │ [sec_tool]      ████████████████░░░░░░░░░░░░░░  520ms  ✓ 3 filings
+  │ [earnings_tool] ██████░░░░░░░░░░░░░░░░░░░░░░░░  180ms  ✗ TIMEOUT
+  │                 ↳ Retry 1/3...
+  │                 ██████░░░░░░░░░░░░░░░░░░░░░░░░  200ms  ✗ TIMEOUT  
+  │                 ↳ Retry 2/3...
+  │                 ██████░░░░░░░░░░░░░░░░░░░░░░░░  210ms  ✗ TIMEOUT
+  │                 ↳ Circuit breaker: OPEN (3 failures)
+  │ [news_tool]     ██████████████████████████████  780ms  ✓ 8 articles
+  │
+  └─────────────────────────────────────────────────────────────────────────────
+
+2025-12-10T14:35:01.890Z | WARN | agentorchestrator.agents.resilient | Agent failed after retries
+    agent: earnings_tool
+    attempts: 3
+    last_error: "TimeoutError: Agent timed out after 10.0s"
+    circuit_state: OPEN
+
+2025-12-10T14:35:01.895Z | INFO | agentorchestrator.agents | Agent execution complete (partial)
+    agents_succeeded: 2
+    agents_failed: 1
+    failed_agents: [earnings_tool]
+    partial_success: true
+
+2025-12-10T14:35:01.900Z | WARN | agentorchestrator.chain.cmpt | Proceeding with partial data
+    missing_sources: [earnings_tool]
+    available_sources: [sec_tool, news_tool]
+
+[... LLM extraction continues with available data ...]
+
+================================================================================
+                              CHAIN COMPLETE (PARTIAL)
+================================================================================
+
+2025-12-10T14:35:05.000Z | INFO | agentorchestrator.chain.cmpt | Chain completed
+    request_id: req_def456
+    success: true
+    partial_success: true
+    total_duration_ms: 5000
+
+AGENT STATUS:
+    ├── sec_tool:      ✓ SUCCESS (520ms, 3 items)
+    ├── earnings_tool: ✗ FAILED (circuit open after 3 retries)
+    └── news_tool:     ✓ SUCCESS (780ms, 8 items)
+
+⚠️  WARNING: Results may be incomplete due to agent failures
+    Missing data: Earnings estimates, EPS beat/miss history
+Scenario 3: LLM Fallback Triggered
+================================================================================
+                    CMPT CHAIN - LLM FALLBACK TRIGGERED
+================================================================================
+
+[... agents execute successfully ...]
+
+2025-12-10T14:40:15.000Z | INFO | agentorchestrator.llm | Extracting financial metrics via LCEL chain
+    chain: financial_metrics_chain
+    primary_model: gpt-4o
+    fallback_model: claude-sonnet-4-20250514
+
+2025-12-10T14:40:16.500Z | WARN | agentorchestrator.llm | Primary LLM failed, trying fallback
+    primary_error: "RateLimitError: Rate limit exceeded"
+    fallback_model: claude-sonnet-4-20250514
+
+2025-12-10T14:40:18.200Z | INFO | agentorchestrator.llm | Financial metrics extracted (via fallback)
+    model_used: claude-sonnet-4-20250514
+    duration_ms: 3200
+    fallback_triggered: true
+Scenario 4: Circuit Breaker Opens
+================================================================================
+                    CMPT CHAIN - CIRCUIT BREAKER PROTECTION
+================================================================================
+
+2025-12-10T14:45:00.000Z | INFO | agentorchestrator.agents | Executing agents
+
+2025-12-10T14:45:00.001Z | WARN | agentorchestrator.utils.circuit_breaker | Circuit breaker OPEN
+    agent: sec_tool
+    state: OPEN
+    failures: 5
+    recovery_timeout: 30s
+    last_failure: "ConnectionError: API unreachable"
+
+2025-12-10T14:45:00.002Z | INFO | agentorchestrator.agents.resilient | Skipping agent (circuit open)
+    agent: sec_tool
+    reason: "Circuit breaker open, will retry in 25s"
+
+  ┌─────────────────────────────────────────────────────────────────────────────
+  │ AGENT EXECUTION (circuit breaker active)
+  ├─────────────────────────────────────────────────────────────────────────────
+  │
+  │ [sec_tool]      ⊘ CIRCUIT OPEN (skipped)
+  │ [earnings_tool] ████████████████████░░░░░░░░░░  650ms  ✓
+  │ [news_tool]     ██████████████████████████████  890ms  ✓
+  │
+  └─────────────────────────────────────────────────────────────────────────────
+
+2025-12-10T14:45:01.550Z | INFO | agentorchestrator.agents | Execution complete
+    agents_succeeded: 2
+    agents_skipped: 1 (circuit open)
+    circuit_breakers:
+      sec_tool: OPEN (recovery in 25s)
+      earnings_tool: CLOSED
+      news_tool: CLOSED
+Scenario 5: JSON Structured Logs (Production)
+When json_output=True:
+{"timestamp":"2025-12-10T14:50:00.123Z","level":"info","logger":"agentorchestrator.chain.cmpt","event":"chain_started","request_id":"req_xyz789","chain":"cmpt_chain","total_steps":3}
+{"timestamp":"2025-12-10T14:50:00.125Z","level":"info","logger":"agentorchestrator.execution","event":"step_start","request_id":"req_xyz789","step":"context_builder"}
+{"timestamp":"2025-12-10T14:50:00.280Z","level":"info","logger":"agentorchestrator.execution","event":"step_complete","request_id":"req_xyz789","step":"context_builder","success":true,"duration_ms":155.0}
+{"timestamp":"2025-12-10T14:50:00.282Z","level":"info","logger":"agentorchestrator.execution","event":"step_start","request_id":"req_xyz789","step":"content_prioritization"}
+{"timestamp":"2025-12-10T14:50:00.350Z","level":"info","logger":"agentorchestrator.execution","event":"step_complete","request_id":"req_xyz789","step":"content_prioritization","success":true,"duration_ms":68.0}
+{"timestamp":"2025-12-10T14:50:00.352Z","level":"info","logger":"agentorchestrator.execution","event":"step_start","request_id":"req_xyz789","step":"response_builder"}
+{"timestamp":"2025-12-10T14:50:00.355Z","level":"info","logger":"agentorchestrator.agents","event":"parallel_execution_start","request_id":"req_xyz789","agents":["sec_tool","earnings_tool","news_tool"]}
+{"timestamp":"2025-12-10T14:50:01.245Z","level":"info","logger":"agentorchestrator.agents","event":"parallel_execution_complete","request_id":"req_xyz789","agents_succeeded":3,"agents_failed":0,"duration_ms":890}
+{"timestamp":"2025-12-10T14:50:04.850Z","level":"info","logger":"agentorchestrator.execution","event":"step_complete","request_id":"req_xyz789","step":"response_builder","success":true,"duration_ms":4498.0}
+{"timestamp":"2025-12-10T14:50:04.852Z","level":"info","logger":"agentorchestrator.chain.cmpt","event":"chain_complete","request_id":"req_xyz789","success":true,"total_duration_ms":4729,"steps_executed":3}
+How to Enable These Logs
+from agentorchestrator import AgentOrchestrator, configure_logging
+from agentorchestrator.middleware import LoggerMiddleware
+import logging
+
+# Configure logging
+configure_logging(
+    level="DEBUG",        # DEBUG for development, INFO for production
+    json_output=False,    # True for production (structured JSON)
+)
+
+# Create orchestrator with logging middleware
+ao = AgentOrchestrator(name="cmpt")
+
+ao.use_middleware(LoggerMiddleware(
+    level=logging.INFO,
+    include_context=True,   # Log context keys
+    include_output=True,    # Log output previews
+    max_output_length=500,  # Truncate large outputs
+))
+
+# Run chain - logs will appear automatically
+result = await ao.launch("cmpt_chain", {"company": "Apple Inc"})
+The framework automatically logs:
+Chain start/complete with timing
+Each step start/complete with duration
+Agent execution (parallel, with individual timings)
+Retries and failures
+Circuit breaker state changes
+LLM chain invocations and fallbacks
+Summarization metrics (token counts, reduction ratios)

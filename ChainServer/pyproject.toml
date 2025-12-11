@@ -43,6 +43,12 @@ openai = [
 anthropic = [
     "langchain-anthropic>=0.1.0",
 ]
+# LLM chains (LCEL support) - includes core + both providers
+llm = [
+    "langchain-core>=0.1.0",
+    "langchain-openai>=0.0.5",
+    "langchain-anthropic>=0.1.0",
+]
 # Observability (tracing, structured logging)
 observability = [
     "opentelemetry-api>=1.20.0",
@@ -58,7 +64,7 @@ dev = [
 ]
 # All optional features
 all = [
-    "agentorchestrator[summarization,openai,anthropic,observability]",
+    "agentorchestrator[summarization,openai,anthropic,llm,observability]",
 ]
 
 [project.scripts]
