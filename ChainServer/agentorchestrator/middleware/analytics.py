@@ -48,8 +48,34 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class SourceCitation:
+    """Citation/source information for data provenance tracking."""
+
+    source_type: str  # e.g., "sec", "earnings", "news", "mcp", "api"
+    source_name: str  # e.g., "sec_10k", "earnings_transcript", "reuters"
+    document_id: str | None = None  # e.g., filing ID, article ID
+    document_date: str | None = None  # Date of the source document
+    query: str | None = None  # Query that retrieved this data
+    url: str | None = None  # Source URL if applicable
+    confidence: float | None = None  # Confidence score if applicable
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_type": self.source_type,
+            "source_name": self.source_name,
+            "document_id": self.document_id,
+            "document_date": self.document_date,
+            "query": self.query,
+            "url": self.url,
+            "confidence": self.confidence,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass
 class UsageRecord:
-    """A single usage record."""
+    """A single usage record with source citation tracking."""
 
     timestamp: str
     request_id: str
@@ -62,6 +88,10 @@ class UsageRecord:
     tokens_output: int
     success: bool
     error_type: str | None = None
+    # Source/citation tracking
+    source_type: str | None = None  # e.g., "sec", "earnings", "news", "llm"
+    source_name: str | None = None  # e.g., "sec_10k_agent", "openai_gpt4"
+    citations: list[dict[str, Any]] = field(default_factory=list)  # List of citations
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -77,6 +107,9 @@ class UsageRecord:
             "tokens_output": self.tokens_output,
             "success": self.success,
             "error_type": self.error_type,
+            "source_type": self.source_type,
+            "source_name": self.source_name,
+            "citations": self.citations,
             "metadata": self.metadata,
         }
 
@@ -324,6 +357,37 @@ class UsageAnalyticsMiddleware(Middleware):
             if tokens_used == 0 and (tokens_input > 0 or tokens_output > 0):
                 tokens_used = tokens_input + tokens_output
 
+        # Extract source/citation information
+        source_type = None
+        source_name = None
+        citations: list[dict[str, Any]] = []
+
+        if result.metadata:
+            # Source type (e.g., "sec", "earnings", "news", "llm")
+            source_type = result.metadata.get("source_type") or result.metadata.get("agent_type")
+            # Source name (e.g., "sec_10k_agent", "openai_gpt4")
+            source_name = result.metadata.get("source_name") or result.metadata.get("agent_name")
+
+            # Extract citations if present
+            raw_citations = result.metadata.get("citations", [])
+            if isinstance(raw_citations, list):
+                for c in raw_citations:
+                    if isinstance(c, dict):
+                        citations.append(c)
+                    elif hasattr(c, "to_dict"):
+                        citations.append(c.to_dict())
+
+            # Also check for single source info and convert to citation
+            if not citations and result.metadata.get("document_id"):
+                citations.append({
+                    "source_type": source_type,
+                    "source_name": source_name,
+                    "document_id": result.metadata.get("document_id"),
+                    "document_date": result.metadata.get("document_date"),
+                    "query": result.metadata.get("query"),
+                    "url": result.metadata.get("url"),
+                })
+
         # Create usage record
         record = UsageRecord(
             timestamp=datetime.now(timezone.utc).isoformat(),
@@ -337,6 +401,9 @@ class UsageAnalyticsMiddleware(Middleware):
             tokens_output=tokens_output,
             success=result.success,
             error_type=result.error_type if result.failed else None,
+            source_type=source_type,
+            source_name=source_name,
+            citations=citations,
             metadata={
                 "retry_count": result.retry_count,
                 "skipped": result.skipped,
@@ -394,6 +461,8 @@ class UsageAnalyticsMiddleware(Middleware):
                 "total_cost": 0,
                 "by_chain": {},
                 "by_step": {},
+                "by_source": {},
+                "total_citations": 0,
             }
 
         # Aggregate
@@ -420,6 +489,18 @@ class UsageAnalyticsMiddleware(Middleware):
             by_step[r.step_name]["tokens"] += r.tokens_used
             by_step[r.step_name]["duration_ms"] += r.duration_ms
 
+        # By source type
+        by_source: dict[str, dict[str, Any]] = defaultdict(
+            lambda: {"requests": 0, "tokens": 0, "citations": 0}
+        )
+        total_citations = 0
+        for r in records:
+            source = r.source_type or "unknown"
+            by_source[source]["requests"] += 1
+            by_source[source]["tokens"] += r.tokens_used
+            by_source[source]["citations"] += len(r.citations)
+            total_citations += len(r.citations)
+
         # Calculate cost
         total_cost = 0
         if self._track_costs:
@@ -437,6 +518,8 @@ class UsageAnalyticsMiddleware(Middleware):
             "total_cost": round(total_cost, 4),
             "by_chain": dict(by_chain),
             "by_step": dict(by_step),
+            "by_source": dict(by_source),
+            "total_citations": total_citations,
         }
 
     def get_user_usage(self, user_id: str) -> dict[str, Any]:
@@ -494,6 +577,70 @@ class UsageAnalyticsMiddleware(Middleware):
                 f.write(json.dumps(record.to_dict()) + "\n")
 
         return len(records)
+
+    def get_citations(
+        self,
+        request_id: str | None = None,
+        source_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Get all citations, optionally filtered.
+
+        Args:
+            request_id: Filter by request ID
+            source_type: Filter by source type (e.g., "sec", "earnings", "news")
+
+        Returns:
+            List of citation dicts with request context
+        """
+        records = self._backend.query()
+
+        if request_id:
+            records = [r for r in records if r.request_id == request_id]
+
+        if source_type:
+            records = [r for r in records if r.source_type == source_type]
+
+        # Flatten citations with context
+        all_citations = []
+        for r in records:
+            for citation in r.citations:
+                all_citations.append({
+                    "request_id": r.request_id,
+                    "step_name": r.step_name,
+                    "timestamp": r.timestamp,
+                    **citation,
+                })
+
+        return all_citations
+
+    def get_citations_for_request(self, request_id: str) -> dict[str, Any]:
+        """
+        Get all citations for a specific request, grouped by source.
+
+        Args:
+            request_id: The request ID
+
+        Returns:
+            Dict with citations grouped by source type
+        """
+        records = self._backend.query()
+        records = [r for r in records if r.request_id == request_id]
+
+        by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for r in records:
+            source = r.source_type or "unknown"
+            for citation in r.citations:
+                by_source[source].append({
+                    "step_name": r.step_name,
+                    **citation,
+                })
+
+        return {
+            "request_id": request_id,
+            "total_citations": sum(len(v) for v in by_source.values()),
+            "by_source": dict(by_source),
+        }
 
     def clear(self) -> None:
         """Clear all usage data."""

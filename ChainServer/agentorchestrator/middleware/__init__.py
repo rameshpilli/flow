@@ -3,6 +3,7 @@
 from agentorchestrator.middleware.analytics import (
     FileUsageBackend,
     InMemoryUsageBackend,
+    SourceCitation,
     UsageAnalyticsMiddleware,
     UsageBackend,
     UsageRecord,
@@ -53,10 +54,11 @@ from agentorchestrator.middleware.token_manager import TokenManagerMiddleware
 __all__ = [
     # Base
     "Middleware",
-    # Usage Analytics
+    # Usage Analytics & Citations
     "UsageAnalyticsMiddleware",
     "UsageBackend",
     "UsageRecord",
+    "SourceCitation",
     "InMemoryUsageBackend",
     "FileUsageBackend",
     # Metrics/Instrumentation
