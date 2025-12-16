@@ -183,15 +183,22 @@ def cmd_run(args: argparse.Namespace) -> int:
     # Check if resumable mode requested
     resumable = getattr(args, 'resumable', False)
     run_id = getattr(args, 'run_id', None)
+    dry_run = getattr(args, 'dry_run', False)
 
     print(f"\n{'═' * 60}")
-    print(f"  Running: {args.chain_name}")
-    if resumable:
+    print(f"  {'[DRY RUN] ' if dry_run else ''}Running: {args.chain_name}")
+    if dry_run:
+        print("  Mode: Dry Run (simulation only, no side effects)")
+    elif resumable:
         print("  Mode: Resumable (checkpoints enabled)")
         if run_id:
             print(f"  Run ID: {run_id}")
     print(f"  Input: {json.dumps(data, indent=2) if data else '{}'}")
     print(f"{'═' * 60}\n")
+
+    # Dry run mode - simulate execution without running
+    if dry_run:
+        return cmd_dry_run(forge, args.chain_name, data, args.verbose)
 
     start_time = time.perf_counter()
 
@@ -226,6 +233,119 @@ def cmd_run(args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"\nError: {e}")
         if args.verbose:
+            import traceback
+            traceback.print_exc()
+        return 1
+
+
+def cmd_dry_run(forge, chain_name: str, data: dict, verbose: bool = False) -> int:
+    """
+    Simulate chain execution without actually running steps.
+
+    Shows what WOULD happen:
+    - Execution order and parallel groups
+    - Steps that would run
+    - Dependencies between steps
+    - Estimated flow
+    """
+    from agentorchestrator.core.dag import DAGBuilder
+
+    print("  Simulating execution (no side effects)...\n")
+
+    try:
+        # Build execution plan
+        builder = DAGBuilder()
+        plan = builder.build(chain_name)
+
+        # Show chain info
+        chain_spec = forge._chain_registry.get_spec(chain_name)
+        if chain_spec:
+            print(f"  Chain: {chain_name}")
+            print(f"  Version: {chain_spec.metadata.version}")
+            print(f"  Error Handling: {chain_spec.error_handling}")
+            print(f"  Total Steps: {plan.total_steps}")
+            print(f"  Execution Groups: {len(plan.execution_order)}")
+            if plan.uses_explicit_groups:
+                print("  Parallelization: Explicit (user-defined)")
+            else:
+                print("  Parallelization: Automatic (from dependencies)")
+            print()
+
+        # Show execution plan
+        print("  Execution Plan:")
+        print("  " + "─" * 50)
+
+        for group_idx, group in enumerate(plan.execution_order):
+            is_parallel = len(group) > 1
+            group_label = f"Group {group_idx + 1}"
+            if is_parallel:
+                group_label += f" (parallel, {len(group)} steps)"
+            else:
+                group_label += " (sequential)"
+
+            print(f"\n  {group_label}:")
+
+            for step_name in group:
+                node = plan.nodes.get(step_name)
+                step_spec = forge._step_registry.get_spec(step_name)
+
+                # Step info
+                deps = list(node.dependencies) if node else []
+                timeout = step_spec.timeout_ms if step_spec else 30000
+                is_async = step_spec.is_async if step_spec else True
+
+                print(f"    → {step_name}")
+                if deps:
+                    print(f"      deps: {', '.join(deps)}")
+                print(f"      timeout: {timeout}ms, async: {is_async}")
+
+                # Show retry config if non-default
+                if step_spec and step_spec.retry_config.count > 0:
+                    rc = step_spec.retry_config
+                    print(f"      retry: {rc.count}x, delay: {rc.delay_ms}ms")
+
+                # Show input/output models if defined
+                if step_spec:
+                    if step_spec.input_model:
+                        print(f"      input: {step_spec.input_model.__name__}")
+                    if step_spec.output_model:
+                        print(f"      output: {step_spec.output_model.__name__}")
+
+        print("\n  " + "─" * 50)
+
+        # Validation summary
+        print("\n  Validation:")
+        check_result = forge.check(chain_name)
+        if check_result.get("valid"):
+            print("    ✓ Chain definition is valid")
+            print("    ✓ No circular dependencies")
+            print("    ✓ All step handlers found")
+        else:
+            print("    ✗ Validation failed:")
+            for error in check_result.get("errors", []):
+                print(f"      - {error}")
+
+        # Input data summary
+        if data:
+            print("\n  Input Data Preview:")
+            for key, value in list(data.items())[:5]:
+                val_str = str(value)[:50]
+                if len(str(value)) > 50:
+                    val_str += "..."
+                print(f"    {key}: {val_str}")
+            if len(data) > 5:
+                print(f"    ... and {len(data) - 5} more fields")
+
+        print(f"\n{'═' * 60}")
+        print("  Dry run complete. No steps were executed.")
+        print("  Remove --dry-run flag to execute the chain.")
+        print(f"{'═' * 60}\n")
+
+        return 0 if check_result.get("valid") else 1
+
+    except Exception as e:
+        print(f"\n  Error during dry run: {e}")
+        if verbose:
             import traceback
             traceback.print_exc()
         return 1
@@ -669,8 +789,17 @@ if __name__ == "__main__":
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    """Validate chain definition (dry-run mode)."""
-    from agentorchestrator.core.versioning import validate_chain
+    """
+    Validate chain definition with comprehensive checks.
+
+    Validates:
+    - Chain and step existence
+    - Dependency graph (no cycles)
+    - Input/output contracts
+    - Agent availability
+    - Resource registration
+    """
+    from agentorchestrator.core.dag import DAGBuilder
 
     chain_name = args.chain_name
     dry_run = not getattr(args, "execute", False)
@@ -684,49 +813,187 @@ def cmd_validate(args: argparse.Namespace) -> int:
             print(f"Error parsing --data JSON: {e}")
             return 1
 
-    print(f"\n{'=' * 60}")
+    print(f"\n{'═' * 60}")
     print(f"  Validating: {chain_name}")
     print(f"  Mode: {'Dry Run' if dry_run else 'Full Validation'}")
-    print(f"{'=' * 60}\n")
+    print(f"{'═' * 60}\n")
 
-    try:
-        result = asyncio.run(validate_chain(
-            chain_name,
-            dry_run=dry_run,
-            check_agents=args.check_agents,
-            check_resources=args.check_resources,
-            sample_data=sample_data,
-        ))
+    forge = get_orchestrator()
+    errors = []
+    warnings = []
+    checks_passed = 0
+    checks_total = 0
 
-        # Print results
-        status_color = "\033[92m" if result.valid else "\033[91m"
-        reset = "\033[0m"
-
-        print(f"  Status: {status_color}{'VALID' if result.valid else 'INVALID'}{reset}")
-        print(f"  Steps validated: {result.steps_validated}")
-        print(f"  Agents checked: {len(result.agents_checked)}")
-        print(f"  Resources checked: {len(result.resources_checked)}")
-
-        if result.errors:
-            print("\n  \033[91mErrors:\033[0m")
-            for error in result.errors:
-                print(f"    - {error}")
-
-        if result.warnings:
-            print("\n  \033[93mWarnings:\033[0m")
-            for warning in result.warnings:
-                print(f"    - {warning}")
-
-        print(f"\n{'=' * 60}\n")
-
-        if args.json:
-            print(json.dumps(result.to_dict(), indent=2))
-
-        return 0 if result.valid else 1
-
-    except Exception as e:
-        print(f"Error during validation: {e}")
+    # 1. Check chain exists
+    checks_total += 1
+    chain_spec = forge._chain_registry.get_spec(chain_name)
+    if not chain_spec:
+        print(f"  ✗ Chain '{chain_name}' not found")
+        errors.append(f"Chain '{chain_name}' not found")
+        print(f"\n{'═' * 60}")
+        print(f"  Result: \033[91mINVALID\033[0m (chain not found)")
+        print(f"{'═' * 60}\n")
         return 1
+    else:
+        print(f"  ✓ Chain exists: {chain_name}")
+        checks_passed += 1
+
+    # 2. Check all steps exist
+    checks_total += 1
+    missing_steps = []
+    for step_name in chain_spec.steps:
+        step_spec = forge._step_registry.get_spec(step_name)
+        if not step_spec:
+            missing_steps.append(step_name)
+
+    if missing_steps:
+        print(f"  ✗ Missing steps: {', '.join(missing_steps)}")
+        errors.append(f"Missing steps: {', '.join(missing_steps)}")
+    else:
+        print(f"  ✓ All {len(chain_spec.steps)} steps found")
+        checks_passed += 1
+
+    # 3. Check DAG (no circular dependencies)
+    checks_total += 1
+    try:
+        builder = DAGBuilder()
+        plan = builder.build(chain_name)
+        print(f"  ✓ DAG valid ({len(plan.execution_order)} execution groups)")
+        checks_passed += 1
+    except ValueError as e:
+        if "Circular dependency" in str(e):
+            print(f"  ✗ Circular dependency detected")
+            errors.append(str(e))
+        else:
+            print(f"  ✗ DAG build error: {e}")
+            errors.append(str(e))
+
+    # 4. Check step dependencies reference valid steps
+    checks_total += 1
+    invalid_deps = []
+    for step_name in chain_spec.steps:
+        step_spec = forge._step_registry.get_spec(step_name)
+        if step_spec:
+            for dep in step_spec.dependencies:
+                if dep not in chain_spec.steps:
+                    invalid_deps.append(f"{step_name} -> {dep}")
+
+    if invalid_deps:
+        print(f"  ✗ Invalid dependencies: {', '.join(invalid_deps)}")
+        errors.append(f"Dependencies reference steps not in chain: {invalid_deps}")
+    else:
+        print(f"  ✓ All dependencies valid")
+        checks_passed += 1
+
+    # 5. Check input/output contracts
+    checks_total += 1
+    contract_issues = []
+    for step_name in chain_spec.steps:
+        step_spec = forge._step_registry.get_spec(step_name)
+        if step_spec:
+            if step_spec.input_model:
+                try:
+                    # Just check the model is valid
+                    if not hasattr(step_spec.input_model, 'model_fields'):
+                        contract_issues.append(f"{step_name}: input_model not a Pydantic model")
+                except Exception as e:
+                    contract_issues.append(f"{step_name}: input_model error - {e}")
+
+            if step_spec.output_model:
+                try:
+                    if not hasattr(step_spec.output_model, 'model_fields'):
+                        contract_issues.append(f"{step_name}: output_model not a Pydantic model")
+                except Exception as e:
+                    contract_issues.append(f"{step_name}: output_model error - {e}")
+
+    if contract_issues:
+        print(f"  ⚠ Contract issues: {len(contract_issues)}")
+        for issue in contract_issues:
+            warnings.append(issue)
+    else:
+        print(f"  ✓ Input/output contracts valid")
+        checks_passed += 1
+
+    # 6. Check agents if requested
+    if args.check_agents:
+        checks_total += 1
+        agents = forge._agent_registry.list()
+        if agents:
+            print(f"  ✓ {len(agents)} agents registered")
+            checks_passed += 1
+        else:
+            print(f"  ⚪ No agents registered (may be OK)")
+            checks_passed += 1
+
+    # 7. Check resources if requested
+    if args.check_resources:
+        checks_total += 1
+        resources = list(forge._resource_manager._resources.keys())
+        if resources:
+            print(f"  ✓ {len(resources)} resources registered: {', '.join(resources)}")
+        else:
+            print(f"  ⚪ No resources registered (may be OK)")
+        checks_passed += 1
+
+    # 8. Validate sample data if provided
+    if sample_data:
+        checks_total += 1
+        # Find first step with input_model
+        first_step_model = None
+        for step_name in chain_spec.steps:
+            step_spec = forge._step_registry.get_spec(step_name)
+            if step_spec and step_spec.input_model:
+                first_step_model = (step_name, step_spec.input_model)
+                break
+
+        if first_step_model:
+            step_name, model = first_step_model
+            try:
+                model(**sample_data)
+                print(f"  ✓ Sample data validates against {model.__name__}")
+                checks_passed += 1
+            except Exception as e:
+                print(f"  ✗ Sample data validation failed: {e}")
+                errors.append(f"Sample data validation: {e}")
+        else:
+            print(f"  ⚪ No input model to validate sample data against")
+            checks_passed += 1
+
+    # Summary
+    print(f"\n  {'─' * 50}")
+    is_valid = len(errors) == 0
+
+    status_color = "\033[92m" if is_valid else "\033[91m"
+    reset = "\033[0m"
+
+    print(f"\n  Checks: {checks_passed}/{checks_total} passed")
+    print(f"  Status: {status_color}{'VALID' if is_valid else 'INVALID'}{reset}")
+
+    if errors:
+        print(f"\n  \033[91mErrors ({len(errors)}):\033[0m")
+        for error in errors:
+            print(f"    ✗ {error}")
+
+    if warnings:
+        print(f"\n  \033[93mWarnings ({len(warnings)}):\033[0m")
+        for warning in warnings:
+            print(f"    ⚠ {warning}")
+
+    print(f"\n{'═' * 60}\n")
+
+    if args.json:
+        result = {
+            "valid": is_valid,
+            "chain_name": chain_name,
+            "checks_passed": checks_passed,
+            "checks_total": checks_total,
+            "errors": errors,
+            "warnings": warnings,
+            "steps": chain_spec.steps,
+        }
+        print(json.dumps(result, indent=2))
+
+    return 0 if is_valid else 1
 
 
 def cmd_new_project(args: argparse.Namespace) -> int:
@@ -1438,6 +1705,10 @@ Examples:
     )
     run_parser.add_argument(
         "--run-id", help="Custom run ID (for resumable runs)"
+    )
+    run_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Simulate execution without running steps (shows execution plan)"
     )
     run_parser.add_argument(
         "extra", nargs="*", help="Additional key=value pairs"

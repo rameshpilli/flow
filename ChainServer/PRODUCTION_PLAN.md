@@ -94,3 +94,4 @@ Implement a `/health` endpoint or CLI command that checks connectivity to all co
 - [ ] Implement one real adapter (e.g., for Company Lookup)
 - [ ] Add integration tests verifying the real adapter works (with VCR/cassettes for replay)
 
+

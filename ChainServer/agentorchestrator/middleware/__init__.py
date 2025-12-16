@@ -10,6 +10,14 @@ from agentorchestrator.middleware.analytics import (
 )
 from agentorchestrator.middleware.base import Middleware
 from agentorchestrator.middleware.cache import CacheMiddleware
+from agentorchestrator.middleware.idempotency import (
+    IdempotencyBackend,
+    IdempotencyConfig,
+    IdempotencyHit,
+    IdempotencyMiddleware,
+    InMemoryIdempotencyBackend,
+    create_redis_idempotency_middleware,
+)
 from agentorchestrator.middleware.logger import LoggerMiddleware
 from agentorchestrator.middleware.metrics import (
     InMemoryMetricsBackend,
@@ -76,6 +84,13 @@ __all__ = [
     "CircuitOpenError",
     "CircuitState",
     "RateLimitAndCircuitBreakerMiddleware",
+    # Idempotency (prevent duplicate execution)
+    "IdempotencyMiddleware",
+    "IdempotencyConfig",
+    "IdempotencyBackend",
+    "IdempotencyHit",
+    "InMemoryIdempotencyBackend",
+    "create_redis_idempotency_middleware",
     # Summarization (LangChain-powered)
     "SummarizerMiddleware",
     "LangChainSummarizer",

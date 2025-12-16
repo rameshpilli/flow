@@ -59,3 +59,4 @@ The current services (`ContextBuilderService`, `ResponseBuilderService`) contain
 2.  **Run the new test**: Execute `pytest tests/test_cmpt_integration.py` (once dependencies are installed) to confirm the current baseline.
 3.  **Start Refactoring**: Pick one service (e.g., `ContextBuilderService`) and apply the Adapter pattern as the first proof-of-concept.
 
+
