@@ -64,12 +64,58 @@ from cmpt.services import (
     ResponseBuilderService,
 )
 
+# Re-export domain configuration for middleware setup
+from cmpt.domain_config import (
+    CMPT_AGENTS,
+    DOMAIN_PROMPTS,
+    get_agent_configs_from_env,
+    register_cmpt_agents,
+    register_cmpt_middleware,
+    register_offload_extractors,
+    register_summarizer_prompts,
+    # Test fixtures
+    sample_cmpt_chain_request,
+    sample_earnings_data,
+    sample_financial_metrics,
+    sample_news_articles,
+    sample_sec_filings,
+)
+
+# Re-export MCP authentication utilities
+from cmpt.mcp_auth import (
+    MCPAuthFromEnv,
+    MCPAuthTokenManager,
+    create_mcp_adapter_with_auth,
+    create_mcp_bearer_token,
+)
+
 __all__ = [
+    # Chain functions
     "register_cmpt_chain",
     "run_cmpt_chain",
+    # Service classes
     "ChainRequest",
     "ChainResponse",
     "ContextBuilderService",
     "ContentPrioritizationService",
     "ResponseBuilderService",
+    # Domain configuration
+    "CMPT_AGENTS",
+    "DOMAIN_PROMPTS",
+    "get_agent_configs_from_env",
+    "register_cmpt_agents",
+    "register_cmpt_middleware",
+    "register_offload_extractors",
+    "register_summarizer_prompts",
+    # MCP authentication
+    "MCPAuthFromEnv",
+    "MCPAuthTokenManager",
+    "create_mcp_adapter_with_auth",
+    "create_mcp_bearer_token",
+    # Test fixtures
+    "sample_cmpt_chain_request",
+    "sample_earnings_data",
+    "sample_financial_metrics",
+    "sample_news_articles",
+    "sample_sec_filings",
 ]

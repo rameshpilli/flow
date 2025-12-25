@@ -54,10 +54,10 @@ ao = AgentOrchestrator(
     default_timeout_ms=60000,
 )
 
-# Add middleware
-ao.use_middleware(LoggerMiddleware(level=logging.INFO))
-ao.use_middleware(CacheMiddleware(ttl_seconds=300))
-ao.use_middleware(TokenManagerMiddleware(max_total_tokens=100000))
+# Add middleware (using ao.use() method)
+ao.use(LoggerMiddleware(level=logging.INFO))
+ao.use(CacheMiddleware(ttl_seconds=300))
+ao.use(TokenManagerMiddleware(max_total_tokens=100000))
 
 
 # ============================================================

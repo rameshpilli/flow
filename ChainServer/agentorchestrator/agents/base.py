@@ -25,7 +25,30 @@ T = TypeVar("T")
 
 @dataclass
 class AgentResult(Generic[T]):
-    """Result from an agent operation"""
+    """
+    Result from an agent operation.
+
+    Supports citation tracking through the `citations` field.
+    When an agent fetches data, it can attach citations to enable
+    source verification and provenance tracking.
+
+    Example:
+        from agentorchestrator.models import Citation
+
+        result = AgentResult(
+            data={"revenue": 394.3},
+            source="sec_filing_agent",
+            query="AAPL revenue",
+            citations=[
+                Citation(
+                    source_type="document",
+                    source_name="sec_filing_agent",
+                    content="Total net sales were $394,328 million",
+                    document_id="AAPL-10K-2024",
+                )
+            ],
+        )
+    """
 
     data: T
     source: str
@@ -34,10 +57,51 @@ class AgentResult(Generic[T]):
     metadata: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     duration_ms: float = 0
+    # Citation support
+    citations: list[Any] = field(default_factory=list)  # List[Citation]
+    raw_content: str | None = None  # Raw content for citation verification
 
     @property
     def success(self) -> bool:
         return self.error is None
+
+    @property
+    def has_citations(self) -> bool:
+        """Check if result has citations attached."""
+        return len(self.citations) > 0
+
+    def add_citation(
+        self,
+        content: str,
+        reasoning: str | None = None,
+        document_id: str | None = None,
+        **kwargs: Any,
+    ) -> "AgentResult[T]":
+        """
+        Add a citation to this result.
+
+        Args:
+            content: Verbatim quote from source
+            reasoning: Why this supports the data
+            document_id: Document identifier
+            **kwargs: Additional citation fields
+
+        Returns:
+            Self for chaining
+        """
+        # Import here to avoid circular imports
+        from agentorchestrator.models.citation import Citation
+
+        citation = Citation(
+            source_type="agent",
+            source_name=self.source,
+            content=content,
+            reasoning=reasoning,
+            document_id=document_id,
+            **kwargs,
+        )
+        self.citations.append(citation)
+        return self
 
 
 class BaseAgent(ABC):

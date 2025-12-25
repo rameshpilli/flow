@@ -1250,6 +1250,125 @@ class AgentOrchestrator:
 
         return asyncio.run(_run_with_cleanup())
 
+    async def run_step(
+        self,
+        step_name: str,
+        data: dict[str, Any] | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Run a single step in isolation for testing.
+
+        This allows testing any step independently without running the entire
+        chain. Dependencies are NOT executed - the provided data is used
+        directly as context.
+
+        This is a generic framework capability - users can test any step they
+        define without needing to create special test endpoints.
+
+        Args:
+            step_name: Name of the step to run
+            data: Initial context data (simulates what dependencies would provide)
+            request_id: Optional request ID for tracing
+
+        Returns:
+            Result dict containing:
+            - success: Whether step completed successfully
+            - output: Step's return value
+            - context: Context state after step execution
+            - duration_ms: Execution time in milliseconds
+            - error: Error details if step failed
+
+        Usage:
+            # Test a step in isolation
+            result = await ao.run_step("context_builder", {
+                "request": {"corporate_company_name": "Apple Inc"}
+            })
+
+            # Verify step output
+            assert result["success"]
+            assert result["output"]["company"] == "Apple Inc"
+
+        Example with mock data for dependent steps:
+            # If response_builder depends on context_builder output,
+            # provide that data directly:
+            result = await ao.run_step("response_builder", {
+                "context_output": {...},  # Mock data from context_builder
+                "prioritization_output": {...},  # Mock data from content_prioritization
+            })
+        """
+        import time
+        import uuid
+
+        step_spec = self._step_registry.get_spec(step_name)
+        if not step_spec:
+            return {
+                "success": False,
+                "error": {
+                    "message": f"Step '{step_name}' not found",
+                    "type": "StepNotFoundError",
+                },
+            }
+
+        # Create isolated context for this step test
+        req_id = request_id or f"step_test_{uuid.uuid4().hex[:8]}"
+        ctx = self.create_context(req_id, data)
+
+        start_time = time.perf_counter()
+
+        try:
+            # Execute the step handler directly
+            handler = step_spec.handler
+            if asyncio.iscoroutinefunction(handler):
+                output = await handler(ctx)
+            else:
+                output = handler(ctx)
+
+            duration_ms = (time.perf_counter() - start_time) * 1000
+
+            return {
+                "success": True,
+                "step_name": step_name,
+                "output": output,
+                "context": {
+                    "request_id": ctx.request_id,
+                    "data": {k: v for k, v in ctx.to_dict().get("data", {}).items()},
+                },
+                "duration_ms": duration_ms,
+            }
+
+        except Exception as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            logger.error(f"Step '{step_name}' failed: {e}")
+
+            return {
+                "success": False,
+                "step_name": step_name,
+                "error": {
+                    "message": str(e),
+                    "type": type(e).__name__,
+                },
+                "context": {
+                    "request_id": ctx.request_id,
+                    "data": {k: v for k, v in ctx.to_dict().get("data", {}).items()},
+                },
+                "duration_ms": duration_ms,
+            }
+
+    def run_step_sync(
+        self,
+        step_name: str,
+        data: dict[str, Any] | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Synchronous version of run_step().
+
+        Usage:
+            result = ao.run_step_sync("context_builder", {"request": {...}})
+        """
+        return asyncio.run(self.run_step(step_name, data, request_id))
+
     # Aliases for backward compatibility
     async def run(
         self,

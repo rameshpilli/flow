@@ -3,6 +3,9 @@ AgentOrchestrator Summarizer Middleware
 
 Summarizes large text outputs to manage context size in LLM chains.
 Supports stuff, map_reduce, and refine strategies via LangChain.
+
+Domain-specific prompts should be registered at the application level,
+not hardcoded in this package.
 """
 
 import asyncio
@@ -38,122 +41,12 @@ class SummarizationStrategy(str, Enum):
     REFINE = "refine"  # Iterative refinement
 
 
-# =============================================================================
-# Domain-Specific Prompts - What to extract from each content type
-# =============================================================================
-
-DOMAIN_PROMPTS = {
-    # SEC Filings: Focus on financials, risks, guidance
-    "sec_filing": {
-        "map": (
-            "Extract key financial information from this SEC filing:\n"
-            "- Revenue, earnings, margins (with exact numbers and dates)\n"
-            "- Forward guidance and projections\n"
-            "- Risk factors and material changes\n"
-            "- Segment performance\n\n"
-            "{text}\n\nKey Financial Data:"
-        ),
-        "reduce": (
-            "Combine these SEC filing summaries into a financial overview:\n"
-            "- Consolidate all revenue/earnings figures with periods\n"
-            "- List all forward guidance statements\n"
-            "- Highlight material risks\n\n"
-            "{text}\n\nConsolidated Financial Summary:"
-        ),
-    },
-    # Earnings: Focus on EPS, revenue beats/misses, guidance
-    "earnings": {
-        "map": (
-            "Extract earnings data from this content:\n"
-            "- EPS (actual vs estimate, beat/miss amount)\n"
-            "- Revenue (actual vs estimate)\n"
-            "- YoY and QoQ growth rates\n"
-            "- Next quarter/year guidance\n"
-            "- Key metrics mentioned by management\n\n"
-            "{text}\n\nEarnings Data:"
-        ),
-        "reduce": (
-            "Consolidate earnings information:\n"
-            "- Create a timeline of quarterly results\n"
-            "- Summarize beat/miss history\n"
-            "- Highlight guidance changes\n\n"
-            "{text}\n\nEarnings Summary:"
-        ),
-    },
-    # News: Focus on events, sentiment, dates
-    "news": {
-        "map": (
-            "Extract news highlights:\n"
-            "- Event type (M&A, product launch, lawsuit, partnership)\n"
-            "- Date of event/announcement\n"
-            "- Impact (positive/negative/neutral)\n"
-            "- Key parties involved\n"
-            "- Price targets or analyst opinions if mentioned\n\n"
-            "{text}\n\nNews Highlights:"
-        ),
-        "reduce": (
-            "Create a news timeline:\n"
-            "- Group by event type\n"
-            "- Order chronologically\n"
-            "- Note overall sentiment trend\n\n"
-            "{text}\n\nNews Timeline:"
-        ),
-    },
-    # Transcripts: Focus on management commentary, Q&A insights
-    "transcripts": {
-        "map": (
-            "Extract key points from this earnings call/transcript:\n"
-            "- Management's key statements and outlook\n"
-            "- Specific numbers or targets mentioned\n"
-            "- Analyst questions and management responses\n"
-            "- Tone (confident, cautious, defensive)\n"
-            "- Any surprises or notable quotes\n\n"
-            "{text}\n\nTranscript Highlights:"
-        ),
-        "reduce": (
-            "Synthesize transcript insights:\n"
-            "- Main themes from management\n"
-            "- Key concerns from analysts\n"
-            "- Forward-looking statements\n"
-            "- Overall sentiment\n\n"
-            "{text}\n\nTranscript Summary:"
-        ),
-    },
-    # Pricing/Valuation: Focus on multiples, targets, comparables
-    "pricing": {
-        "map": (
-            "Extract valuation and pricing data:\n"
-            "- Current price and date\n"
-            "- P/E, P/S, EV/EBITDA multiples\n"
-            "- Analyst price targets (low/median/high)\n"
-            "- Comparable company valuations\n"
-            "- Historical valuation ranges\n\n"
-            "{text}\n\nValuation Data:"
-        ),
-        "reduce": (
-            "Consolidate valuation metrics:\n"
-            "- Current vs historical multiples\n"
-            "- Price target consensus\n"
-            "- Peer comparison\n\n"
-            "{text}\n\nValuation Summary:"
-        ),
-    },
-}
-
-
-def get_domain_prompts(content_type: str) -> tuple:
-    """Get map/reduce prompts for a content type, or defaults if not found."""
-    prompts = DOMAIN_PROMPTS.get(content_type, {})
-    return (
-        prompts.get("map", LangChainSummarizer.DEFAULT_MAP_PROMPT),
-        prompts.get("reduce", LangChainSummarizer.DEFAULT_REDUCE_PROMPT),
-    )
-
-
 class LangChainSummarizer:
     """
     Summarizer using LangChain with stuff, map_reduce, or refine strategies.
     Falls back to simple truncation if no LLM is provided.
+
+    Domain-specific prompts can be registered via register_domain_prompts().
     """
 
     # Default prompts
@@ -170,6 +63,9 @@ class LangChainSummarizer:
         "Refine it using this additional context:\n{text}\n\n"
         "Refined Summary:"
     )
+
+    # Pluggable domain prompts (registered at application level)
+    _domain_prompts: dict[str, dict[str, str]] = {}
 
     def __init__(
         self,
@@ -193,6 +89,52 @@ class LangChainSummarizer:
 
         # Initialize text splitter
         self.text_splitter = self._create_splitter(use_token_splitter)
+
+    @classmethod
+    def register_domain_prompts(
+        cls,
+        domain: str,
+        map_prompt: str,
+        reduce_prompt: str | None = None,
+    ) -> None:
+        """
+        Register domain-specific prompts for summarization.
+
+        This should be called at the application level to customize
+        summarization for your specific domain.
+
+        Args:
+            domain: Domain identifier (e.g., "order", "report", "document")
+            map_prompt: Prompt template for initial summarization (must contain {text})
+            reduce_prompt: Prompt template for combining summaries (must contain {text})
+
+        Example:
+            # At application startup
+            LangChainSummarizer.register_domain_prompts(
+                domain="order",
+                map_prompt="Extract order details from this text:\\n{text}\\n\\nOrder Summary:",
+                reduce_prompt="Combine order summaries:\\n{text}\\n\\nFinal Order Report:",
+            )
+        """
+        cls._domain_prompts[domain] = {
+            "map": map_prompt,
+            "reduce": reduce_prompt or cls.DEFAULT_REDUCE_PROMPT,
+        }
+        logger.info(f"Registered domain prompts for: {domain}")
+
+    @classmethod
+    def get_domain_prompts(cls, domain: str) -> tuple[str, str]:
+        """Get map/reduce prompts for a domain, or defaults if not found."""
+        prompts = cls._domain_prompts.get(domain, {})
+        return (
+            prompts.get("map", cls.DEFAULT_MAP_PROMPT),
+            prompts.get("reduce", cls.DEFAULT_REDUCE_PROMPT),
+        )
+
+    @classmethod
+    def list_registered_domains(cls) -> list[str]:
+        """List all registered domain types."""
+        return list(cls._domain_prompts.keys())
 
     def _create_splitter(self, use_token_splitter: bool):
         """Create LangChain text splitter, or None if unavailable."""
@@ -242,16 +184,15 @@ class LangChainSummarizer:
             text: Text to summarize
             max_tokens: Maximum tokens for output
             strategy: Override default strategy
-            content_type: Domain type for specialized prompts
-                         ("sec_filing", "earnings", "news", "transcripts", "pricing")
+            content_type: Domain type for specialized prompts (registered via register_domain_prompts)
         """
         strategy = strategy or self.strategy
 
         # Apply domain-specific prompts if content_type provided
         original_map = self.map_prompt
         original_reduce = self.reduce_prompt
-        if content_type and content_type in DOMAIN_PROMPTS:
-            self.map_prompt, self.reduce_prompt = get_domain_prompts(content_type)
+        if content_type and content_type in self._domain_prompts:
+            self.map_prompt, self.reduce_prompt = self.get_domain_prompts(content_type)
             logger.info(f"Using domain prompts for: {content_type}")
 
         try:
@@ -379,6 +320,7 @@ class SummarizerMiddleware(Middleware):
     Triggers when output exceeds max_tokens threshold.
 
     Supports domain-specific summarization via step_content_types mapping.
+    Register domain prompts at application level using LangChainSummarizer.register_domain_prompts().
     """
 
     def __init__(
@@ -394,8 +336,15 @@ class SummarizerMiddleware(Middleware):
     ):
         """
         Args:
+            priority: Middleware priority (lower runs first)
+            applies_to: List of step names to apply to (None = all)
+            max_tokens: Default token threshold for summarization
+            summarizer: LangChainSummarizer instance or legacy callable
+            preserve_original: Store original output in context before summarizing
+            step_thresholds: Per-step token thresholds
             step_content_types: Map step names to content types for domain-aware prompts.
-                               e.g., {"fetch_sec": "sec_filing", "fetch_news": "news"}
+                               Register prompts using LangChainSummarizer.register_domain_prompts()
+            strategy: Default summarization strategy
         """
         super().__init__(priority=priority, applies_to=applies_to)
         self.max_tokens = max_tokens
@@ -412,6 +361,20 @@ class SummarizerMiddleware(Middleware):
             # Support legacy callable summarizers
             self._legacy_summarizer = summarizer
             self.summarizer = None
+
+    def register_content_type(self, step_name: str, content_type: str) -> "SummarizerMiddleware":
+        """
+        Register a content type for a step.
+
+        Args:
+            step_name: Name of the step
+            content_type: Domain type (must be registered via LangChainSummarizer.register_domain_prompts)
+
+        Returns:
+            self for chaining
+        """
+        self.step_content_types[step_name] = content_type
+        return self
 
     async def after(self, ctx: ChainContext, step_name: str, result: StepResult) -> None:
         """Summarize output if it exceeds token threshold."""
@@ -577,47 +540,55 @@ def create_gateway_summarizer(
     return LangChainSummarizer(llm=llm, strategy=strategy, **kwargs)
 
 
-def create_domain_aware_middleware(
+def create_summarizer_middleware(
     llm: Any | None = None,
     max_tokens: int = 4000,
+    step_content_types: dict[str, str] | None = None,
     **kwargs,
 ) -> SummarizerMiddleware:
     """
-    Create a summarizer middleware pre-configured for financial data agents.
+    Create a summarizer middleware.
 
-    Maps each agent step to its domain-specific prompts:
-    - sec_filing: Extracts revenue, margins, guidance, risks
-    - earnings: Extracts EPS, beats/misses, growth rates
-    - news: Extracts events, dates, sentiment
-    - transcripts: Extracts management commentary, Q&A insights
-    - pricing: Extracts multiples, targets, comparisons
+    Domain-specific prompts should be registered at application level:
 
-    Usage:
-        middleware = create_domain_aware_middleware(llm=my_llm)
-        forge.use(middleware)
+        # At application startup
+        from agentorchestrator.middleware.summarizer import LangChainSummarizer
+
+        LangChainSummarizer.register_domain_prompts(
+            domain="report",
+            map_prompt="Extract key data from this report:\\n{text}\\n\\nKey Data:",
+            reduce_prompt="Combine report summaries:\\n{text}\\n\\nFinal Report:",
+        )
+
+        # Then create middleware with content type mapping
+        middleware = create_summarizer_middleware(
+            llm=my_llm,
+            step_content_types={
+                "generate_report": "report",
+                "process_data": "report",
+            }
+        )
+
+    Args:
+        llm: LangChain-compatible LLM instance
+        max_tokens: Default token threshold
+        step_content_types: Map step names to registered domain types
+        **kwargs: Additional SummarizerMiddleware arguments
+
+    Returns:
+        Configured SummarizerMiddleware
     """
     summarizer = LangChainSummarizer(llm=llm) if llm else None
 
     return SummarizerMiddleware(
         summarizer=summarizer,
         max_tokens=max_tokens,
-        step_content_types={
-            # Map step names to content types
-            "fetch_sec": "sec_filing",
-            "fetch_sec_filings": "sec_filing",
-            "sec_filing": "sec_filing",
-            "fetch_earnings": "earnings",
-            "earnings": "earnings",
-            "fetch_news": "news",
-            "news": "news",
-            "fetch_transcripts": "transcripts",
-            "transcripts": "transcripts",
-            "fetch_pricing": "pricing",
-            "pricing": "pricing",
-        },
+        step_content_types=step_content_types or {},
         **kwargs,
     )
 
 
 # Backward compatibility alias
 LLMSummarizer = LangChainSummarizer
+# Deprecated - use create_summarizer_middleware instead
+create_domain_aware_middleware = create_summarizer_middleware

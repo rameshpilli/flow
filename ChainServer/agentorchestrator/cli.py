@@ -5,8 +5,9 @@ AgentOrchestrator CLI
 Command-line interface for running chains, validating definitions, and scaffolding.
 
 Usage:
-    ao run <chain_name> [--company "Apple"] [--data '{"key": "value"}']
+    ao run <chain_name> [--data '{"key": "value"}']
     ao run <chain_name> --resumable  # Run with checkpointing
+    ao run <chain_name> --step <step_name> --data '{...}'  # Test single step
     ao resume <run_id>               # Resume failed run
     ao runs [--chain <name>] [--status failed]  # List runs
     ao run-info <run_id>             # Show run details
@@ -37,6 +38,32 @@ from pathlib import Path
 
 _definition_paths: list[Path] | None = None
 _observability_configured = False
+
+# ASCII Art Banner
+AO_BANNER = r"""
+    ___    ____
+   /   |  / __ \
+  / /| | / / / /
+ / ___ |/ /_/ /
+/_/  |_|\____/
+
+"""
+
+AO_TAGLINE = "Your Agentic AI Workflow"
+
+
+def print_banner(include_version: bool = True) -> None:
+    """Print the AO ASCII art banner."""
+    print(AO_BANNER)
+    print(f"  {AO_TAGLINE}")
+    if include_version:
+        try:
+            from agentorchestrator.utils.config import get_version
+            version_info = get_version()
+            print(f"  v{version_info.get('version', '0.1.0')}")
+        except Exception:
+            print("  v0.1.0")
+    print()
 
 
 def _env_flag(key: str, default: bool = False) -> bool:
@@ -169,9 +196,9 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"Error parsing --data JSON: {e}")
             return 1
 
-    # Add --company if provided
-    if args.company:
-        data["corporate_company_name"] = args.company
+    # Add --entity if provided (generic entity identifier)
+    if args.entity:
+        data["entity_name"] = args.entity
 
     # Add any extra key=value pairs
     if args.extra:
@@ -184,6 +211,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     resumable = getattr(args, 'resumable', False)
     run_id = getattr(args, 'run_id', None)
     dry_run = getattr(args, 'dry_run', False)
+    step_name = getattr(args, 'step', None)
+
+    # If --step is provided, run just that step in isolation
+    if step_name:
+        return cmd_run_step(forge, args.chain_name, step_name, data, args.verbose)
 
     print(f"\n{'═' * 60}")
     print(f"  {'[DRY RUN] ' if dry_run else ''}Running: {args.chain_name}")
@@ -348,6 +380,142 @@ def cmd_dry_run(forge, chain_name: str, data: dict, verbose: bool = False) -> in
         if verbose:
             import traceback
             traceback.print_exc()
+        return 1
+
+
+def cmd_run_step(
+    forge,
+    chain_name: str,
+    step_name: str,
+    data: dict,
+    verbose: bool = False,
+) -> int:
+    """
+    Run a single step in isolation for testing.
+
+    This allows users to test any step they define independently, without
+    running the entire chain. The step's dependencies are NOT executed -
+    the provided data is used directly as context.
+
+    Args:
+        forge: AgentOrchestrator instance
+        chain_name: Name of the chain containing the step
+        step_name: Name of the step to run
+        data: Input data to provide as context
+        verbose: If True, show detailed output
+
+    Returns:
+        0 on success, 1 on failure
+    """
+    print(f"\n{'═' * 60}")
+    print(f"  [STEP TEST] Running: {step_name}")
+    print(f"  Chain: {chain_name}")
+    print(f"  Mode: Isolated Step Test (dependencies not executed)")
+    print(f"  Input: {json.dumps(data, indent=2) if data else '{}'}")
+    print(f"{'═' * 60}\n")
+
+    # Verify step exists in the chain
+    chain_spec = forge._chain_registry.get_spec(chain_name)
+    if not chain_spec:
+        print(f"  ✗ Chain '{chain_name}' not found")
+        return 1
+
+    if step_name not in chain_spec.steps:
+        print(f"  ✗ Step '{step_name}' not found in chain '{chain_name}'")
+        print(f"  Available steps: {', '.join(chain_spec.steps)}")
+        return 1
+
+    step_spec = forge._step_registry.get_spec(step_name)
+    if not step_spec:
+        print(f"  ✗ Step handler not found for '{step_name}'")
+        return 1
+
+    # Show step info
+    print(f"  Step Info:")
+    print(f"    Description: {step_spec.metadata.description or 'N/A'}")
+    if step_spec.dependencies:
+        print(f"    Dependencies: {step_spec.dependencies}")
+        print(f"    ⚠ Note: Dependencies are NOT executed in step test mode")
+    if step_spec.produces:
+        print(f"    Produces: {step_spec.produces}")
+    if step_spec.input_model:
+        print(f"    Input Model: {step_spec.input_model.__name__}")
+    if step_spec.output_model:
+        print(f"    Output Model: {step_spec.output_model.__name__}")
+    print()
+
+    start_time = time.perf_counter()
+
+    try:
+        # Run the step in isolation using forge's run_step method
+        result = asyncio.run(forge.run_step(step_name, data))
+
+        duration = (time.perf_counter() - start_time) * 1000
+
+        print(f"\n{'═' * 60}")
+        print(f"  Result: {'SUCCESS' if result.get('success') else 'FAILED'}")
+        print(f"  Duration: {duration:.2f}ms")
+        print(f"{'═' * 60}\n")
+
+        if result.get("success"):
+            # Show outputs
+            if "output" in result and result["output"]:
+                print("  Output:")
+                output = result["output"]
+                if isinstance(output, dict):
+                    for key, value in list(output.items())[:10]:
+                        value_str = str(value)[:100]
+                        if len(str(value)) > 100:
+                            value_str += "..."
+                        print(f"    {key}: {value_str}")
+                    if len(output) > 10:
+                        print(f"    ... and {len(output) - 10} more fields")
+                else:
+                    print(f"    {str(output)[:200]}")
+                print()
+
+            # Show context updates
+            if "context" in result and result["context"]:
+                ctx_data = result["context"].get("data", {})
+                if ctx_data:
+                    print("  Context Updates:")
+                    for key, value in list(ctx_data.items())[:5]:
+                        value_str = str(value)[:80]
+                        if len(str(value)) > 80:
+                            value_str += "..."
+                        print(f"    {key}: {value_str}")
+                    if len(ctx_data) > 5:
+                        print(f"    ... and {len(ctx_data) - 5} more fields")
+                    print()
+        else:
+            # Show error details
+            error = result.get("error", {})
+            if isinstance(error, dict):
+                print(f"  Error: {error.get('message', 'Unknown error')}")
+                if error.get("type"):
+                    print(f"  Type: {error.get('type')}")
+            else:
+                print(f"  Error: {error}")
+
+        if verbose:
+            print("\n  Full Result:")
+            print(json.dumps(result, indent=2, default=str))
+
+        return 0 if result.get("success") else 1
+
+    except Exception as e:
+        duration = (time.perf_counter() - start_time) * 1000
+
+        print(f"\n{'═' * 60}")
+        print(f"  Result: FAILED")
+        print(f"  Duration: {duration:.2f}ms")
+        print(f"  Error: {e}")
+        print(f"{'═' * 60}\n")
+
+        if verbose:
+            import traceback
+            traceback.print_exc()
+
         return 1
 
 
@@ -1182,7 +1350,8 @@ def cmd_version(args: argparse.Namespace) -> int:
         if args.json:
             print(json.dumps(version_info, indent=2))
         else:
-            print(f"\n{'═' * 40}")
+            print_banner(include_version=False)
+            print(f"{'═' * 40}")
             print(f"  {version_info['name']} v{version_info['version']}")
             print(f"  Environment: {version_info['environment']}")
             print(f"{'═' * 40}\n")
@@ -1208,7 +1377,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     """
     import platform
 
-    print(f"\n{'═' * 50}")
+    print_banner()
+    print(f"{'═' * 50}")
     print("  AgentOrchestrator Doctor")
     print(f"{'═' * 50}\n")
 
@@ -1518,8 +1688,8 @@ def cmd_debug(args: argparse.Namespace) -> int:
             print(f"Error parsing --data JSON: {e}")
             return 1
 
-    if args.company:
-        data["corporate_company_name"] = args.company
+    if args.entity:
+        data["entity_name"] = args.entity
 
     # Generate run ID for this debug session
     run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1660,6 +1830,7 @@ def main():
 Examples:
   ao run my_chain --data '{"key": "value"}'
   ao run my_chain --resumable --data '{"key": "value"}'  # With checkpointing
+  ao run my_chain --step context_builder --data '{...}'  # Test single step
   ao resume run_abc123                                    # Resume failed run
   ao runs --status failed                                 # List failed runs
   ao run-info run_abc123                                  # Show run details
@@ -1688,7 +1859,7 @@ Examples:
     run_parser = subparsers.add_parser("run", help="Run a chain")
     run_parser.add_argument("chain_name", help="Name of the chain to run")
     run_parser.add_argument(
-        "--company", "-c", help="Company name (shortcut for corporate_company_name)"
+        "--entity", "-e", help="Entity name (shortcut for entity_name in data)"
     )
     run_parser.add_argument(
         "--data", "-d", help="JSON input data"
@@ -1709,6 +1880,10 @@ Examples:
     run_parser.add_argument(
         "--dry-run", action="store_true",
         help="Simulate execution without running steps (shows execution plan)"
+    )
+    run_parser.add_argument(
+        "--step", "-s",
+        help="Run only a specific step in isolation (for testing individual steps)"
     )
     run_parser.add_argument(
         "extra", nargs="*", help="Additional key=value pairs"
@@ -1932,7 +2107,7 @@ Examples:
     )
     debug_parser.add_argument("chain_name", help="Name of the chain to run")
     debug_parser.add_argument(
-        "--company", "-c", help="Company name (shortcut for corporate_company_name)"
+        "--entity", "-e", help="Entity name (shortcut for entity_name in data)"
     )
     debug_parser.add_argument(
         "--data", "-d", help="JSON input data"
@@ -1956,6 +2131,7 @@ Examples:
             return 1
 
     if not args.command:
+        print_banner()
         parser.print_help()
         return 0
 

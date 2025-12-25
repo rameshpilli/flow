@@ -10,6 +10,14 @@ from agentorchestrator.middleware.analytics import (
 )
 from agentorchestrator.middleware.base import Middleware
 from agentorchestrator.middleware.cache import CacheMiddleware
+from agentorchestrator.middleware.citation import (
+    CitationMiddleware,
+    CitationReport,
+    add_citation,
+    add_source_content,
+    cite,
+    get_citation_report,
+)
 from agentorchestrator.middleware.idempotency import (
     IdempotencyBackend,
     IdempotencyConfig,
@@ -27,13 +35,9 @@ from agentorchestrator.middleware.metrics import (
     create_metrics_middleware,
 )
 from agentorchestrator.middleware.offload import (
-    KEY_FIELD_EXTRACTORS,
-    SUMMARY_GENERATORS,
     OffloadMiddleware,
     cap_items_with_metadata,
     cap_per_source,
-    get_key_field_extractor,
-    get_summary_generator,
 )
 from agentorchestrator.middleware.rate_limiter import (
     CircuitBreakerConfig,
@@ -46,7 +50,6 @@ from agentorchestrator.middleware.rate_limiter import (
     RateLimitExceededError,
 )
 from agentorchestrator.middleware.summarizer import (
-    DOMAIN_PROMPTS,
     LangChainSummarizer,
     LLMSummarizer,  # Legacy alias
     SummarizationStrategy,
@@ -55,14 +58,20 @@ from agentorchestrator.middleware.summarizer import (
     create_domain_aware_middleware,
     create_gateway_summarizer,
     create_openai_summarizer,
-    get_domain_prompts,
 )
 from agentorchestrator.middleware.token_manager import TokenManagerMiddleware
 
 __all__ = [
     # Base
     "Middleware",
-    # Usage Analytics & Citations
+    # Citation Tracking
+    "CitationMiddleware",
+    "CitationReport",
+    "cite",
+    "add_citation",
+    "add_source_content",
+    "get_citation_report",
+    # Usage Analytics
     "UsageAnalyticsMiddleware",
     "UsageBackend",
     "UsageRecord",
@@ -99,17 +108,11 @@ __all__ = [
     "create_anthropic_summarizer",
     "create_gateway_summarizer",
     "create_domain_aware_middleware",
-    "DOMAIN_PROMPTS",
-    "get_domain_prompts",
     "LLMSummarizer",  # Legacy alias
     # Offload Middleware (Auto-offload to Redis)
     "OffloadMiddleware",
     "cap_items_with_metadata",
     "cap_per_source",
-    "get_key_field_extractor",
-    "get_summary_generator",
-    "KEY_FIELD_EXTRACTORS",
-    "SUMMARY_GENERATORS",
     # Other middleware
     "CacheMiddleware",
     "LoggerMiddleware",

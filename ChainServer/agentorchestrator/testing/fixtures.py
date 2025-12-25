@@ -162,38 +162,32 @@ class SampleChainRequest:
     """
     Sample chain request data for testing chain flows.
 
-    Provides realistic test data for common scenarios.
+    Provides generic test data. Override for domain-specific testing.
     """
-    company_name: str = "Apple Inc"
-    ticker: str = "AAPL"
-    user_query: str = "What are the key financial metrics?"
-    meeting_date: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d"))
-    rbc_employee_id: str = "12345"
-    client_email: str = "client@example.com"
-    include_news: bool = True
-    include_sec: bool = True
-    include_earnings: bool = True
+    entity_name: str = "Example Entity"
+    entity_id: str = "E001"
+    user_query: str = "What are the key details?"
+    request_date: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d"))
+    user_id: str = "test_user_123"
+    user_email: str = "user@example.com"
     max_results: int = 10
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for forge.launch()."""
         return {
-            "company_name": self.company_name,
-            "ticker": self.ticker,
+            "entity_name": self.entity_name,
+            "entity_id": self.entity_id,
             "user_query": self.user_query,
-            "meeting_date": self.meeting_date,
-            "rbc_employee_id": self.rbc_employee_id,
-            "client_email": self.client_email,
-            "include_news": self.include_news,
-            "include_sec": self.include_sec,
-            "include_earnings": self.include_earnings,
+            "request_date": self.request_date,
+            "user_id": self.user_id,
+            "user_email": self.user_email,
             "max_results": self.max_results,
         }
 
 
 def sample_chain_request(
-    company: str = "Apple Inc",
-    ticker: str = "AAPL",
+    entity_name: str = "Example Entity",
+    entity_id: str = "E001",
     **overrides,
 ) -> dict[str, Any]:
     """
@@ -202,14 +196,14 @@ def sample_chain_request(
     Convenience function for quick test data creation.
 
     Args:
-        company: Company name
-        ticker: Stock ticker
+        entity_name: Entity name
+        entity_id: Entity identifier
         **overrides: Override any default values
 
     Returns:
         Dict suitable for forge.launch(data=...)
     """
-    request = SampleChainRequest(company_name=company, ticker=ticker)
+    request = SampleChainRequest(entity_name=entity_name, entity_id=entity_id)
 
     data = request.to_dict()
     data.update(overrides)
@@ -256,59 +250,105 @@ def pytest_fixtures():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def sample_news_articles(count: int = 3, company: str = "Apple") -> list[dict]:
-    """Generate sample news articles for testing."""
+def sample_items(
+    count: int = 3,
+    entity: str = "Entity",
+    item_type: str = "item",
+) -> list[dict]:
+    """
+    Generate sample items for testing.
+
+    Args:
+        count: Number of items to generate
+        entity: Entity name
+        item_type: Type of item
+
+    Returns:
+        List of sample item dictionaries
+    """
+    sources = ["Source A", "Source B", "Source C"]
     return [
         {
-            "title": f"{company} News Article {i+1}",
-            "source": "Reuters" if i % 2 == 0 else "Bloomberg",
+            "id": f"{item_type}_{i+1}",
+            "title": f"{entity} {item_type.title()} {i+1}",
+            "source": sources[i % len(sources)],
             "date": datetime.now().strftime("%Y-%m-%d"),
-            "summary": f"This is a sample news article about {company}.",
-            "sentiment": "positive" if i % 3 == 0 else "neutral",
-            "url": f"https://example.com/news/{i+1}",
+            "summary": f"This is a sample {item_type} about {entity}.",
+            "status": "active" if i % 2 == 0 else "pending",
+            "url": f"https://example.com/{item_type}/{i+1}",
         }
         for i in range(count)
     ]
 
 
-def sample_sec_filings(count: int = 2, ticker: str = "AAPL") -> list[dict]:
-    """Generate sample SEC filings for testing."""
-    filing_types = ["10-K", "10-Q", "8-K"]
+def sample_documents(
+    count: int = 2,
+    entity_id: str = "E001",
+    doc_types: list[str] | None = None,
+) -> list[dict]:
+    """
+    Generate sample documents for testing.
+
+    Args:
+        count: Number of documents to generate
+        entity_id: Entity identifier
+        doc_types: List of document types to cycle through
+
+    Returns:
+        List of sample document dictionaries
+    """
+    doc_types = doc_types or ["Report", "Summary", "Analysis"]
     return [
         {
-            "filing_type": filing_types[i % len(filing_types)],
-            "ticker": ticker,
+            "doc_type": doc_types[i % len(doc_types)],
+            "entity_id": entity_id,
             "date": "2024-01-15",
-            "summary": f"Sample {filing_types[i % len(filing_types)]} filing",
-            "url": f"https://sec.gov/filing/{ticker}/{i+1}",
+            "summary": f"Sample {doc_types[i % len(doc_types)]} document",
+            "url": f"https://example.com/docs/{entity_id}/{i+1}",
         }
         for i in range(count)
     ]
 
 
-def sample_earnings_data(ticker: str = "AAPL") -> dict:
-    """Generate sample earnings data for testing."""
+def sample_record(entity_id: str = "E001") -> dict:
+    """
+    Generate a sample record for testing.
+
+    Args:
+        entity_id: Entity identifier
+
+    Returns:
+        Sample record dictionary
+    """
     return {
-        "ticker": ticker,
-        "quarter": "Q1 2024",
-        "eps_actual": 2.18,
-        "eps_estimate": 2.10,
-        "revenue_actual": 119500000000,
-        "revenue_estimate": 118000000000,
-        "guidance": "Positive outlook for FY2024",
-        "call_date": "2024-02-01",
+        "id": entity_id,
+        "period": "Q1 2024",
+        "value_actual": 1000.0,
+        "value_estimate": 950.0,
+        "delta": 50.0,
+        "status": "completed",
+        "notes": "Sample record notes",
+        "created_at": "2024-02-01",
     }
 
 
-def sample_financial_metrics(ticker: str = "AAPL") -> dict:
-    """Generate sample financial metrics for testing."""
+def sample_metrics(entity_id: str = "E001") -> dict:
+    """
+    Generate sample metrics for testing.
+
+    Args:
+        entity_id: Entity identifier
+
+    Returns:
+        Sample metrics dictionary
+    """
     return {
-        "ticker": ticker,
-        "market_cap": 3000000000000,
-        "pe_ratio": 28.5,
-        "dividend_yield": 0.5,
-        "revenue_ttm": 385000000000,
-        "net_income_ttm": 97000000000,
-        "debt_to_equity": 1.8,
-        "current_ratio": 1.0,
+        "id": entity_id,
+        "total_count": 100,
+        "success_rate": 0.95,
+        "average_value": 250.5,
+        "min_value": 10.0,
+        "max_value": 1000.0,
+        "trend": "increasing",
+        "last_updated": datetime.now().strftime("%Y-%m-%d"),
     }

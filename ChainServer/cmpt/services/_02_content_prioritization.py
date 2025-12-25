@@ -73,11 +73,12 @@ class ContentPrioritizationService:
         start_time = datetime.now()
         temporal = context.temporal_context
 
-        # Get fiscal info
+        # Get temporal info for priority calculation
         meeting_date = temporal.meeting_date if temporal else datetime.now().strftime("%Y-%m-%d")
-        company_name = context.company_name or "Unknown"
-        fiscal_year = temporal.fiscal_year if temporal else str(datetime.now().year)
-        fiscal_quarter = temporal.fiscal_quarter if temporal else str((datetime.now().month - 1) // 3 + 1)
+        # Reserved for future use in subquery generation
+        # company_name = context.company_name or "Unknown"
+        # fiscal_year = temporal.fiscal_year if temporal else str(datetime.now().year)
+        # fiscal_quarter = temporal.fiscal_quarter if temporal else str((datetime.now().month - 1) // 3 + 1)
         event_dt = temporal.event_dt if temporal else None
 
         # Step 1: Determine temporal priority

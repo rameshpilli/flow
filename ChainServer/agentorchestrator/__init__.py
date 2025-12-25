@@ -34,10 +34,22 @@ from agentorchestrator.core.context import ChainContext
 from agentorchestrator.core.orchestrator import Context, AgentOrchestrator
 
 # =============================================================================
+# MODELS - Citation and data models
+# =============================================================================
+from agentorchestrator.models.citation import (
+    Citation,
+    CitationLevel,
+    CitedValue,
+    CitationCollection,
+    SourceReference,
+)
+
+# =============================================================================
 # MIDDLEWARE - Import from submodule for full list
 # =============================================================================
 from agentorchestrator.middleware.base import Middleware
 from agentorchestrator.middleware.cache import CacheMiddleware
+from agentorchestrator.middleware.citation import CitationMiddleware, cite
 from agentorchestrator.middleware.logger import LoggerMiddleware
 from agentorchestrator.middleware.summarizer import (
     SummarizerMiddleware,
@@ -83,12 +95,20 @@ __all__ = [
     # Config
     "Config",
     "get_config",
+    # Models (citation tracking)
+    "Citation",
+    "CitationLevel",
+    "CitedValue",
+    "CitationCollection",
+    "SourceReference",
     # Middleware (common)
     "Middleware",
     "CacheMiddleware",
+    "CitationMiddleware",
     "LoggerMiddleware",
     "SummarizerMiddleware",
     "TokenManagerMiddleware",
+    "cite",
     "create_openai_summarizer",
     "create_anthropic_summarizer",
     "create_gateway_summarizer",
@@ -134,7 +154,7 @@ def __getattr__(name: str):
         return getattr(config, name)
 
     # Summarizer extras
-    if name in ("LangChainSummarizer", "SummarizationStrategy", "DOMAIN_PROMPTS",
+    if name in ("LangChainSummarizer", "SummarizationStrategy",
                 "create_domain_aware_middleware"):
         from agentorchestrator.middleware import summarizer
         return getattr(summarizer, name)

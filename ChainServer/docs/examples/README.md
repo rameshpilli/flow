@@ -16,9 +16,9 @@ Start here and work through in order:
 04_meeting_prep_chain.py  → Real-world production example
         ↓
 05_capiq_integration.py   → Advanced: External API integration
-        ↓
-cmpt/                     → Complete production reference
 ```
+
+For a complete production reference, see the `cmpt/` folder at the project root.
 
 ## Quick Overview
 
@@ -29,40 +29,15 @@ cmpt/                     → Complete production reference
 | `03_chain_composition.py` | Nested chains | Sub-chains, context scoping, parallel execution |
 | `04_meeting_prep_chain.py` | Meeting prep | Middleware, multiple agents, error handling |
 | `05_capiq_integration.py` | Financial APIs | External APIs, authentication, rate limiting |
-| `cmpt/` | Production example | Full 3-stage pipeline, services, LLM integration |
 
 ## Running Examples
 
 ```bash
 # Run any example directly
-python examples/01_quickstart.py
+python docs/examples/01_quickstart.py
 
 # Or via the CLI
 ao run QuickstartChain --company "Apple"
-```
-
-## CMPT Folder Structure
-
-The `cmpt/` folder is a complete production example:
-
-```
-cmpt/
-├── run.py                    # 👈 Main entry point
-├── __init__.py               # Package exports
-├── README.md                 # CMPT documentation
-├── 02_cmpt_tutorial.ipynb    # Interactive notebook
-├── 03_cmpt_tests.py          # Test examples
-└── services/
-    ├── models.py             # Pydantic models
-    ├── context_builder.py    # Stage 1: Extract context
-    ├── content_prioritization.py  # Stage 2: Prioritize
-    ├── response_builder.py   # Stage 3: Generate response
-    └── llm_gateway.py        # LLM client with OAuth
-```
-
-Run the CMPT example:
-```bash
-python examples/cmpt/run.py --company "Apple Inc"
 ```
 
 ## Key Concepts by Example
@@ -70,7 +45,7 @@ python examples/cmpt/run.py --company "Apple Inc"
 ### 01_quickstart.py
 - Creating an `AgentOrchestrator` instance
 - Defining steps with `@ao.step`
-- Setting dependencies between steps
+- Setting dependencies between steps (`deps=[]`)
 - Defining chains with `@ao.chain`
 - Running chains with `ao.launch()`
 
@@ -87,7 +62,7 @@ python examples/cmpt/run.py --company "Apple Inc"
 - Parallel sub-chain execution
 
 ### 04_meeting_prep_chain.py
-- Using middleware (logging, caching, tokens)
+- Using middleware with `ao.use()` (logging, caching, tokens)
 - Building multiple data agents
 - Multi-step data processing
 - LLM integration patterns
@@ -100,7 +75,7 @@ python examples/cmpt/run.py --company "Apple Inc"
 
 ## Environment Variables
 
-For production examples (04, 05, cmpt), you may need:
+For production examples (04, 05), you may need:
 
 ```bash
 # LLM Gateway

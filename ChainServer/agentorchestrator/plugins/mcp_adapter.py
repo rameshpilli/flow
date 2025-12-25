@@ -499,7 +499,7 @@ class MCPAdapterAgent(BaseAgent):
                 self._pending_responses.pop(request_id, None)
                 raise Exception(f"Timeout waiting for response to {method}")
                 
-        except Exception as e:
+        except Exception:
             self._pending_responses.pop(request_id, None)
             raise
 

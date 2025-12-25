@@ -1,50 +1,50 @@
 """
-AgentOrchestrator Context Store - Redis-based External Storage for Large Payloads
+AgentOrchestrator Context Store - External Storage for Large Payloads
 
-Offloads heavy data (SEC filings, news transcripts, earnings data) to Redis,
+Offloads large data to external storage (Redis, mem0, etc.),
 keeping only lightweight references in chain context.
 
 Key Principles:
-1. NEVER lose data - full payloads preserved in Redis
+1. NEVER lose data - full payloads preserved in storage
 2. NEVER blind-truncate - always keep hashes, lengths, and retrieval links
 3. Context stays lightweight - only refs in ChainContext
-4. Redis in same container (different port) = low latency, same network
+4. Pluggable backends - Redis, mem0, or custom stores
 
 Architecture:
     ┌─────────────────────────────────────────────────────────────────┐
     │                      Chain Context (in-memory, lightweight)      │
     │  ┌─────────────────────────────────────────────────────────────┐ │
-    │  │  "sec_data" → ContextRef(                                   │ │
+    │  │  "large_data" → ContextRef(                                 │ │
     │  │      ref_id="ctx_abc", size=1.2MB, hash="a1b2c3",          │ │
-    │  │      summary="10-K filing for AAPL, FY2024...",            │ │
-    │  │      key_fields={revenue: 394B, net_income: 97B}           │ │
+    │  │      summary="Data summary...",                             │ │
+    │  │      key_fields={key1: val1, key2: val2}                   │ │
     │  │  )                                                          │ │
     │  └─────────────────────────────────────────────────────────────┘ │
     └─────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
     ┌─────────────────────────────────────────────────────────────────┐
-    │              Redis (same container, port 6380)                   │
-    │  ctx_abc → <1.2MB of SEC filing data - NEVER truncated>        │
-    │  ctx_xyz → <800KB of news articles - FULL data preserved>      │
+    │              Context Store (Redis, mem0, etc.)                   │
+    │  ctx_abc → <1.2MB of data - NEVER truncated>                   │
+    │  ctx_xyz → <800KB of data - FULL data preserved>               │
     └─────────────────────────────────────────────────────────────────┘
 
 Usage:
     from agentorchestrator.core.context_store import RedisContextStore, ContextRef
 
-    # Initialize store (Redis in same container, different port)
-    store = RedisContextStore(host="localhost", port=6380)
+    # Initialize store
+    store = RedisContextStore(host="localhost", port=6379)
 
     # Store large payload, get reference with summary
     ref = await store.store(
-        key="sec_filing_aapl",
-        data=large_filing_data,
-        summary="10-K Annual Report for Apple Inc., FY2024",
-        key_fields={"revenue": "394.3B", "net_income": "97.0B"},
+        key="my_data",
+        data=large_data,
+        summary="Description of the data",
+        key_fields={"key1": "value1", "key2": "value2"},
     )
 
     # Store ref in context (lightweight - ~500 bytes instead of 1.2MB)
-    ctx.set("sec_data", ref)
+    ctx.set("data_ref", ref)
 
     # Later, retrieve full data (NEVER lost)
     data = await store.retrieve(ref)
@@ -339,8 +339,11 @@ class RedisContextStore(ContextStore):
     """
     Redis-based context store for production use.
 
-    Designed to run Redis in the same container on a different port
-    for low-latency access while keeping data external to Python memory.
+    Supports multiple deployment scenarios:
+    - Same container: host="localhost" (your current Docker setup)
+    - Kubernetes: host="redis-service.namespace"
+    - AWS ElastiCache: host="xxx.cache.amazonaws.com", ssl=True
+    - Azure Cache: host="xxx.redis.cache.windows.net", ssl=True
 
     Memory Configuration:
         The maxmemory setting controls how much memory Redis will use.
@@ -351,47 +354,53 @@ class RedisContextStore(ContextStore):
         - Medium workloads: 512MB-1GB (handles ~1000-5000 concurrent contexts)
         - Large workloads: 2GB-4GB (handles ~10000+ concurrent contexts)
 
-    Setup with external Redis:
-        # Start Redis in same container (e.g., supervisord or docker-compose)
-        redis-server --port 6380 --maxmemory 512mb --maxmemory-policy allkeys-lru
-
     Usage:
-        # Configure with memory limit (sets maxmemory on Redis server)
+        # Local/same container
+        store = RedisContextStore(host="localhost", port=6379)
+
+        # Kubernetes
+        store = RedisContextStore(host="redis-service.default.svc.cluster.local")
+
+        # AWS ElastiCache (TLS)
         store = RedisContextStore(
-            host="localhost",
-            port=6380,
-            maxmemory="512mb",  # Options: "128mb", "256mb", "512mb", "1gb", "2gb"
+            host="my-cluster.abc123.use1.cache.amazonaws.com",
+            ssl=True,
         )
 
-        ref = await store.store("sec_filing", large_data, summary="10-K for AAPL")
+        ref = await store.store("large_data", data, summary="Data description")
     """
 
     def __init__(
         self,
         host: str = "localhost",
-        port: int = 6380,  # Different port for context store
+        port: int = 6379,
         db: int = 0,
         password: str | None = None,
         key_prefix: str = "agentorchestrator:ctx:",
         max_connections: int = 10,
         maxmemory: str | None = None,
         maxmemory_policy: str = "allkeys-lru",
+        ssl: bool = False,
+        ssl_cert_reqs: str | None = None,
     ):
         """
         Initialize Redis context store.
 
         Args:
-            host: Redis host
-            port: Redis port (default 6380 to avoid conflicts with other Redis instances)
+            host: Redis host (localhost, K8s service name, or cloud endpoint)
+            port: Redis port (default 6379)
             db: Redis database number
-            password: Redis password
+            password: Redis password (required for most cloud Redis)
             key_prefix: Prefix for all context keys
             max_connections: Maximum connection pool size
             maxmemory: Memory limit for Redis (e.g., "128mb", "512mb", "1gb", "2gb").
                       If provided, will configure Redis server on first connection.
+                      Note: May not work on managed Redis services.
             maxmemory_policy: Eviction policy when maxmemory is reached.
                              Options: "allkeys-lru" (default), "volatile-lru",
                              "allkeys-random", "volatile-random", "volatile-ttl", "noeviction"
+            ssl: Enable SSL/TLS connection (required for ElastiCache, Azure, etc.)
+            ssl_cert_reqs: SSL certificate requirements ("none", "optional", "required")
         """
         self._host = host
         self._port = port
@@ -401,6 +410,8 @@ class RedisContextStore(ContextStore):
         self._max_connections = max_connections
         self._maxmemory = maxmemory
         self._maxmemory_policy = maxmemory_policy
+        self._ssl = ssl
+        self._ssl_cert_reqs = ssl_cert_reqs
         self._redis = None
         self._memory_configured = False
 
@@ -415,16 +426,33 @@ class RedisContextStore(ContextStore):
                     "Install with: pip install redis"
                 )
 
-            self._redis = redis.Redis(
-                host=self._host,
-                port=self._port,
-                db=self._db,
-                password=self._password,
-                max_connections=self._max_connections,
-                decode_responses=False,  # We handle bytes
-            )
+            # Build connection kwargs
+            conn_kwargs = {
+                "host": self._host,
+                "port": self._port,
+                "db": self._db,
+                "password": self._password,
+                "max_connections": self._max_connections,
+                "decode_responses": False,  # We handle bytes
+            }
 
-            # Configure memory limits if specified
+            # Add SSL config if enabled
+            if self._ssl:
+                import ssl as ssl_module
+                conn_kwargs["ssl"] = True
+                if self._ssl_cert_reqs:
+                    cert_reqs_map = {
+                        "none": ssl_module.CERT_NONE,
+                        "optional": ssl_module.CERT_OPTIONAL,
+                        "required": ssl_module.CERT_REQUIRED,
+                    }
+                    conn_kwargs["ssl_cert_reqs"] = cert_reqs_map.get(
+                        self._ssl_cert_reqs.lower(), ssl_module.CERT_REQUIRED
+                    )
+
+            self._redis = redis.Redis(**conn_kwargs)
+
+            # Configure memory limits if specified (may not work on managed services)
             if self._maxmemory and not self._memory_configured:
                 await self._configure_memory()
 
@@ -587,6 +615,230 @@ class RedisContextStore(ContextStore):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#                      MEM0 CONTEXT STORE (SEMANTIC MEMORY)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class Mem0ContextStore(ContextStore):
+    """
+    Mem0-based context store for semantic/long-term memory.
+
+    Unlike Redis (key-value cache), mem0 provides:
+    - Semantic search across stored memories
+    - Automatic summarization and deduplication
+    - User/session scoped memory
+    - Cross-session persistence
+
+    Use cases:
+    - Remember user preferences across sessions
+    - Store conversation history with semantic retrieval
+    - Build up knowledge about entities over time
+
+    Usage:
+        # Cloud mem0
+        store = Mem0ContextStore(api_key="m0-xxx")
+
+        # Self-hosted mem0
+        store = Mem0ContextStore(host="http://mem0.internal:8080")
+
+        # Store with semantic indexing
+        ref = await store.store(
+            "user_preference",
+            {"format": "json", "detail_level": "high"},
+            summary="User prefers JSON output with high detail",
+        )
+
+        # Search semantically
+        results = await store.search("what format does user prefer")
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        host: str | None = None,
+        user_id: str | None = None,
+        org_id: str | None = None,
+        agent_id: str | None = None,
+    ):
+        """
+        Initialize mem0 context store.
+
+        Args:
+            api_key: mem0 cloud API key (for managed service)
+            host: Self-hosted mem0 endpoint URL
+            user_id: User ID for scoped memory (recommended)
+            org_id: Organization ID for shared memory
+            agent_id: Agent ID for agent-specific memory
+        """
+        self._api_key = api_key
+        self._host = host
+        self._user_id = user_id
+        self._org_id = org_id
+        self._agent_id = agent_id
+        self._client = None
+        self._ref_cache: dict[str, dict] = {}  # Local cache for ref metadata
+
+    async def _get_client(self):
+        """Lazy initialization of mem0 client."""
+        if self._client is None:
+            try:
+                from mem0 import MemoryClient, Memory
+            except ImportError:
+                raise ImportError(
+                    "mem0ai package required for Mem0ContextStore. "
+                    "Install with: pip install mem0ai"
+                )
+
+            if self._api_key:
+                # Cloud mem0
+                self._client = MemoryClient(api_key=self._api_key)
+                logger.info("Connected to mem0 cloud")
+            elif self._host:
+                # Self-hosted - use Memory with custom config
+                config = {
+                    "version": "v1.1",
+                    "custom_endpoint": self._host,
+                }
+                self._client = Memory.from_config(config)
+                logger.info(f"Connected to self-hosted mem0 at {self._host}")
+            else:
+                # Local memory (development)
+                self._client = Memory()
+                logger.info("Using local mem0 memory (development mode)")
+
+        return self._client
+
+    async def store(
+        self,
+        key: str,
+        data: Any,
+        ttl_seconds: int = 3600,
+        summary: str = "",
+        key_fields: dict[str, Any] | None = None,
+        source_step: str | None = None,
+        source_agent: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ContextRef:
+        client = await self._get_client()
+
+        serialized = self._serialize(data)
+        ref_id = self._generate_id(key)
+        content_hash = self._compute_hash(serialized)
+
+        # Prepare metadata for mem0
+        mem0_metadata = {
+            "ref_id": ref_id,
+            "key": key,
+            "content_hash": content_hash,
+            "size_bytes": len(serialized),
+            "source_step": source_step,
+            "source_agent": source_agent,
+            **(metadata or {}),
+            **(key_fields or {}),
+        }
+
+        # Create memory content (summary + key data)
+        memory_content = summary or _generate_summary(key, data, len(serialized))
+        if key_fields:
+            fields_str = ", ".join(f"{k}: {v}" for k, v in key_fields.items())
+            memory_content = f"{memory_content}\nKey fields: {fields_str}"
+
+        # Store in mem0
+        add_kwargs = {"messages": [{"role": "user", "content": memory_content}]}
+        if self._user_id:
+            add_kwargs["user_id"] = self._user_id
+        if self._agent_id:
+            add_kwargs["agent_id"] = self._agent_id
+        add_kwargs["metadata"] = mem0_metadata
+
+        result = client.add(**add_kwargs)
+        logger.debug(f"Stored in mem0: {result}")
+
+        # Cache the full data locally (mem0 is for semantic search, not raw storage)
+        self._ref_cache[ref_id] = {
+            "data": serialized,
+            "content_type": "application/json",
+            "mem0_result": result,
+        }
+
+        ref = ContextRef(
+            ref_id=ref_id,
+            size_bytes=len(serialized),
+            content_hash=content_hash,
+            content_type="application/json",
+            ttl_seconds=ttl_seconds,
+            summary=summary,
+            key_fields=key_fields or {},
+            item_count=self._count_items(data),
+            source_step=source_step,
+            source_agent=source_agent,
+            metadata={"mem0_result": result, **(metadata or {})},
+        )
+
+        return ref
+
+    async def retrieve(self, ref: ContextRef) -> Any:
+        # First check local cache
+        if ref.ref_id in self._ref_cache:
+            cached = self._ref_cache[ref.ref_id]
+            return self._deserialize(cached["data"], cached.get("content_type", "application/json"))
+
+        raise ContextRefNotFoundError(ref.ref_id)
+
+    async def delete(self, ref: ContextRef) -> bool:
+        if ref.ref_id in self._ref_cache:
+            del self._ref_cache[ref.ref_id]
+            return True
+        return False
+
+    async def exists(self, ref: ContextRef) -> bool:
+        return ref.ref_id in self._ref_cache
+
+    async def search(
+        self,
+        query: str,
+        limit: int = 10,
+        user_id: str | None = None,
+    ) -> list[dict]:
+        """
+        Search memories semantically.
+
+        Args:
+            query: Natural language search query
+            limit: Maximum results to return
+            user_id: Override default user_id
+
+        Returns:
+            List of matching memories with scores
+        """
+        client = await self._get_client()
+
+        search_kwargs = {"query": query, "limit": limit}
+        if user_id or self._user_id:
+            search_kwargs["user_id"] = user_id or self._user_id
+        if self._agent_id:
+            search_kwargs["agent_id"] = self._agent_id
+
+        results = client.search(**search_kwargs)
+        return results
+
+    async def get_all_memories(
+        self,
+        user_id: str | None = None,
+    ) -> list[dict]:
+        """Get all memories for a user."""
+        client = await self._get_client()
+
+        get_kwargs = {}
+        if user_id or self._user_id:
+            get_kwargs["user_id"] = user_id or self._user_id
+        if self._agent_id:
+            get_kwargs["agent_id"] = self._agent_id
+
+        return client.get_all(**get_kwargs)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #                      CONTEXT INTEGRATION HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -614,20 +866,20 @@ async def offload_to_redis(
         from agentorchestrator.core.context_store import offload_to_redis
 
         @forge.step
-        async def fetch_sec_data(ctx):
-            raw_filings = await fetch_large_filings()
+        async def fetch_data(ctx):
+            large_data = await fetch_large_payload()
 
             # Offload if large, keep ref in context
             result = await offload_to_redis(
-                ctx, "sec_filings", raw_filings,
+                ctx, "my_data", large_data,
                 store=ctx.get("_context_store"),
                 threshold_bytes=100_000,
-                summary="SEC 10-K filings for AAPL",
-                key_fields={"ticker": "AAPL", "filing_type": "10-K"},
+                summary="Large data payload",
+                key_fields={"type": "report", "count": 100},
             )
 
-            ctx.set("sec_data", result)  # ContextRef or raw data
-            return {"sec_data": result}
+            ctx.set("data_ref", result)  # ContextRef or raw data
+            return {"data_ref": result}
     """
     # Estimate size
     try:
@@ -704,26 +956,22 @@ def _extract_key_fields(data: Any) -> dict[str, Any]:
     """
     Auto-extract key fields from data.
 
-    Looks for common financial/business fields to preserve in reference.
+    Extracts common fields that are typically important to preserve in references.
+    Domain-specific extraction should be done at the application level.
     """
     key_fields = {}
 
     if isinstance(data, dict):
-        # Common financial fields
+        # Common fields that are typically important
         for field in [
-            "ticker", "symbol", "company_name", "cik",
-            "revenue", "net_income", "ebitda", "market_cap",
-            "fiscal_year", "fiscal_quarter", "filing_date",
-            "event_date", "earnings_date",
+            "id", "name", "type", "status", "date", "created_at", "updated_at",
+            "count", "total", "value", "result",
         ]:
             if field in data:
                 key_fields[field] = data[field]
 
-        # Look for nested common fields
-        if "company_info" in data and isinstance(data["company_info"], dict):
-            for field in ["ticker", "name", "cik"]:
-                if field in data["company_info"]:
-                    key_fields[f"company_{field}"] = data["company_info"][field]
+        # Record top-level keys for reference
+        key_fields["keys"] = list(data.keys())[:10]
 
     elif isinstance(data, list) and len(data) > 0:
         # For lists, get count and sample of types
@@ -763,18 +1011,76 @@ def create_context_store(
     Factory function to create context store instances.
 
     Args:
-        backend: "memory" or "redis"
+        backend: "memory", "redis", or "mem0"
         **kwargs: Backend-specific configuration
+
+    Backend-specific kwargs:
+
+        redis:
+            host: Redis host (default: localhost)
+            port: Redis port (default: 6379)
+            db: Database number (default: 0)
+            password: Redis password
+            key_prefix: Key prefix (default: agentorchestrator:ctx:)
+            max_connections: Pool size (default: 10)
+            maxmemory: Memory limit (e.g., "128mb")
+            maxmemory_policy: Eviction policy (default: allkeys-lru)
+            ssl: Enable SSL/TLS (default: False)
+            ssl_cert_reqs: SSL cert requirements
+
+        mem0:
+            api_key: mem0 cloud API key
+            host: Self-hosted mem0 URL
+            user_id: User ID for scoped memory
+            org_id: Organization ID
+            agent_id: Agent ID
 
     Returns:
         ContextStore instance
+
+    Usage:
+        # Development (no dependencies)
+        store = create_context_store(backend="memory")
+
+        # Production Redis (same container)
+        store = create_context_store(
+            backend="redis",
+            host="localhost",
+            port=6379,
+        )
+
+        # Kubernetes Redis
+        store = create_context_store(
+            backend="redis",
+            host="redis-service.default.svc.cluster.local",
+        )
+
+        # AWS ElastiCache
+        store = create_context_store(
+            backend="redis",
+            host="my-cluster.abc123.use1.cache.amazonaws.com",
+            ssl=True,
+        )
+
+        # mem0 cloud
+        store = create_context_store(
+            backend="mem0",
+            api_key="m0-xxx",
+            user_id="user-123",
+        )
     """
     if backend == "memory":
         return InMemoryContextStore()
+
     elif backend == "redis":
         return RedisContextStore(**kwargs)
+
+    elif backend == "mem0":
+        return Mem0ContextStore(**kwargs)
+
     else:
-        raise ValueError(f"Unknown context store backend: {backend}")
+        logger.warning(f"Unknown context store backend: {backend}, falling back to memory")
+        return InMemoryContextStore()
 
 
 # Type hint import for context

@@ -351,61 +351,12 @@ class TestVisualization:
 class TestSummarizer:
     """Tests for summarizer middleware"""
 
-    def test_domain_prompts_exist(self):
-        """Test that domain prompts are defined"""
-        from agentorchestrator.middleware.summarizer import DOMAIN_PROMPTS
+    def test_summarizer_middleware_creation(self):
+        """Test SummarizerMiddleware can be created"""
+        from agentorchestrator.middleware.summarizer import SummarizerMiddleware
 
-        # All expected domains should exist
-        expected_domains = ["sec_filing", "earnings", "news", "transcripts", "pricing"]
-        for domain in expected_domains:
-            assert domain in DOMAIN_PROMPTS
-            assert "map" in DOMAIN_PROMPTS[domain]
-            assert "reduce" in DOMAIN_PROMPTS[domain]
-
-    def test_get_domain_prompts(self):
-        """Test getting domain-specific prompts"""
-        from agentorchestrator.middleware.summarizer import LangChainSummarizer, get_domain_prompts
-
-        # Test known domain
-        map_prompt, reduce_prompt = get_domain_prompts("sec_filing")
-        assert "SEC filing" in map_prompt or "financial" in map_prompt.lower()
-        assert "consolidate" in reduce_prompt.lower() or "combine" in reduce_prompt.lower()
-
-        # Test unknown domain falls back to defaults
-        map_prompt, reduce_prompt = get_domain_prompts("unknown_domain")
-        assert map_prompt == LangChainSummarizer.DEFAULT_MAP_PROMPT
-        assert reduce_prompt == LangChainSummarizer.DEFAULT_REDUCE_PROMPT
-
-    def test_summarizer_content_type_parameter(self):
-        """Test that summarizer accepts content_type parameter"""
-        from agentorchestrator.middleware.summarizer import LangChainSummarizer
-
-        summarizer = LangChainSummarizer(llm=None)
-
-        # Should not raise error
-        import asyncio
-
-        result = asyncio.run(
-            summarizer.summarize(
-                "Test content",
-                max_tokens=100,
-                content_type="sec_filing",
-            )
-        )
-
-        # Without LLM, should truncate
-        assert isinstance(result, str)
-
-    def test_create_domain_aware_middleware(self):
-        """Test factory function for domain-aware middleware"""
-        from agentorchestrator.middleware.summarizer import create_domain_aware_middleware
-
-        middleware = create_domain_aware_middleware(llm=None, max_tokens=4000)
-
-        # Should have step_content_types configured
-        assert "sec_filing" in middleware.step_content_types.values()
-        assert "earnings" in middleware.step_content_types.values()
-        assert "news" in middleware.step_content_types.values()
+        middleware = SummarizerMiddleware(max_tokens=4000)
+        assert middleware.max_tokens == 4000
 
     def test_summarizer_middleware_with_content_type(self):
         """Test SummarizerMiddleware with step_content_types"""
@@ -414,13 +365,45 @@ class TestSummarizer:
         middleware = SummarizerMiddleware(
             max_tokens=4000,
             step_content_types={
-                "fetch_sec": "sec_filing",
-                "fetch_news": "news",
+                "fetch_data": "generic",
+                "process_data": "custom",
             },
         )
 
-        assert middleware.step_content_types["fetch_sec"] == "sec_filing"
-        assert middleware.step_content_types["fetch_news"] == "news"
+        assert middleware.step_content_types["fetch_data"] == "generic"
+        assert middleware.step_content_types["process_data"] == "custom"
+
+    def test_langchain_summarizer_default_prompts(self):
+        """Test LangChainSummarizer has default prompts"""
+        from agentorchestrator.middleware.summarizer import LangChainSummarizer
+
+        assert LangChainSummarizer.DEFAULT_MAP_PROMPT is not None
+        assert LangChainSummarizer.DEFAULT_REDUCE_PROMPT is not None
+        assert "{text}" in LangChainSummarizer.DEFAULT_MAP_PROMPT
+
+    def test_langchain_summarizer_register_domain_prompts(self):
+        """Test registering custom domain prompts"""
+        from agentorchestrator.middleware.summarizer import LangChainSummarizer
+
+        # Register a test domain
+        LangChainSummarizer.register_domain_prompts(
+            domain="test_domain",
+            map_prompt="Test map prompt: {text}",
+            reduce_prompt="Test reduce prompt: {text}",
+        )
+
+        # Verify registered
+        assert "test_domain" in LangChainSummarizer.list_registered_domains()
+
+        # Get prompts
+        map_prompt, reduce_prompt = LangChainSummarizer.get_domain_prompts("test_domain")
+        assert "Test map prompt" in map_prompt
+        assert "Test reduce prompt" in reduce_prompt
+
+        # Unknown domain should return defaults
+        map_prompt, reduce_prompt = LangChainSummarizer.get_domain_prompts("unknown")
+        assert map_prompt == LangChainSummarizer.DEFAULT_MAP_PROMPT
+        assert reduce_prompt == LangChainSummarizer.DEFAULT_REDUCE_PROMPT
 
 
 class TestExports:
@@ -429,12 +412,8 @@ class TestExports:
     def test_main_exports(self):
         """Test that main package exports are available"""
         from agentorchestrator import (
-            DOMAIN_PROMPTS,
             CacheMiddleware,
             ChainContext,
-            ChainRequest,
-            ChainResponse,
-            CMPTChain,
             AgentOrchestrator,
             LangChainSummarizer,
             LoggerMiddleware,
@@ -451,13 +430,9 @@ class TestExports:
         assert LangChainSummarizer is not None
         assert SummarizationStrategy is not None
         assert create_domain_aware_middleware is not None
-        assert DOMAIN_PROMPTS is not None
         assert CacheMiddleware is not None
         assert LoggerMiddleware is not None
         assert TokenManagerMiddleware is not None
-        assert CMPTChain is not None
-        assert ChainRequest is not None
-        assert ChainResponse is not None
 
     def test_middleware_exports(self):
         """Test middleware submodule exports"""
@@ -465,206 +440,13 @@ class TestExports:
             Middleware,
             create_anthropic_summarizer,
             create_openai_summarizer,
-            get_domain_prompts,
+            LangChainSummarizer,
         )
 
         assert Middleware is not None
         assert create_openai_summarizer is not None
         assert create_anthropic_summarizer is not None
-        assert get_domain_prompts is not None
-
-
-class TestUserOverrides:
-    """Tests for user override functionality in ChainRequest"""
-
-    def test_chain_request_overrides_model(self):
-        """Test ChainRequestOverrides model creation"""
-        from agentorchestrator.services.models import ChainRequest, ChainRequestOverrides
-
-        overrides = ChainRequestOverrides(
-            ticker="AAPL",
-            fiscal_quarter="Q1",
-            fiscal_year="2025",
-            next_earnings_date="2025-01-30",
-            news_lookback_days=60,
-        )
-
-        assert overrides.ticker == "AAPL"
-        assert overrides.fiscal_quarter == "Q1"
-        assert overrides.fiscal_year == "2025"
-        assert overrides.next_earnings_date == "2025-01-30"
-        assert overrides.news_lookback_days == 60
-
-    def test_chain_request_with_overrides(self):
-        """Test ChainRequest with overrides"""
-        from agentorchestrator.services.models import ChainRequest, ChainRequestOverrides
-
-        request = ChainRequest(
-            corporate_company_name="Apple Inc",
-            meeting_datetime="2025-02-15",
-            rbc_employee_email="john.doe@rbc.com",
-            overrides=ChainRequestOverrides(
-                ticker="AAPL",
-                fiscal_quarter="Q1",
-                skip_earnings_calendar_api=True,
-            ),
-        )
-
-        assert request.corporate_company_name == "Apple Inc"
-        assert request.overrides is not None
-        assert request.overrides.ticker == "AAPL"
-        assert request.overrides.fiscal_quarter == "Q1"
-        assert request.overrides.skip_earnings_calendar_api is True
-
-    def test_chain_request_without_overrides(self):
-        """Test ChainRequest without overrides"""
-        from agentorchestrator.services.models import ChainRequest
-
-        request = ChainRequest(
-            corporate_company_name="Microsoft",
-            meeting_datetime="2025-03-01",
-        )
-
-        assert request.corporate_company_name == "Microsoft"
-        assert request.overrides is None
-
-    @pytest.mark.asyncio
-    async def test_context_builder_with_ticker_override(self):
-        """Test ContextBuilder applies ticker override"""
-        from agentorchestrator.services.context_builder import ContextBuilderService
-        from agentorchestrator.services.models import ChainRequest, ChainRequestOverrides
-
-        service = ContextBuilderService()
-
-        request = ChainRequest(
-            corporate_company_name="Apple Inc",
-            meeting_datetime="2025-02-15",
-            overrides=ChainRequestOverrides(
-                ticker="AAPL",
-            ),
-        )
-
-        output = await service.execute(request)
-
-        # Ticker should be the override value
-        assert output.ticker == "AAPL"
-        assert output.company_info.ticker == "AAPL"
-
-    @pytest.mark.asyncio
-    async def test_context_builder_with_fiscal_quarter_override(self):
-        """Test ContextBuilder applies fiscal quarter override"""
-        from agentorchestrator.services.context_builder import ContextBuilderService
-        from agentorchestrator.services.models import ChainRequest, ChainRequestOverrides
-
-        service = ContextBuilderService()
-
-        request = ChainRequest(
-            corporate_company_name="Google",
-            meeting_datetime="2025-06-15",  # Would normally be Q2
-            overrides=ChainRequestOverrides(
-                fiscal_quarter="Q1",  # Override to Q1
-                fiscal_year="2025",
-            ),
-        )
-
-        output = await service.execute(request)
-
-        # Fiscal quarter should be the override value
-        assert output.temporal_context is not None
-        assert output.temporal_context.fiscal_quarter == "1"
-        assert output.temporal_context.fiscal_year == "2025"
-
-    @pytest.mark.asyncio
-    async def test_context_builder_skip_earnings_api(self):
-        """Test ContextBuilder skips earnings calendar API when override set"""
-        from agentorchestrator.services.context_builder import ContextBuilderService
-        from agentorchestrator.services.models import ChainRequest, ChainRequestOverrides
-
-        service = ContextBuilderService()
-
-        request = ChainRequest(
-            corporate_company_name="Netflix",
-            meeting_datetime="2025-04-15",
-            overrides=ChainRequestOverrides(
-                fiscal_quarter="Q2",
-                skip_earnings_calendar_api=True,
-            ),
-        )
-
-        output = await service.execute(request)
-
-        # Should have temporal context created from overrides
-        assert output.temporal_context is not None
-        assert output.temporal_context.fiscal_quarter == "2"
-
-    @pytest.mark.asyncio
-    async def test_context_builder_skip_company_lookup(self):
-        """Test ContextBuilder skips company lookup when override set"""
-        from agentorchestrator.services.context_builder import ContextBuilderService
-        from agentorchestrator.services.models import ChainRequest, ChainRequestOverrides
-
-        service = ContextBuilderService()
-
-        request = ChainRequest(
-            corporate_company_name="Test Company",
-            meeting_datetime="2025-05-01",
-            overrides=ChainRequestOverrides(
-                ticker="TEST",
-                industry="Technology",
-                skip_company_lookup=True,
-            ),
-        )
-
-        output = await service.execute(request)
-
-        # Company info should be created from overrides
-        assert output.company_info is not None
-        assert output.company_info.name == "Test Company"
-        assert output.company_info.ticker == "TEST"
-        assert output.company_info.industry == "Technology"
-
-    @pytest.mark.asyncio
-    async def test_context_builder_lookback_overrides(self):
-        """Test ContextBuilder applies lookback period overrides"""
-        from agentorchestrator.services.context_builder import ContextBuilderService
-        from agentorchestrator.services.models import ChainRequest, ChainRequestOverrides
-
-        service = ContextBuilderService()
-
-        request = ChainRequest(
-            corporate_company_name="Amazon",
-            meeting_datetime="2025-03-15",
-            overrides=ChainRequestOverrides(
-                news_lookback_days=90,
-                filing_quarters=12,
-            ),
-        )
-
-        output = await service.execute(request)
-
-        # Lookback periods should be the override values
-        assert output.temporal_context is not None
-        assert output.temporal_context.news_lookback_days == 90
-        assert output.temporal_context.filing_quarters == 12
-
-    def test_overrides_validation(self):
-        """Test that overrides have proper validation"""
-        from agentorchestrator.services.models import ChainRequestOverrides
-        import pydantic
-
-        # news_lookback_days must be between 1 and 365
-        with pytest.raises(pydantic.ValidationError):
-            ChainRequestOverrides(news_lookback_days=0)
-
-        with pytest.raises(pydantic.ValidationError):
-            ChainRequestOverrides(news_lookback_days=400)
-
-        # filing_quarters must be between 1 and 20
-        with pytest.raises(pydantic.ValidationError):
-            ChainRequestOverrides(filing_quarters=0)
-
-        with pytest.raises(pydantic.ValidationError):
-            ChainRequestOverrides(filing_quarters=25)
+        assert LangChainSummarizer is not None
 
 
 class TestLLMGateway:
@@ -717,23 +499,20 @@ class TestLLMGateway:
 
     def test_get_llm_client_factory(self):
         """Test get_llm_client factory function"""
-        import os
         from agentorchestrator.services.llm_gateway import get_llm_client
 
-        # Set environment variables for testing
-        os.environ["LLM_GATEWAY_URL"] = "https://test.example.com/v1"
-        os.environ["LLM_MODEL_NAME"] = "test-model"
-        os.environ["LLM_API_KEY"] = "test-api-key"
+        # get_llm_client without args returns default or creates new
+        client = get_llm_client()
+        assert client is not None
 
-        try:
-            client = get_llm_client()
-            assert client.server_url == "https://test.example.com/v1"
-            assert client.model_name == "test-model"
-        finally:
-            # Clean up
-            del os.environ["LLM_GATEWAY_URL"]
-            del os.environ["LLM_MODEL_NAME"]
-            del os.environ["LLM_API_KEY"]
+        # get_llm_client with args creates configured client
+        client = get_llm_client(
+            server_url="https://test.example.com/v1",
+            model_name="test-model",
+            api_key="test-api-key",
+        )
+        assert client.server_url == "https://test.example.com/v1"
+        assert client.model_name == "test-model"
 
     def test_timed_lru_cache(self):
         """Test timed_lru_cache decorator"""
@@ -794,98 +573,6 @@ class TestLLMGateway:
         llm_gateway._default_client = None
 
 
-class TestResponseBuilderWithLLM:
-    """Tests for ResponseBuilder with LLM integration"""
-
-    def test_response_builder_without_llm(self):
-        """Test ResponseBuilder works without LLM client"""
-        from agentorchestrator.services.response_builder import ResponseBuilderService
-
-        service = ResponseBuilderService()
-        assert service.llm_client is None
-        assert service.use_llm_for_metrics is True
-        assert service.use_llm_for_analysis is True
-
-    def test_response_builder_with_llm_client(self):
-        """Test ResponseBuilder accepts LLM client"""
-        from agentorchestrator.services.llm_gateway import LLMGatewayClient
-        from agentorchestrator.services.response_builder import ResponseBuilderService
-
-        llm_client = LLMGatewayClient(
-            server_url="https://llm.example.com/v1",
-            model_name="gpt-4",
-            api_key="test-key",
-        )
-
-        service = ResponseBuilderService(llm_client=llm_client)
-        assert service.llm_client is llm_client
-
-    def test_response_builder_llm_toggle_flags(self):
-        """Test ResponseBuilder LLM toggle flags"""
-        from agentorchestrator.services.response_builder import ResponseBuilderService
-
-        service = ResponseBuilderService(
-            use_llm_for_metrics=False,
-            use_llm_for_analysis=True,
-            use_llm_for_content=False,
-        )
-
-        assert service.use_llm_for_metrics is False
-        assert service.use_llm_for_analysis is True
-        assert service.use_llm_for_content is False
-
-    @pytest.mark.asyncio
-    async def test_response_builder_fallback_without_llm(self):
-        """Test ResponseBuilder falls back to heuristics without LLM"""
-        from agentorchestrator.services.response_builder import ResponseBuilderService
-        from agentorchestrator.services.models import (
-            CompanyInfo,
-            ContextBuilderOutput,
-            ContentPrioritizationOutput,
-        )
-
-        service = ResponseBuilderService()
-
-        context = ContextBuilderOutput(
-            company_info=CompanyInfo(name="Test Corp", ticker="TEST"),
-            company_name="Test Corp",
-            ticker="TEST",
-        )
-        prioritization = ContentPrioritizationOutput()
-
-        output = await service.execute(context, prioritization)
-
-        assert output is not None
-        assert output.prepared_content is not None
-        assert "Test Corp" in output.prepared_content
-
-    def test_parse_json_response(self):
-        """Test JSON parsing from LLM responses"""
-        from agentorchestrator.services.response_builder import ResponseBuilderService
-
-        service = ResponseBuilderService()
-
-        # Test direct JSON
-        result = service._parse_json_response('{"key": "value"}')
-        assert result == {"key": "value"}
-
-        # Test JSON in markdown code block
-        result = service._parse_json_response('```json\n{"key": "value"}\n```')
-        assert result == {"key": "value"}
-
-        # Test JSON in plain code block
-        result = service._parse_json_response('```\n{"key": "value"}\n```')
-        assert result == {"key": "value"}
-
-        # Test JSON embedded in text
-        result = service._parse_json_response('Here is the result: {"key": "value"}')
-        assert result == {"key": "value"}
-
-        # Test invalid JSON
-        result = service._parse_json_response("not json at all")
-        assert result is None
-
-
 class TestGatewaySummarizer:
     """Tests for Gateway Summarizer factory"""
 
@@ -926,13 +613,6 @@ class TestLLMExports:
         assert init_default_llm_client is not None
         assert timed_lru_cache is not None
 
-    def test_chain_request_overrides_exported(self):
-        """Test ChainRequestOverrides is exported from services"""
-        from agentorchestrator.services import ChainRequestOverrides
-
-        assert ChainRequestOverrides is not None
-
-
 class TestConfig:
     """Tests for configuration module"""
 
@@ -945,7 +625,7 @@ class TestConfig:
         os.environ["LLM_GATEWAY_URL"] = "https://test.example.com/v1"
         os.environ["LLM_MODEL_NAME"] = "test-model"
         os.environ["LLM_API_KEY"] = "test-key"
-        os.environ["DEFAULT_NEWS_LOOKBACK_DAYS"] = "60"
+        os.environ["CHAIN_MAX_PARALLEL_STEPS"] = "10"
 
         try:
             config = Config.from_env()
@@ -953,14 +633,14 @@ class TestConfig:
             assert config.llm.server_url == "https://test.example.com/v1"
             assert config.llm.model_name == "test-model"
             assert config.llm.api_key == "test-key"
-            assert config.chain.default_news_lookback_days == 60
+            assert config.chain.max_parallel_steps == 10
 
         finally:
             # Clean up
             del os.environ["LLM_GATEWAY_URL"]
             del os.environ["LLM_MODEL_NAME"]
             del os.environ["LLM_API_KEY"]
-            del os.environ["DEFAULT_NEWS_LOOKBACK_DAYS"]
+            del os.environ["CHAIN_MAX_PARALLEL_STEPS"]
 
     def test_llm_config_is_configured(self):
         """Test LLMConfig.is_configured property"""
@@ -1739,21 +1419,19 @@ class TestMetricsMiddleware:
 class TestLLMGatewayRetryConfig:
     """Tests for LLM Gateway retry configuration."""
 
-    def test_llm_client_uses_instance_retry_config(self):
-        """Test that LLMGatewayClient uses instance-level retry config."""
+    def test_llm_client_basic_creation(self):
+        """Test that LLMGatewayClient can be created with basic params."""
         from agentorchestrator.services.llm_gateway import LLMGatewayClient
 
-        # Create client with custom retry config
+        # Create client with basic config
         client = LLMGatewayClient(
             server_url="https://test.example.com/v1",
             model_name="test-model",
             api_key="test-key",
-            max_retries=5,
-            retry_delay_ms=2000,
         )
 
-        assert client.max_retries == 5
-        assert client.retry_delay_ms == 2000
+        assert client.server_url == "https://test.example.com/v1"
+        assert client.model_name == "test-model"
 
     def test_async_client_lock_exists(self):
         """Test that LLMGatewayClient has async client lock for thread safety."""
@@ -1786,11 +1464,8 @@ class TestLLMGatewayRetryConfig:
         # Run multiple concurrent accesses
         clients = await asyncio.gather(*[get_client() for _ in range(10)])
 
-        # All should return the same client instance
+        # All should return the same client instance (or None if httpx not available)
         assert all(c is clients[0] for c in clients)
-
-        # Clean up
-        await client.close()
 
 
 # Run tests

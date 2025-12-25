@@ -172,7 +172,7 @@ async def fetch_custom_data(ctx: ChainContext) -> dict[str, Any]:
 
 @ao.step(
     name="enrich_with_mcp",
-    dependencies=["fetch_custom_data"],
+    deps=["fetch_custom_data"],
     produces=["enriched_data"],
 )
 async def enrich_with_mcp(ctx: ChainContext) -> dict[str, Any]:
@@ -195,7 +195,7 @@ async def enrich_with_mcp(ctx: ChainContext) -> dict[str, Any]:
 
 @ao.step(
     name="process_results",
-    dependencies=["enrich_with_mcp"],
+    deps=["enrich_with_mcp"],
     produces=["final_output"],
 )
 async def process_results(ctx: ChainContext) -> dict[str, Any]:

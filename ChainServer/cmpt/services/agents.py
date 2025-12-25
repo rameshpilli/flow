@@ -7,11 +7,15 @@ These extend AgentOrchestrator's MCPAgent with CMPT-specific logic.
 
 import logging
 import time
-from typing import Any
 
-from agentorchestrator.agents.base import AgentResult, BaseAgent, ResilientAgent, ResilientAgentConfig
-from agentorchestrator.connectors.mcp import MCPAgent
+from agentorchestrator.agents.base import (
+    AgentResult,
+    BaseAgent,
+    ResilientAgent,
+    ResilientAgentConfig,
+)
 from agentorchestrator.connectors.base import ConnectorConfig
+from agentorchestrator.connectors.mcp import MCPAgent
 
 from cmpt.services._02_content_prioritization import ToolName
 

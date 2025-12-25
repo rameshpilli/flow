@@ -1,46 +1,51 @@
 """
 AgentOrchestrator Offload Middleware - Automatic Large Payload Offloading
 
-Automatically offloads large step outputs to Redis context store,
+Automatically offloads large step outputs to context store (Redis, mem0, etc.),
 keeping chain context lightweight while preserving 100% of the data.
 
 Key Principles:
-1. NEVER lose data - full payloads preserved in Redis
+1. NEVER lose data - full payloads preserved in context store
 2. NEVER blind-truncate - always keep summaries, key fields, counts
 3. Automatic - no manual intervention needed per step
-4. Configurable thresholds per step/agent
+4. Pluggable - register domain-specific extractors at application level
 
 Architecture:
     Step Output (1.2MB)
            │
            ▼
-    ┌──────────────────────────────────────────────────────────┐
-    │              Offload Middleware                           │
-    │  if size > threshold:                                     │
-    │    1. Extract key_fields (revenue, dates, entities)      │
-    │    2. Generate summary                                    │
-    │    3. Store full data in Redis                           │
-    │    4. Replace output with ContextRef                     │
-    └──────────────────────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────────┐
+    │              Offload Middleware                               │
+    │  if size > threshold:                                         │
+    │    1. Extract key_fields (via registered extractor)          │
+    │    2. Generate summary (via registered generator)            │
+    │    3. Store full data in context store                       │
+    │    4. Replace output with ContextRef                         │
+    └──────────────────────────────────────────────────────────────┘
            │
            ▼
     Context gets ContextRef (500 bytes)
-    Redis stores full data (1.2MB)
+    Store holds full data (1.2MB)
 
 Usage:
     from agentorchestrator.middleware.offload import OffloadMiddleware
     from agentorchestrator.core.context_store import RedisContextStore
 
-    store = RedisContextStore(host="localhost", port=6380)
+    store = RedisContextStore(host="localhost", port=6379)
 
-    forge.use(OffloadMiddleware(
+    middleware = OffloadMiddleware(
         store=store,
         default_threshold_bytes=100_000,  # 100KB
         step_thresholds={
-            "fetch_sec_data": 50_000,   # More aggressive for SEC
-            "fetch_news_data": 100_000,
+            "fetch_data": 50_000,
         },
-    ))
+    )
+
+    # Register domain-specific extractor (at application level)
+    middleware.register_extractor("my_step", my_key_field_extractor)
+    middleware.register_generator("my_step", my_summary_generator)
+
+    forge.use(middleware)
 """
 
 import json
@@ -60,144 +65,32 @@ from agentorchestrator.middleware.base import Middleware
 logger = logging.getLogger(__name__)
 
 
+# Type aliases for extractors and generators
+KeyFieldExtractor = Callable[[Any], dict[str, Any]]
+SummaryGenerator = Callable[[Any, dict[str, Any]], str]
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
-#                    KEY FIELD EXTRACTORS (Domain-Aware)
+#                    DEFAULT EXTRACTORS & GENERATORS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def extract_sec_key_fields(data: Any) -> dict[str, Any]:
-    """Extract key fields from SEC filing data."""
-    key_fields = {}
+def default_key_field_extractor(data: Any) -> dict[str, Any]:
+    """
+    Default key field extractor for generic data types.
 
-    if isinstance(data, dict):
-        # Common SEC fields
-        for field in [
-            "ticker", "cik", "company_name", "filing_type", "filing_date",
-            "fiscal_year", "fiscal_quarter", "accession_number",
-            "total_revenue", "net_income", "total_assets", "total_liabilities",
-        ]:
-            if field in data:
-                key_fields[field] = data[field]
-
-    elif isinstance(data, list):
-        key_fields["filing_count"] = len(data)
-        if len(data) > 0 and isinstance(data[0], dict):
-            # Get unique tickers/filing types
-            tickers = set()
-            filing_types = set()
-            for item in data[:20]:  # Sample first 20
-                if "ticker" in item:
-                    tickers.add(item["ticker"])
-                if "filing_type" in item:
-                    filing_types.add(item["filing_type"])
-            if tickers:
-                key_fields["tickers"] = list(tickers)[:5]
-            if filing_types:
-                key_fields["filing_types"] = list(filing_types)
-
-    return key_fields
-
-
-def extract_news_key_fields(data: Any) -> dict[str, Any]:
-    """Extract key fields from news data."""
-    key_fields = {}
-
-    if isinstance(data, list):
-        key_fields["article_count"] = len(data)
-
-        # Extract sentiment distribution if available
-        sentiments = {"positive": 0, "negative": 0, "neutral": 0}
-        sources = set()
-        topics = set()
-
-        for item in data[:50]:  # Sample first 50
-            if isinstance(item, dict):
-                if "sentiment" in item:
-                    sent = item["sentiment"].lower()
-                    if sent in sentiments:
-                        sentiments[sent] += 1
-                if "source" in item:
-                    sources.add(item["source"])
-                if "topics" in item and isinstance(item["topics"], list):
-                    topics.update(item["topics"][:3])
-
-        if any(sentiments.values()):
-            key_fields["sentiment_distribution"] = sentiments
-        if sources:
-            key_fields["sources"] = list(sources)[:10]
-        if topics:
-            key_fields["topics"] = list(topics)[:10]
-
-    return key_fields
-
-
-def extract_earnings_key_fields(data: Any) -> dict[str, Any]:
-    """Extract key fields from earnings data."""
-    key_fields = {}
-
-    if isinstance(data, dict):
-        for field in [
-            "ticker", "company_name", "fiscal_year", "fiscal_quarter",
-            "eps", "eps_estimate", "eps_surprise",
-            "revenue", "revenue_estimate", "revenue_surprise",
-            "earnings_date", "transcript_date",
-        ]:
-            if field in data:
-                key_fields[field] = data[field]
-
-    elif isinstance(data, list):
-        key_fields["earnings_count"] = len(data)
-        if len(data) > 0 and isinstance(data[0], dict):
-            quarters = set()
-            for item in data[:10]:
-                if "fiscal_quarter" in item and "fiscal_year" in item:
-                    quarters.add(f"{item['fiscal_year']}Q{item['fiscal_quarter']}")
-            if quarters:
-                key_fields["quarters_covered"] = sorted(list(quarters))
-
-    return key_fields
-
-
-# Map agent/step names to extractors
-KEY_FIELD_EXTRACTORS: dict[str, Callable[[Any], dict[str, Any]]] = {
-    "sec": extract_sec_key_fields,
-    "sec_agent": extract_sec_key_fields,
-    "fetch_sec_data": extract_sec_key_fields,
-    "news": extract_news_key_fields,
-    "news_agent": extract_news_key_fields,
-    "fetch_news_data": extract_news_key_fields,
-    "earnings": extract_earnings_key_fields,
-    "earnings_agent": extract_earnings_key_fields,
-    "fetch_earnings_data": extract_earnings_key_fields,
-}
-
-
-def get_key_field_extractor(step_name: str) -> Callable[[Any], dict[str, Any]]:
-    """Get the appropriate key field extractor for a step."""
-    # Check for exact match
-    if step_name in KEY_FIELD_EXTRACTORS:
-        return KEY_FIELD_EXTRACTORS[step_name]
-
-    # Check for partial match
-    step_lower = step_name.lower()
-    for key, extractor in KEY_FIELD_EXTRACTORS.items():
-        if key in step_lower:
-            return extractor
-
-    # Default extractor
-    return _default_key_field_extractor
-
-
-def _default_key_field_extractor(data: Any) -> dict[str, Any]:
-    """Default key field extractor for unknown data types."""
+    Extracts common fields and structural information.
+    Override by registering domain-specific extractors.
+    """
     key_fields = {}
 
     if isinstance(data, dict):
         # Extract common fields
-        for field in ["id", "name", "type", "date", "count", "total"]:
+        for field in ["id", "name", "type", "date", "count", "total", "status"]:
             if field in data:
                 key_fields[field] = data[field]
         key_fields["keys"] = list(data.keys())[:10]
+        key_fields["key_count"] = len(data)
 
     elif isinstance(data, list):
         key_fields["count"] = len(data)
@@ -206,117 +99,34 @@ def _default_key_field_extractor(data: Any) -> dict[str, Any]:
             if isinstance(data[0], dict):
                 key_fields["sample_keys"] = list(data[0].keys())[:5]
 
+    elif isinstance(data, str):
+        key_fields["length"] = len(data)
+
     return key_fields
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#                    SUMMARY GENERATORS (Domain-Aware)
-# ═══════════════════════════════════════════════════════════════════════════════
+def default_summary_generator(data: Any, key_fields: dict[str, Any]) -> str:
+    """
+    Default summary generator for generic data types.
 
-
-def generate_sec_summary(data: Any, key_fields: dict[str, Any]) -> str:
-    """Generate summary for SEC filing data."""
+    Override by registering domain-specific generators.
+    """
     if isinstance(data, list):
-        count = len(data)
-        tickers = key_fields.get("tickers", [])
-        filing_types = key_fields.get("filing_types", [])
-
-        parts = [f"{count} SEC filing(s)"]
-        if tickers:
-            parts.append(f"for {', '.join(tickers[:3])}")
-        if filing_types:
-            parts.append(f"types: {', '.join(filing_types[:3])}")
-
-        return " ".join(parts)
+        count = key_fields.get("count", len(data))
+        item_type = key_fields.get("item_type", "item")
+        return f"{count} {item_type}(s)"
 
     elif isinstance(data, dict):
-        ticker = key_fields.get("ticker", "Unknown")
-        filing_type = key_fields.get("filing_type", "filing")
-        fiscal = ""
-        if "fiscal_year" in key_fields:
-            fiscal = f" FY{key_fields['fiscal_year']}"
-            if "fiscal_quarter" in key_fields:
-                fiscal += f"Q{key_fields['fiscal_quarter']}"
+        key_count = key_fields.get("key_count", len(data))
+        name = key_fields.get("name", "")
+        if name:
+            return f"{name} (dict with {key_count} keys)"
+        return f"Dict with {key_count} keys"
 
-        return f"SEC {filing_type} for {ticker}{fiscal}"
-
-    return "SEC filing data"
-
-
-def generate_news_summary(data: Any, key_fields: dict[str, Any]) -> str:
-    """Generate summary for news data."""
-    count = key_fields.get("article_count", len(data) if isinstance(data, list) else 1)
-    sources = key_fields.get("sources", [])
-    sentiment = key_fields.get("sentiment_distribution", {})
-
-    parts = [f"{count} news article(s)"]
-    if sources:
-        parts.append(f"from {', '.join(sources[:3])}")
-    if sentiment:
-        dominant = max(sentiment.items(), key=lambda x: x[1], default=("neutral", 0))
-        if dominant[1] > 0:
-            parts.append(f"(mostly {dominant[0]})")
-
-    return " ".join(parts)
-
-
-def generate_earnings_summary(data: Any, key_fields: dict[str, Any]) -> str:
-    """Generate summary for earnings data."""
-    if isinstance(data, list):
-        count = len(data)
-        quarters = key_fields.get("quarters_covered", [])
-
-        parts = [f"{count} earnings record(s)"]
-        if quarters:
-            parts.append(f"covering {', '.join(quarters[:3])}")
-
-        return " ".join(parts)
-
-    elif isinstance(data, dict):
-        ticker = key_fields.get("ticker", "Unknown")
-        quarter = ""
-        if "fiscal_year" in key_fields and "fiscal_quarter" in key_fields:
-            quarter = f" {key_fields['fiscal_year']}Q{key_fields['fiscal_quarter']}"
-
-        return f"Earnings data for {ticker}{quarter}"
-
-    return "Earnings data"
-
-
-SUMMARY_GENERATORS: dict[str, Callable[[Any, dict], str]] = {
-    "sec": generate_sec_summary,
-    "sec_agent": generate_sec_summary,
-    "fetch_sec_data": generate_sec_summary,
-    "news": generate_news_summary,
-    "news_agent": generate_news_summary,
-    "fetch_news_data": generate_news_summary,
-    "earnings": generate_earnings_summary,
-    "earnings_agent": generate_earnings_summary,
-    "fetch_earnings_data": generate_earnings_summary,
-}
-
-
-def get_summary_generator(step_name: str) -> Callable[[Any, dict], str]:
-    """Get the appropriate summary generator for a step."""
-    if step_name in SUMMARY_GENERATORS:
-        return SUMMARY_GENERATORS[step_name]
-
-    step_lower = step_name.lower()
-    for key, generator in SUMMARY_GENERATORS.items():
-        if key in step_lower:
-            return generator
-
-    return _default_summary_generator
-
-
-def _default_summary_generator(data: Any, key_fields: dict[str, Any]) -> str:
-    """Default summary generator."""
-    if isinstance(data, list):
-        return f"{len(data)} items"
-    elif isinstance(data, dict):
-        return f"Dict with {len(data)} keys"
     elif isinstance(data, str):
-        return f"Text ({len(data)} chars)"
+        length = key_fields.get("length", len(data))
+        return f"Text ({length} chars)"
+
     return f"{type(data).__name__} data"
 
 
@@ -327,29 +137,32 @@ def _default_summary_generator(data: Any, key_fields: dict[str, Any]) -> str:
 
 class OffloadMiddleware(Middleware):
     """
-    Middleware that automatically offloads large step outputs to Redis.
+    Middleware that automatically offloads large step outputs to context store.
 
     NEVER loses data - full payloads preserved, only refs in context.
 
     Features:
     - Configurable size thresholds (global and per-step)
-    - Domain-aware key field extraction
-    - Domain-aware summary generation
+    - Pluggable key field extraction (register domain-specific extractors)
+    - Pluggable summary generation (register domain-specific generators)
     - Automatic source tracking
 
     Usage:
         from agentorchestrator.middleware.offload import OffloadMiddleware
         from agentorchestrator.core.context_store import RedisContextStore
 
-        store = RedisContextStore(host="localhost", port=6380)
+        store = RedisContextStore(host="localhost", port=6379)
 
-        forge.use(OffloadMiddleware(
+        middleware = OffloadMiddleware(
             store=store,
             default_threshold_bytes=100_000,
-            step_thresholds={
-                "fetch_sec_data": 50_000,
-            },
-        ))
+        )
+
+        # Register domain-specific handlers at application level
+        middleware.register_extractor("my_agent", my_extractor_func)
+        middleware.register_generator("my_agent", my_generator_func)
+
+        forge.use(middleware)
     """
 
     def __init__(
@@ -365,7 +178,7 @@ class OffloadMiddleware(Middleware):
         Initialize offload middleware.
 
         Args:
-            store: Context store (Redis). Created if not provided.
+            store: Context store (Redis, mem0, etc.). Uses InMemory if not provided.
             default_threshold_bytes: Default size threshold for offloading
             step_thresholds: Per-step size thresholds
             ttl_seconds: TTL for stored data
@@ -378,13 +191,101 @@ class OffloadMiddleware(Middleware):
         self._step_thresholds = step_thresholds or {}
         self._ttl_seconds = ttl_seconds
 
+        # Pluggable extractors and generators
+        self._extractors: dict[str, KeyFieldExtractor] = {}
+        self._generators: dict[str, SummaryGenerator] = {}
+
         # Statistics
         self._offload_count = 0
         self._total_bytes_offloaded = 0
 
+    def register_extractor(
+        self,
+        step_pattern: str,
+        extractor: KeyFieldExtractor,
+    ) -> "OffloadMiddleware":
+        """
+        Register a domain-specific key field extractor.
+
+        Args:
+            step_pattern: Step name or pattern to match
+            extractor: Function that extracts key fields from data
+
+        Returns:
+            self for chaining
+
+        Example:
+            def extract_order_fields(data):
+                return {
+                    "order_id": data.get("id"),
+                    "total": data.get("total"),
+                    "status": data.get("status"),
+                }
+
+            middleware.register_extractor("process_order", extract_order_fields)
+        """
+        self._extractors[step_pattern] = extractor
+        return self
+
+    def register_generator(
+        self,
+        step_pattern: str,
+        generator: SummaryGenerator,
+    ) -> "OffloadMiddleware":
+        """
+        Register a domain-specific summary generator.
+
+        Args:
+            step_pattern: Step name or pattern to match
+            generator: Function that generates summary from data and key_fields
+
+        Returns:
+            self for chaining
+
+        Example:
+            def generate_order_summary(data, key_fields):
+                order_id = key_fields.get("order_id", "unknown")
+                total = key_fields.get("total", 0)
+                return f"Order {order_id} - ${total}"
+
+            middleware.register_generator("process_order", generate_order_summary)
+        """
+        self._generators[step_pattern] = generator
+        return self
+
     def _get_threshold(self, step_name: str) -> int:
         """Get size threshold for a step."""
         return self._step_thresholds.get(step_name, self._default_threshold)
+
+    def _get_extractor(self, step_name: str) -> KeyFieldExtractor:
+        """Get the appropriate key field extractor for a step."""
+        # Check for exact match
+        if step_name in self._extractors:
+            return self._extractors[step_name]
+
+        # Check for partial match
+        step_lower = step_name.lower()
+        for pattern, extractor in self._extractors.items():
+            if pattern.lower() in step_lower:
+                return extractor
+
+        # Default extractor
+        return default_key_field_extractor
+
+    def _get_generator(self, step_name: str) -> SummaryGenerator:
+        """Get the appropriate summary generator for a step."""
+        # Check for exact match
+        if step_name in self._generators:
+            return self._generators[step_name]
+
+        # Check for partial match
+        step_lower = step_name.lower()
+        for pattern, generator in self._generators.items():
+            if pattern.lower() in step_lower:
+                return generator
+
+        # Default generator
+        return default_summary_generator
 
     def _estimate_size(self, data: Any) -> int:
         """Estimate serialized size of data."""
@@ -414,18 +315,18 @@ class OffloadMiddleware(Middleware):
             logger.debug(f"Step '{step_name}' output is small ({size} bytes), keeping in context")
             return
 
-        # Offload to Redis
-        logger.info(f"Offloading '{step_name}' output to Redis ({size} bytes > {threshold} threshold)")
+        # Offload to store
+        logger.info(f"Offloading '{step_name}' output ({size} bytes > {threshold} threshold)")
 
-        # Extract key fields using domain-aware extractor
-        extractor = get_key_field_extractor(step_name)
+        # Extract key fields using appropriate extractor
+        extractor = self._get_extractor(step_name)
         key_fields = extractor(result.output)
 
-        # Generate summary using domain-aware generator
-        generator = get_summary_generator(step_name)
+        # Generate summary using appropriate generator
+        generator = self._get_generator(step_name)
         summary = generator(result.output, key_fields)
 
-        # Store in Redis
+        # Store in context store
         ref = await self._store.store(
             key=step_name,
             data=result.output,
@@ -436,11 +337,9 @@ class OffloadMiddleware(Middleware):
         )
 
         # Update the result output to use the ref
-        # Note: StepResult is a dataclass, so we can modify output
         result.output = ref
 
         # Also update context if the step stored data there
-        # Check for common patterns like ctx.set("step_name_result", ...)
         for key_pattern in [
             f"{step_name}_result",
             f"{step_name}_data",
@@ -449,7 +348,6 @@ class OffloadMiddleware(Middleware):
             if ctx.has(key_pattern):
                 old_value = ctx.get(key_pattern)
                 if not is_context_ref(old_value):
-                    # Replace with ref
                     ctx.set(key_pattern, ref)
                     logger.debug(f"Updated context key '{key_pattern}' with ContextRef")
 
@@ -462,7 +360,9 @@ class OffloadMiddleware(Middleware):
         return {
             "offload_count": self._offload_count,
             "total_bytes_offloaded": self._total_bytes_offloaded,
-            "total_mb_offloaded": self._total_bytes_offloaded / (1024 * 1024),
+            "total_mb_offloaded": round(self._total_bytes_offloaded / (1024 * 1024), 2),
+            "registered_extractors": list(self._extractors.keys()),
+            "registered_generators": list(self._generators.keys()),
         }
 
 
@@ -492,10 +392,10 @@ def cap_items_with_metadata(
         Tuple of (capped_items, metadata)
 
     Usage:
-        articles, meta = cap_items_with_metadata(
-            news_articles,
+        results, meta = cap_items_with_metadata(
+            search_results,
             max_items=10,
-            sort_key=lambda x: x.get("relevance_score", 0),
+            sort_key=lambda x: x.get("score", 0),
         )
         # meta = {"original_count": 150, "omitted_count": 140, ...}
     """
@@ -527,7 +427,6 @@ def cap_items_with_metadata(
 
     # Add info about what was omitted
     if omitted and isinstance(omitted[0], dict):
-        # Sample omitted item keys/types
         sample = omitted[0]
         metadata["omitted_sample_keys"] = list(sample.keys())[:5]
 
@@ -564,8 +463,8 @@ def cap_per_source(
         Tuple of (capped_items, metadata)
 
     Usage:
-        articles, meta = cap_per_source(
-            all_articles,
+        results, meta = cap_per_source(
+            all_results,
             source_field="agent",
             max_per_source=10,
             total_max=30,

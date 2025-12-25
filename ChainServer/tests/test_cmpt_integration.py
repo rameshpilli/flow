@@ -7,14 +7,15 @@ ensuring all components wire together correctly even while using mocks.
 
 import pytest
 from agentorchestrator import AgentOrchestrator
-from agentorchestrator.services.context_builder import ContextBuilderService
-from agentorchestrator.services.content_prioritization import ContentPrioritizationService
-from agentorchestrator.services.response_builder import ResponseBuilderService
-from agentorchestrator.services.models import ChainRequest, ChainRequestOverrides
+from cmpt.services._01_context_builder import ContextBuilderService
+from cmpt.services._02_content_prioritization import ContentPrioritizationService
+from cmpt.services._03_response_builder import ResponseBuilderService
+from cmpt.services.models import ChainRequest, ChainRequestOverrides
+
 
 @pytest.mark.asyncio
 class TestCMPTIntegration:
-    
+
     async def test_full_cmpt_flow_mocked(self):
         """
         Tests the full chain execution using the default mock implementations.
@@ -25,14 +26,12 @@ class TestCMPTIntegration:
         """
         # 1. Setup
         forge = AgentOrchestrator(name="cmpt_test")
-        
+
         # Initialize services (using default mocks)
         context_service = ContextBuilderService()
         prioritization_service = ContentPrioritizationService()
         response_service = ResponseBuilderService(
-            use_llm_for_metrics=False,    # Disable LLM to avoid API calls
-            use_llm_for_analysis=False,   # Disable LLM
-            use_llm_for_content=False     # Disable LLM
+            llm=None,  # No LLM - use mock implementations
         )
 
         # 2. Register Steps
@@ -77,22 +76,20 @@ class TestCMPTIntegration:
 
         # 4. Verify
         assert result["success"] is True, f"Chain failed with error: {result.get('error')}"
-        
+
         ctx = result["context"]
-        
+
         # Verify Context Builder Output
         context_out = ctx["data"]["context_output"]
         assert context_out.company_info.ticker == "AAPL"
         assert context_out.temporal_context.fiscal_quarter == "1"
-        
+
         # Verify Prioritization Output
         priority_out = ctx["data"]["priority_output"]
         assert len(priority_out.subqueries) > 0
-        
+
         # Verify Response Builder Output
         final_response = ctx["data"]["final_response"]
         assert final_response.prepared_content is not None
         assert "Apple Inc" in final_response.prepared_content
         assert "Financial Highlights" in final_response.prepared_content
-
-

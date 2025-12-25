@@ -5,10 +5,11 @@ Provides a thin wrapper around LLM providers (OpenAI, Anthropic, etc.)
 with OAuth token management and caching support.
 """
 
+import asyncio
 import functools
 import logging
 import time
-from typing import Any, TypeVar
+from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -43,14 +44,16 @@ class OAuthTokenManager:
 
     def __init__(
         self,
-        token_url: str | None = None,
+        oauth_endpoint: str | None = None,
         client_id: str | None = None,
         client_secret: str | None = None,
-        scope: str | None = None,
+        grant_type: str = "client_credentials",
+        scope: str = "read",
     ):
-        self.token_url = token_url
+        self.oauth_endpoint = oauth_endpoint
         self.client_id = client_id
         self.client_secret = client_secret
+        self.grant_type = grant_type
         self.scope = scope
         self._token: str | None = None
         self._expires_at: float = 0
@@ -70,26 +73,62 @@ class OAuthTokenManager:
 
 class LLMGatewayClient:
     """
-    Client for LLM API calls with optional OAuth support.
+    Base client for LLM API calls with optional OAuth support.
+
+    This is a base implementation with stub methods. For production use,
+    either:
+    1. Subclass this and implement generate_async/generate_structured_async
+    2. Use a pre-built adapter from your LLM provider
+    3. Replace with your own LLM gateway implementation
 
     Usage:
-        client = LLMGatewayClient(api_key="...", model="gpt-4")
+        client = LLMGatewayClient(server_url="...", api_key="...", model_name="gpt-4")
         response = await client.generate_async("What is 2+2?")
     """
 
     def __init__(
         self,
-        api_key: str | None = None,
-        model: str = "gpt-4",
-        base_url: str | None = None,
-        token_manager: OAuthTokenManager | None = None,
+        server_url: str | None = None,
+        model_name: str = "gpt-4",
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
         timeout: float = 60.0,
+        oauth_endpoint: str | None = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        api_key: str | None = None,
     ):
-        self.api_key = api_key
-        self.model = model
-        self.base_url = base_url
-        self.token_manager = token_manager
+        self.server_url = server_url
+        self.model_name = model_name
+        self.temperature = temperature
+        self.max_tokens = max_tokens
         self.timeout = timeout
+        self.api_key = api_key
+
+        # Set up OAuth token manager if OAuth credentials provided
+        if oauth_endpoint and client_id and client_secret:
+            self._token_manager = OAuthTokenManager(
+                oauth_endpoint=oauth_endpoint,
+                client_id=client_id,
+                client_secret=client_secret,
+            )
+        else:
+            self._token_manager = None
+
+        # Lock for async client initialization
+        self._async_client_lock = asyncio.Lock()
+        self._async_client = None
+
+    async def _get_async_client(self):
+        """Get or create async HTTP client (thread-safe)."""
+        async with self._async_client_lock:
+            if self._async_client is None:
+                try:
+                    import httpx
+                    self._async_client = httpx.AsyncClient(timeout=self.timeout)
+                except ImportError:
+                    logger.warning("httpx not installed, using stub client")
+            return self._async_client
 
     async def generate_async(
         self,
@@ -119,6 +158,11 @@ class LLMGatewayClient:
             except Exception:
                 return {}
         return {}
+
+    def get_langchain_llm(self):
+        """Return a LangChain-compatible LLM wrapper."""
+        # Stub - in production, return actual LangChain wrapper
+        return None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -160,12 +204,12 @@ def create_managed_client(
     **kwargs,
 ) -> LLMGatewayClient:
     """Create an LLM client with OAuth token management."""
-    token_manager = OAuthTokenManager(
-        token_url=token_url,
+    return LLMGatewayClient(
+        oauth_endpoint=token_url,
         client_id=client_id,
         client_secret=client_secret,
+        **kwargs,
     )
-    return LLMGatewayClient(token_manager=token_manager, **kwargs)
 
 
 __all__ = [

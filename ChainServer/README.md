@@ -1,14 +1,13 @@
 # ChainServer
 
-A client meeting prep (CMPT) chain server built with **AgentOrchestrator** - a DAG-based chain orchestration framework.
+A financial data pipeline built with **AgentOrchestrator** - a domain-agnostic DAG-based orchestration framework.
 
-## Overview
+## Architecture
 
-This project implements a financial data pipeline that:
-1. **Extracts context** from meeting requests (company info, temporal context, personas)
-2. **Prioritizes content sources** based on earnings proximity and market cap
-3. **Executes data agents** (SEC filings, news, earnings, transcripts)
-4. **Generates meeting prep** content with financial metrics and strategic analysis
+This project consists of two main layers:
+
+1. **AgentOrchestrator** (`agentorchestrator/`) - A reusable orchestration framework
+2. **CMPT** (`cmpt/`) - Domain-specific Client Meeting Prep Tool implementation
 
 ## Quick Start
 
@@ -16,65 +15,69 @@ This project implements a financial data pipeline that:
 # Install dependencies
 pip install -e ./agentorchestrator
 
-# Run the CMPT chain example
-python examples/cmpt/run.py --company "Apple Inc"
-
 # Run tests
-pytest agentorchestrator/tests/ -v
+pytest tests/ -v
+
+# Use the CLI
+ao --help
 ```
 
 ## Developer Setup
 
 ```bash
-python3 -m venv agentorchestrator/.venv
-source agentorchestrator/.venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 
 # Install framework + dev tools (ruff/pytest)
 pip install -e "agentorchestrator[dev]"
 
 # Run the full suite
 python -m pytest
-# Optional: lint
-ruff check agentorchestrator
+
+# Lint
+ruff check agentorchestrator cmpt
 ```
 
 ## Project Structure
 
 ```
 ChainServer/
-├── agentorchestrator/           # AgentOrchestrator framework
+├── agentorchestrator/           # AgentOrchestrator framework (domain-agnostic)
 │   ├── core/                    # Core framework (Orchestrator, Context, DAG)
 │   ├── middleware/              # Middleware (Summarizer, Cache, Logger)
 │   ├── agents/                  # Base agent classes
-│   ├── services/                # Service wrappers (re-exports from examples)
-│   ├── chains/                  # Pre-built chains (CMPTChain)
+│   ├── services/                # Service interfaces (LLM Gateway)
+│   ├── connectors/              # External service connectors (MCP)
+│   ├── llm/                     # LCEL chain builders
 │   ├── testing/                 # Test utilities
 │   ├── utils/                   # Utility functions
 │   ├── plugins/                 # Plugin adapters (MCP, HTTP)
-│   ├── docs/                    # Documentation
-│   └── tests/                   # Test suite (167 tests)
-├── examples/                    # Example implementations
-│   ├── 01_quickstart.py         # Minimal example
-│   ├── 02_custom_agents.py      # Custom agent integration
-│   ├── 03_chain_composition.py  # Chain composition patterns
-│   ├── 04_meeting_prep_chain.py # Meeting prep example
-│   ├── 05_capiq_integration.py  # Capital IQ integration
-│   └── cmpt/                    # Complete CMPT production example
-│       ├── run.py               # Main entry point
-│       └── services/            # Business logic services
+│   ├── templates/               # Project templates
+│   └── docs/                    # Documentation
+├── cmpt/                        # CMPT domain implementation
+│   ├── domain_config.py         # Domain-specific prompts & extractors
+│   ├── mcp_auth.py              # MCP authentication
+│   └── services/                # CMPT business logic services
+│       ├── models.py            # Pydantic models
+│       ├── agents.py            # MCP agent integrations
+│       └── _01_context_builder.py  # Context extraction
+│       └── _02_content_prioritization.py  # Content prioritization
+│       └── _03_response_builder.py  # Response generation
+├── tests/                       # Test suite
+├── workflows/                   # Example workflows
 ├── Makefile                     # Build automation
 └── pyproject.toml               # Package configuration
 ```
 
 ## AgentOrchestrator Framework
 
-AgentOrchestrator provides:
+AgentOrchestrator is a **domain-agnostic** orchestration framework that provides:
 
 - **Decorator-driven registration** - `@ao.agent()`, `@ao.step()`, `@ao.chain()`
 - **Automatic dependency resolution** - Steps execute in optimal order
 - **Parallel execution** - Independent steps run concurrently
 - **Middleware system** - Logging, caching, summarization, token management
-- **Domain-aware summarization** - Content-specific extraction for financial data
+- **Pluggable summarization** - Register domain-specific extractors at runtime
 
 ### Basic Usage
 
@@ -101,33 +104,58 @@ class MyChain:
 result = await ao.launch("my_chain", {})
 ```
 
-### CMPT Chain Usage
+### Domain-Aware Summarization (Pluggable)
 
 ```python
-from agentorchestrator.chains import CMPTChain
+from agentorchestrator.middleware import LangChainSummarizer
 
-chain = CMPTChain()
-chain.check()       # Validate
-chain.graph()       # Visualize DAG
-
-result = await chain.run(
-    corporate_company_name="Apple Inc",
-    meeting_datetime="2025-01-15T10:00:00Z",
+# Register domain-specific extractors at runtime
+LangChainSummarizer.register_key_field_extractor(
+    "sec_filing",
+    lambda doc: extract_sec_fields(doc)
 )
 
-print(result.prepared_content)
+LangChainSummarizer.register_summary_generator(
+    "earnings",
+    lambda doc: generate_earnings_summary(doc)
+)
+
+# Use the summarizer
+summarizer = LangChainSummarizer(max_tokens=4000)
+ao.use(summarizer)
 ```
 
-### Domain-Aware Summarization
+### LCEL Chain Builders
 
 ```python
-from agentorchestrator import create_gateway_summarizer
+from agentorchestrator.llm import create_extraction_chain
+from pydantic import BaseModel
 
-# Automatically extracts key info based on content type
-summarizer = create_gateway_summarizer(max_tokens=4000)
-ao.use(summarizer)
+class FinancialMetrics(BaseModel):
+    revenue: float
+    growth_rate: float
 
-# Content types: sec_filing, earnings, news, transcripts, pricing
+chain = create_extraction_chain(
+    prompt_template="Extract financial metrics from: {text}",
+    response_model=FinancialMetrics,
+)
+result = await chain.ainvoke({"text": "Revenue was $10B, up 15%..."})
+# result is FinancialMetrics(revenue=10000000000, growth_rate=0.15)
+```
+
+## CMPT Implementation
+
+The `cmpt/` directory contains the domain-specific Client Meeting Prep Tool:
+
+```python
+from cmpt.domain_config import DOMAIN_PROMPTS, register_cmpt_extractors
+from cmpt.services.agents import CapIQMCPAgent
+
+# Register CMPT-specific extractors with the framework
+register_cmpt_extractors()
+
+# Use domain-specific prompts
+prompt = DOMAIN_PROMPTS["sec_filing"]["system"]
 ```
 
 ## CLI Commands
@@ -139,9 +167,6 @@ ao run my_chain --data '{"name": "Test"}'
 # Validate chain definitions
 ao check
 
-# Run with explicit chain definitions
-ao --definitions ./chains.py run my_chain
-
 # List registered components
 ao list
 
@@ -152,92 +177,76 @@ ao graph my_chain
 ao new agent my_agent
 ao new chain my_chain
 ao new project my_project
+
+# Dry-run mode (simulate without side effects)
+ao run my_chain --dry-run --data '{"name": "Test"}'
+
+# Validate with detailed checks
+ao validate my_chain
 ```
 
-### CMPT example services (transitional)
+### Observability Toggles
 
-The `agentorchestrator.services` module re-exports the CMPT example services/models for convenience. It depends on the example code under `examples/cmpt`; if that folder isn’t present (e.g., in a trimmed install), import will fail. For production, vendor your own services instead of relying on these re-exports.
+Set environment variables to enable observability:
 
-Example: putting your own services outside this repo
+```bash
+# Enable structured logging
+export AO_ENABLE_LOGGING=true
+export AO_LOG_JSON=true  # Optional: JSON format
 
+# Enable OpenTelemetry tracing
+export AO_ENABLE_TRACING=true
+export AO_TRACE_SERVICE=my_service
 ```
-myapp/
-├── downstream_services/
-│   ├── __init__.py
-│   ├── models.py            # Pydantic models
-│   └── context_builder.py   # Your ContextBuilderService
-└── main.py
-```
-
-`downstream_services/context_builder.py`:
-
-```python
-from pydantic import BaseModel
-from agentorchestrator.core.context import ChainContext
-
-
-class ChainRequest(BaseModel):
-    corporate_company_name: str
-    meeting_datetime: str | None = None
-
-
-class ContextBuilderService:
-    async def execute(self, request: ChainRequest):
-        # Your logic here (call APIs, enrich, etc.)
-        return {"company_name": request.corporate_company_name}
-```
-
-`main.py`:
-
-```python
-from agentorchestrator import AgentOrchestrator
-from downstream_services.context_builder import ChainRequest, ContextBuilderService
-
-ao = AgentOrchestrator(name="my_app")
-
-@ao.step(name="context_builder", produces=["context_output"])
-async def context_builder_step(ctx):
-    request_data = ctx.get("request", {})
-    request = ChainRequest(**request_data)
-    output = await ContextBuilderService().execute(request)
-    ctx.set("context_output", output)
-    return output
-
-@ao.chain(name="my_chain")
-class MyChain:
-    steps = ["context_builder"]
-
-# run
-# asyncio.run(ao.launch("my_chain", {"request": {"corporate_company_name": "Acme"}}))
-```
-
-This keeps your domain services in your own package while still using AgentOrchestrator for orchestration.
-
-### Observability toggles
-
-Set `AO_ENABLE_LOGGING=true` to auto-enable structured logging (optionally `AO_LOG_JSON=true`) or `AO_ENABLE_TRACING=true` to wire OpenTelemetry tracing with `AO_TRACE_SERVICE` naming. These flags are picked up automatically by the CLI when it instantiates the orchestrator.
 
 ## Documentation
 
 - [USER_GUIDE.md](agentorchestrator/docs/USER_GUIDE.md) - Comprehensive guide with examples
 - [API.md](agentorchestrator/docs/API.md) - API reference
 - [QUICKSTART.md](agentorchestrator/docs/QUICKSTART.md) - Quick start guide
-- [Examples](examples/) - Working code examples
 
 ## Adding Custom Agents
 
-See [examples/05_capiq_integration.py](examples/05_capiq_integration.py) for a complete example of:
-- Creating a custom data agent (Capital IQ)
-- Defining steps that use the agent
-- Chaining with other data sources
-- Generating analysis reports
-
 ```python
-@ao.agent(name="capiq", capabilities=["financials", "estimates"])
-class CapIQAgent(BaseAgent):
+from agentorchestrator.agents import BaseAgent, AgentResult
+
+@ao.agent(name="my_data_agent", capabilities=["fetch", "search"])
+class MyDataAgent(BaseAgent):
     async def fetch(self, query: str, **kwargs) -> AgentResult:
         # Your API logic here
-        return AgentResult(data=data, source="capiq", query=query)
+        data = await self.call_external_api(query)
+        return AgentResult(data=data, source="my_source", query=query)
+```
+
+## Creating Your Own Domain Layer
+
+To create a domain-specific implementation like CMPT:
+
+```
+myapp/
+├── domain_config.py             # Domain-specific prompts & extractors
+├── services/
+│   ├── models.py                # Pydantic models
+│   └── my_service.py            # Business logic
+└── main.py                      # Entry point
+```
+
+```python
+# domain_config.py
+from agentorchestrator.middleware import LangChainSummarizer
+
+DOMAIN_PROMPTS = {
+    "my_content_type": {
+        "system": "You are analyzing...",
+        "user": "Extract key information from: {content}"
+    }
+}
+
+def register_my_extractors():
+    LangChainSummarizer.register_key_field_extractor(
+        "my_content_type",
+        lambda doc: {"key": doc.page_content[:100]}
+    )
 ```
 
 ## Dependencies
@@ -247,12 +256,12 @@ class CapIQAgent(BaseAgent):
 - pydantic >= 2.0
 - httpx >= 0.25.0
 
-### Optional (for summarization)
+### Optional (for LLM features)
 - tiktoken
 - langchain-core
 - langchain-text-splitters
-- langchain-openai (for OpenAI summarization)
-- langchain-anthropic (for Claude summarization)
+- langchain-openai (for OpenAI)
+- langchain-anthropic (for Claude)
 
 ## License
 

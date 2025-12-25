@@ -12,6 +12,14 @@ import argparse
 import asyncio
 import logging
 from datetime import datetime
+from pathlib import Path
+
+# Load .env file before importing config
+from dotenv import load_dotenv
+
+env_path = Path(__file__).parent / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
 
 from agentorchestrator import AgentOrchestrator
 from cmpt.chain import register_cmpt_chain
@@ -36,12 +44,24 @@ async def main(company: str, meeting_date: str, use_mcp: bool = False):
     # Register the CMPT chain (defined in chain.py)
     mcp_config = None
     if use_mcp:
-        from cmpt.config import Config
+        from agentorchestrator.config import get_config
+        config = get_config()
+
+        # Get agent URLs from config (loaded from AGENT_CONFIG JSON in .env)
+        sec_agent = config.agents.get("sec")
+        earnings_agent = config.agents.get("earnings")
+        news_agent = config.agents.get("news")
+
         mcp_config = {
-            "sec_url": Config.get_agent("sec")["url"] if Config.get_agent("sec") else None,
-            "earnings_url": Config.get_agent("earnings")["url"] if Config.get_agent("earnings") else None,
-            "news_url": Config.get_agent("news")["url"] if Config.get_agent("news") else None,
+            "sec_url": sec_agent.url if sec_agent else None,
+            "earnings_url": earnings_agent.url if earnings_agent else None,
+            "news_url": news_agent.url if news_agent else None,
         }
+
+        print("MCP Agent URLs (from AGENT_CONFIG):")
+        for name, url in mcp_config.items():
+            print(f"  {name}: {url or '(not configured)'}")
+        print()
 
     register_cmpt_chain(ao, use_mcp=use_mcp, mcp_config=mcp_config)
 

@@ -47,8 +47,8 @@ ao = AgentOrchestrator(
     max_parallel=5,
 )
 
-# Add middleware
-ao.use_middleware(LoggerMiddleware())
+# Add middleware (using ao.use() method)
+ao.use(LoggerMiddleware())
 
 
 # ============================================================

@@ -35,6 +35,7 @@ Usage:
 
 import asyncio
 import base64
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -301,7 +302,7 @@ class HTTPAdapterAgent(BaseAgent):
                 # Parse response
                 try:
                     response_data = response.json()
-                except Exception:
+                except (json.JSONDecodeError, ValueError):
                     response_data = {"text": response.text}
 
                 return {

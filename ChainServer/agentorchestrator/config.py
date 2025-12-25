@@ -94,8 +94,10 @@ class LLMConfig:
     @classmethod
     def from_env(cls) -> "LLMConfig":
         """Load LLM config from environment variables."""
+        # Support both LLM_SERVER_URL and LLM_GATEWAY_URL for compatibility
+        server_url = _get_env("LLM_SERVER_URL") or _get_env("LLM_GATEWAY_URL", "")
         return cls(
-            server_url=_get_env("LLM_GATEWAY_URL", ""),
+            server_url=server_url,
             model_name=_get_env("LLM_MODEL_NAME", "gpt-4"),
             temperature=_get_env_float("LLM_TEMPERATURE", 0.0),
             max_tokens=_get_env_int("LLM_MAX_TOKENS", 4096),
@@ -135,61 +137,142 @@ class FoundationConfig:
 
 @dataclass
 class AgentConfig:
-    """Data agent configuration."""
+    """
+    Configuration for a single data agent.
 
+    This is a generic configuration that can be used for any agent type.
+    Domain-specific agents should be configured at the application level,
+    not in this base orchestrator package.
+    """
+
+    name: str = ""
     url: str = ""
     api_key: str | None = None
+    timeout: float = 30.0
+    retries: int = 3
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class AgentsConfig:
-    """All data agents configuration."""
+    """
+    Dynamic agents configuration.
 
-    sec: AgentConfig = field(default_factory=AgentConfig)
-    news: AgentConfig = field(default_factory=AgentConfig)
-    earnings: AgentConfig = field(default_factory=AgentConfig)
-    transcripts: AgentConfig = field(default_factory=AgentConfig)
+    Instead of hardcoded domain-specific agents (SEC, news, etc.),
+    this provides a flexible registry that can be populated at runtime.
+
+    Usage:
+        # At application level, not in agentorchestrator
+        config.agents.register("my_agent", AgentConfig(url="...", api_key="..."))
+        agent_cfg = config.agents.get("my_agent")
+    """
+
+    _agents: dict[str, AgentConfig] = field(default_factory=dict)
+
+    def register(self, name: str, config: AgentConfig) -> None:
+        """Register an agent configuration."""
+        config.name = name
+        self._agents[name] = config
+
+    def get(self, name: str) -> AgentConfig | None:
+        """Get agent configuration by name."""
+        return self._agents.get(name)
+
+    def list_agents(self) -> list[str]:
+        """List all registered agent names."""
+        return list(self._agents.keys())
 
     @classmethod
     def from_env(cls) -> "AgentsConfig":
-        """Load agents config from environment variables."""
-        return cls(
-            sec=AgentConfig(
-                url=_get_env("SEC_AGENT_URL", ""),
-                api_key=_get_env("SEC_AGENT_API_KEY"),
-            ),
-            news=AgentConfig(
-                url=_get_env("NEWS_AGENT_URL", ""),
-                api_key=_get_env("NEWS_AGENT_API_KEY"),
-            ),
-            earnings=AgentConfig(
-                url=_get_env("EARNINGS_AGENT_URL", ""),
-                api_key=_get_env("EARNINGS_AGENT_API_KEY"),
-            ),
-            transcripts=AgentConfig(
-                url=_get_env("TRANSCRIPTS_AGENT_URL", ""),
-                api_key=_get_env("TRANSCRIPTS_AGENT_API_KEY"),
-            ),
-        )
+        """
+        Load agents config from environment variables.
+
+        Supports two formats:
+
+        1. JSON array format (AGENT_CONFIG):
+            AGENT_CONFIG='[
+              {"name": "sec", "mcp_url": "https://...", "mcp_tool": "sec_tool", ...},
+              {"name": "news", "mcp_url": "https://...", "mcp_tool": "news_tool", ...}
+            ]'
+
+        2. Individual env vars (AGENT_<NAME>_URL pattern):
+            AGENT_DATA_URL=http://data-service/api
+            AGENT_DATA_API_KEY=xxx
+        """
+        import json
+
+        config = cls()
+
+        # Try to load from AGENT_CONFIG JSON first
+        agent_config_json = _get_env("AGENT_CONFIG")
+        if agent_config_json:
+            try:
+                agents_list = json.loads(agent_config_json)
+                if isinstance(agents_list, list):
+                    for agent_data in agents_list:
+                        if isinstance(agent_data, dict) and "name" in agent_data:
+                            name = agent_data["name"]
+                            # Map MCP-specific fields to generic AgentConfig
+                            config.register(
+                                name,
+                                AgentConfig(
+                                    name=name,
+                                    url=agent_data.get("mcp_url", ""),
+                                    api_key=agent_data.get("mcp_bearer_token"),
+                                    timeout=float(agent_data.get("timeout", 30.0)),
+                                    retries=int(agent_data.get("retries", 3)),
+                                    metadata={
+                                        "mcp_tool": agent_data.get("mcp_tool"),
+                                        "cache_enabled": agent_data.get("cache_enabled", False),
+                                        "cache_seconds": agent_data.get("cache_seconds", 3600),
+                                        "cache_size": agent_data.get("cache_size", 128),
+                                    },
+                                ),
+                            )
+                    logger.info(f"Loaded {len(config._agents)} agents from AGENT_CONFIG")
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse AGENT_CONFIG JSON: {e}")
+
+        # Also scan for individual AGENT_<NAME>_URL env vars
+        # These will override any agents with the same name from AGENT_CONFIG
+        agent_urls = {
+            k.replace("AGENT_", "").replace("_URL", "").lower(): v
+            for k, v in os.environ.items()
+            if k.startswith("AGENT_") and k.endswith("_URL") and k != "AGENT_CONFIG"
+        }
+
+        for agent_name, url in agent_urls.items():
+            api_key_env = f"AGENT_{agent_name.upper()}_API_KEY"
+            timeout_env = f"AGENT_{agent_name.upper()}_TIMEOUT"
+            config.register(
+                agent_name,
+                AgentConfig(
+                    url=url,
+                    api_key=_get_env(api_key_env),
+                    timeout=_get_env_float(timeout_env, 30.0),
+                ),
+            )
+
+        return config
 
 
 @dataclass
 class ChainConfig:
     """Chain execution configuration."""
 
-    default_news_lookback_days: int = 30
-    default_filing_quarters: int = 8
-    max_parallel_agents: int = 5
+    max_parallel_steps: int = 5
     default_timeout_ms: int = 30000
+    default_retries: int = 3
+    error_handling: str = "fail_fast"  # "fail_fast", "continue", "retry"
 
     @classmethod
     def from_env(cls) -> "ChainConfig":
         """Load chain config from environment variables."""
         return cls(
-            default_news_lookback_days=_get_env_int("DEFAULT_NEWS_LOOKBACK_DAYS", 30),
-            default_filing_quarters=_get_env_int("DEFAULT_FILING_QUARTERS", 8),
-            max_parallel_agents=_get_env_int("MAX_PARALLEL_AGENTS", 5),
-            default_timeout_ms=_get_env_int("DEFAULT_TIMEOUT_MS", 30000),
+            max_parallel_steps=_get_env_int("CHAIN_MAX_PARALLEL_STEPS", 5),
+            default_timeout_ms=_get_env_int("CHAIN_DEFAULT_TIMEOUT_MS", 30000),
+            default_retries=_get_env_int("CHAIN_DEFAULT_RETRIES", 3),
+            error_handling=_get_env("CHAIN_ERROR_HANDLING", "fail_fast"),
         )
 
 
@@ -227,6 +310,98 @@ class CacheConfig:
         )
 
 
+@dataclass
+class ContextStoreConfig:
+    """
+    Context store configuration for pluggable storage backends.
+
+    Supports multiple deployment scenarios:
+    - Local development: backend="memory" (no external dependencies)
+    - Same container: backend="redis", host="localhost" (your current setup)
+    - Kubernetes: backend="redis", host="redis-service.namespace"
+    - AWS ElastiCache: backend="redis", host="xxx.cache.amazonaws.com"
+    - Long-term memory: backend="mem0" (semantic memory with embeddings)
+
+    Environment Variables:
+        CONTEXT_STORE_BACKEND: "memory", "redis", or "mem0"
+        CONTEXT_STORE_REDIS_HOST: Redis host (default: localhost)
+        CONTEXT_STORE_REDIS_PORT: Redis port (default: 6379)
+        CONTEXT_STORE_REDIS_PASSWORD: Redis password (optional)
+        CONTEXT_STORE_REDIS_DB: Redis database number (default: 0)
+        CONTEXT_STORE_REDIS_MAXMEMORY: Memory limit (e.g., "128mb", "1gb")
+        CONTEXT_STORE_TTL: Default TTL in seconds (default: 3600)
+        CONTEXT_STORE_MEM0_API_KEY: mem0 API key (for cloud mem0)
+        CONTEXT_STORE_MEM0_HOST: mem0 host (for self-hosted)
+    """
+
+    # Backend selection
+    backend: str = "memory"  # "memory", "redis", or "mem0"
+
+    # Redis settings
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_password: str | None = None
+    redis_db: int = 0
+    redis_maxmemory: str | None = None
+    redis_maxmemory_policy: str = "allkeys-lru"
+    redis_max_connections: int = 10
+    redis_key_prefix: str = "agentorchestrator:ctx:"
+    redis_ssl: bool = False
+    redis_ssl_cert_reqs: str | None = None  # For AWS ElastiCache TLS
+
+    # Common settings
+    default_ttl_seconds: int = 3600
+    offload_threshold_bytes: int = 100_000  # 100KB
+
+    # mem0 settings (for long-term semantic memory)
+    mem0_api_key: str | None = None
+    mem0_host: str | None = None  # For self-hosted mem0
+    mem0_user_id: str | None = None  # For user-scoped memory
+    mem0_org_id: str | None = None
+
+    @classmethod
+    def from_env(cls) -> "ContextStoreConfig":
+        """Load context store config from environment variables."""
+        return cls(
+            backend=_get_env("CONTEXT_STORE_BACKEND", "memory"),
+            # Redis
+            redis_host=_get_env("CONTEXT_STORE_REDIS_HOST", "localhost"),
+            redis_port=_get_env_int("CONTEXT_STORE_REDIS_PORT", 6379),
+            redis_password=_get_env("CONTEXT_STORE_REDIS_PASSWORD"),
+            redis_db=_get_env_int("CONTEXT_STORE_REDIS_DB", 0),
+            redis_maxmemory=_get_env("CONTEXT_STORE_REDIS_MAXMEMORY"),
+            redis_maxmemory_policy=_get_env("CONTEXT_STORE_REDIS_MAXMEMORY_POLICY", "allkeys-lru"),
+            redis_max_connections=_get_env_int("CONTEXT_STORE_REDIS_MAX_CONNECTIONS", 10),
+            redis_key_prefix=_get_env("CONTEXT_STORE_REDIS_KEY_PREFIX", "agentorchestrator:ctx:"),
+            redis_ssl=_get_env_bool("CONTEXT_STORE_REDIS_SSL", False),
+            redis_ssl_cert_reqs=_get_env("CONTEXT_STORE_REDIS_SSL_CERT_REQS"),
+            # Common
+            default_ttl_seconds=_get_env_int("CONTEXT_STORE_TTL", 3600),
+            offload_threshold_bytes=_get_env_int("CONTEXT_STORE_OFFLOAD_THRESHOLD", 100_000),
+            # mem0
+            mem0_api_key=_get_env("CONTEXT_STORE_MEM0_API_KEY"),
+            mem0_host=_get_env("CONTEXT_STORE_MEM0_HOST"),
+            mem0_user_id=_get_env("CONTEXT_STORE_MEM0_USER_ID"),
+            mem0_org_id=_get_env("CONTEXT_STORE_MEM0_ORG_ID"),
+        )
+
+    @property
+    def is_redis_configured(self) -> bool:
+        """Check if Redis is properly configured."""
+        return self.backend == "redis" and bool(self.redis_host)
+
+    @property
+    def is_mem0_configured(self) -> bool:
+        """Check if mem0 is properly configured."""
+        return self.backend == "mem0" and (bool(self.mem0_api_key) or bool(self.mem0_host))
+
+    def get_redis_url(self) -> str:
+        """Get Redis connection URL."""
+        scheme = "rediss" if self.redis_ssl else "redis"
+        auth = f":{self.redis_password}@" if self.redis_password else ""
+        return f"{scheme}://{auth}{self.redis_host}:{self.redis_port}/{self.redis_db}"
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #                           MAIN CONFIG CLASS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -247,6 +422,7 @@ class Config:
     chain: ChainConfig = field(default_factory=ChainConfig)
     summarizer: SummarizerConfig = field(default_factory=SummarizerConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
+    context_store: ContextStoreConfig = field(default_factory=ContextStoreConfig)
 
     # General settings
     log_level: str = "INFO"
@@ -262,6 +438,7 @@ class Config:
             chain=ChainConfig.from_env(),
             summarizer=SummarizerConfig.from_env(),
             cache=CacheConfig.from_env(),
+            context_store=ContextStoreConfig.from_env(),
             log_level=_get_env("LOG_LEVEL", "INFO"),
             verbose=_get_env_bool("VERBOSE", False),
         )
@@ -362,39 +539,6 @@ class Config:
             max_tokens=self.summarizer.max_tokens,
         )
 
-    def get_context_builder_service(self) -> Any:
-        """
-        Create a ContextBuilderService from config.
-
-        Usage:
-            config = get_config()
-            service = config.get_context_builder_service()
-            output = await service.execute(request)
-        """
-        from agentorchestrator.services.context_builder import ContextBuilderService
-
-        return ContextBuilderService(
-            news_lookback_days=self.chain.default_news_lookback_days,
-            filing_quarters=self.chain.default_filing_quarters,
-        )
-
-    def get_response_builder_service(self) -> Any:
-        """
-        Create a ResponseBuilderService from config.
-
-        Usage:
-            config = get_config()
-            service = config.get_response_builder_service()
-            output = await service.execute(context, prioritization)
-        """
-        from agentorchestrator.services.response_builder import ResponseBuilderService
-
-        llm_client = self.get_llm_client()
-
-        return ResponseBuilderService(
-            max_parallel_agents=self.chain.max_parallel_agents,
-            llm_client=llm_client,
-        )
 
     def get_cache_middleware(self) -> Any:
         """
@@ -408,6 +552,92 @@ class Config:
         from agentorchestrator.middleware.cache import CacheMiddleware
 
         return CacheMiddleware(ttl_seconds=self.cache.ttl_seconds)
+
+    def get_context_store(self) -> Any:
+        """
+        Create a ContextStore from config.
+
+        Automatically selects backend based on CONTEXT_STORE_BACKEND env var:
+        - "memory": InMemoryContextStore (development, no dependencies)
+        - "redis": RedisContextStore (production, requires redis)
+        - "mem0": Mem0ContextStore (semantic memory, requires mem0)
+
+        Usage:
+            config = get_config()
+            store = config.get_context_store()
+
+            # Store large data
+            ref = await store.store("sec_filing", large_data, summary="10-K for AAPL")
+
+            # Retrieve later
+            data = await store.retrieve(ref)
+
+        Deployment Examples:
+
+            # Local development (no Redis needed)
+            CONTEXT_STORE_BACKEND=memory
+
+            # Your current Docker setup (Redis in same container)
+            CONTEXT_STORE_BACKEND=redis
+            CONTEXT_STORE_REDIS_HOST=localhost
+            CONTEXT_STORE_REDIS_PORT=6379
+
+            # Kubernetes (Redis in separate pod)
+            CONTEXT_STORE_BACKEND=redis
+            CONTEXT_STORE_REDIS_HOST=redis-service.default.svc.cluster.local
+            CONTEXT_STORE_REDIS_PORT=6379
+
+            # AWS ElastiCache
+            CONTEXT_STORE_BACKEND=redis
+            CONTEXT_STORE_REDIS_HOST=my-cluster.abc123.use1.cache.amazonaws.com
+            CONTEXT_STORE_REDIS_PORT=6379
+            CONTEXT_STORE_REDIS_SSL=true
+
+            # mem0 cloud (semantic memory)
+            CONTEXT_STORE_BACKEND=mem0
+            CONTEXT_STORE_MEM0_API_KEY=m0-xxx
+
+            # mem0 self-hosted
+            CONTEXT_STORE_BACKEND=mem0
+            CONTEXT_STORE_MEM0_HOST=http://mem0.internal:8080
+        """
+        from agentorchestrator.core.context_store import create_context_store
+
+        cfg = self.context_store
+
+        if cfg.backend == "memory":
+            logger.info("Using InMemoryContextStore (development mode)")
+            return create_context_store(backend="memory")
+
+        elif cfg.backend == "redis":
+            logger.info(f"Using RedisContextStore at {cfg.redis_host}:{cfg.redis_port}")
+            return create_context_store(
+                backend="redis",
+                host=cfg.redis_host,
+                port=cfg.redis_port,
+                db=cfg.redis_db,
+                password=cfg.redis_password,
+                key_prefix=cfg.redis_key_prefix,
+                max_connections=cfg.redis_max_connections,
+                maxmemory=cfg.redis_maxmemory,
+                maxmemory_policy=cfg.redis_maxmemory_policy,
+                ssl=cfg.redis_ssl,
+                ssl_cert_reqs=cfg.redis_ssl_cert_reqs,
+            )
+
+        elif cfg.backend == "mem0":
+            logger.info("Using Mem0ContextStore (semantic memory)")
+            return create_context_store(
+                backend="mem0",
+                api_key=cfg.mem0_api_key,
+                host=cfg.mem0_host,
+                user_id=cfg.mem0_user_id,
+                org_id=cfg.mem0_org_id,
+            )
+
+        else:
+            logger.warning(f"Unknown context store backend: {cfg.backend}, falling back to memory")
+            return create_context_store(backend="memory")
 
     def setup_logging(self) -> None:
         """
@@ -436,9 +666,13 @@ class Config:
                 "auth_method": "oauth" if self.llm.oauth_endpoint else ("api_key" if self.llm.api_key else "none"),
             },
             "chain": {
-                "default_news_lookback_days": self.chain.default_news_lookback_days,
-                "default_filing_quarters": self.chain.default_filing_quarters,
-                "max_parallel_agents": self.chain.max_parallel_agents,
+                "max_parallel_steps": self.chain.max_parallel_steps,
+                "default_timeout_ms": self.chain.default_timeout_ms,
+                "default_retries": self.chain.default_retries,
+                "error_handling": self.chain.error_handling,
+            },
+            "agents": {
+                "registered": self.agents.list_agents(),
             },
             "summarizer": {
                 "max_tokens": self.summarizer.max_tokens,
@@ -447,6 +681,15 @@ class Config:
             },
             "cache": {
                 "ttl_seconds": self.cache.ttl_seconds,
+            },
+            "context_store": {
+                "backend": self.context_store.backend,
+                "redis_host": self.context_store.redis_host if self.context_store.backend == "redis" else None,
+                "redis_port": self.context_store.redis_port if self.context_store.backend == "redis" else None,
+                "redis_ssl": self.context_store.redis_ssl if self.context_store.backend == "redis" else None,
+                "mem0_configured": self.context_store.is_mem0_configured if self.context_store.backend == "mem0" else None,
+                "default_ttl_seconds": self.context_store.default_ttl_seconds,
+                "offload_threshold_bytes": self.context_store.offload_threshold_bytes,
             },
             "log_level": self.log_level,
             "verbose": self.verbose,
@@ -526,4 +769,5 @@ __all__ = [
     "ChainConfig",
     "SummarizerConfig",
     "CacheConfig",
+    "ContextStoreConfig",
 ]

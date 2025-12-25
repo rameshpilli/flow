@@ -600,6 +600,128 @@ class ChainContext:
             new_ctx.metadata = copy.deepcopy(self.metadata)
             return new_ctx
 
+    # =========================================================================
+    # Citation Support
+    # =========================================================================
+
+    def add_citation(
+        self,
+        content: str,
+        source_name: str,
+        source_type: str = "agent",
+        reasoning: str | None = None,
+        document_id: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Add a citation to the context's citation collection.
+
+        This is a convenience method for tracking citations during chain execution.
+        Citations are collected and can be used for verification and reporting.
+
+        Args:
+            content: Verbatim quote from source
+            source_name: Name of the source (agent name, document, etc.)
+            source_type: Type of source ('agent', 'document', 'api', 'llm')
+            reasoning: Why this source supports the claim
+            document_id: Document identifier if applicable
+            **kwargs: Additional citation fields
+
+        Example:
+            ctx.add_citation(
+                content="Total net sales were $394,328 million",
+                source_name="sec_filing_agent",
+                reasoning="Direct revenue figure from 10-K filing",
+            )
+        """
+        from agentorchestrator.models.citation import Citation, CitationCollection
+
+        # Get or create citation collection
+        collection = self.get("_citation_collection")
+        if not isinstance(collection, CitationCollection):
+            collection = CitationCollection()
+            self.set("_citation_collection", collection, scope=ContextScope.CHAIN)
+
+        citation = Citation(
+            source_type=source_type,
+            source_name=source_name,
+            content=content,
+            reasoning=reasoning,
+            document_id=document_id,
+            **kwargs,
+        )
+        collection.add(citation)
+
+    def add_source_content(self, source_name: str, content: str) -> None:
+        """
+        Add raw source content for citation verification.
+
+        When agents return data, store the raw content here so citations
+        can be verified against the original source.
+
+        Args:
+            source_name: Name of the source (should match citation.source_name)
+            content: Raw content from the source
+        """
+        from agentorchestrator.models.citation import CitationCollection
+
+        collection = self.get("_citation_collection")
+        if not isinstance(collection, CitationCollection):
+            collection = CitationCollection()
+            self.set("_citation_collection", collection, scope=ContextScope.CHAIN)
+
+        collection.add_source_chunk(source_name, content)
+
+    def get_citations(self, source_name: str | None = None) -> list[Any]:
+        """
+        Get citations from the context.
+
+        Args:
+            source_name: Filter by source name (optional)
+
+        Returns:
+            List of Citation objects
+        """
+        from agentorchestrator.models.citation import CitationCollection
+
+        collection = self.get("_citation_collection")
+        if not isinstance(collection, CitationCollection):
+            return []
+
+        if source_name:
+            return collection.get_by_source(source_name)
+        return collection.citations
+
+    def verify_citations(self) -> dict[str, bool]:
+        """
+        Verify all citations against stored source content.
+
+        Returns:
+            Dict mapping citation index to verification result
+        """
+        from agentorchestrator.models.citation import CitationCollection
+
+        collection = self.get("_citation_collection")
+        if not isinstance(collection, CitationCollection):
+            return {}
+
+        return collection.verify_all()
+
+    def get_citation_summary(self) -> dict[str, Any]:
+        """
+        Get a summary of citation coverage and verification.
+
+        Returns:
+            Dict with citation statistics
+        """
+        from agentorchestrator.models.citation import CitationCollection
+
+        collection = self.get("_citation_collection")
+        if not isinstance(collection, CitationCollection):
+            return {"total": 0, "verified": 0, "by_source": {}}
+
+        return collection.get_verification_summary()
+
     def __repr__(self) -> str:
         return f"ChainContext(request_id={self.request_id}, keys={len(self._store)}, results={len(self._results)})"
 
