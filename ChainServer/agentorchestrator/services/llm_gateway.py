@@ -7,9 +7,11 @@ with OAuth token management and caching support.
 
 import asyncio
 import functools
+import json
 import logging
+import os
 import time
-from typing import TypeVar
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,37 @@ def timed_lru_cache(seconds: int = 300, maxsize: int = 128):
     return decorator
 
 
+def async_timed_lru_cache(seconds: int = 300, maxsize: int = 128):
+    """Async LRU cache decorator with time-based expiration."""
+    def decorator(func):
+        cache = {}
+        lock = asyncio.Lock()
+
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            key = (args, tuple(sorted(kwargs.items())))
+            now = time.time()
+
+            async with lock:
+                if key in cache:
+                    result, timestamp = cache[key]
+                    if now - timestamp < seconds:
+                        return result
+
+            result = await func(*args, **kwargs)
+
+            async with lock:
+                cache[key] = (result, now)
+                # Evict old entries if cache is too large
+                if len(cache) > maxsize:
+                    oldest = min(cache.keys(), key=lambda k: cache[k][1])
+                    del cache[oldest]
+
+            return result
+        return wrapper
+    return decorator
+
+
 class OAuthTokenManager:
     """Manages OAuth tokens with automatic refresh."""
 
@@ -49,21 +82,62 @@ class OAuthTokenManager:
         client_secret: str | None = None,
         grant_type: str = "client_credentials",
         scope: str = "read",
+        token_expiry_seconds: int = 3500,  # Refresh before actual expiry
     ):
         self.oauth_endpoint = oauth_endpoint
         self.client_id = client_id
         self.client_secret = client_secret
         self.grant_type = grant_type
         self.scope = scope
+        self.token_expiry_seconds = token_expiry_seconds
         self._token: str | None = None
         self._expires_at: float = 0
+        self._lock = asyncio.Lock()
 
     async def get_token(self) -> str | None:
         """Get a valid token, refreshing if necessary."""
-        if self._token and time.time() < self._expires_at:
-            return self._token
-        # In production, implement actual OAuth flow
-        return self._token
+        async with self._lock:
+            if self._token and time.time() < self._expires_at:
+                return self._token
+
+            # Fetch new token
+            if not all([self.oauth_endpoint, self.client_id, self.client_secret]):
+                logger.warning("OAuth credentials not configured, cannot fetch token")
+                return None
+
+            try:
+                import httpx
+
+                data = {
+                    "grant_type": self.grant_type,
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret,
+                    "scope": self.scope,
+                }
+
+                async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+                    response = await client.post(
+                        self.oauth_endpoint,
+                        data=data,
+                        headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    )
+                    response.raise_for_status()
+                    result = response.json()
+
+                    self._token = result.get("access_token")
+                    # Use expires_in from response, or default
+                    expires_in = result.get("expires_in", self.token_expiry_seconds)
+                    self._expires_at = time.time() + min(expires_in - 60, self.token_expiry_seconds)
+
+                    logger.info(f"OAuth token refreshed, expires in {expires_in}s")
+                    return self._token
+
+            except ImportError:
+                logger.error("httpx not installed, cannot fetch OAuth token")
+                return None
+            except Exception as e:
+                logger.error(f"Failed to fetch OAuth token: {e}")
+                return None
 
     def set_token(self, token: str, expires_in: int = 3600):
         """Manually set a token."""
@@ -73,26 +147,29 @@ class OAuthTokenManager:
 
 class LLMGatewayClient:
     """
-    Base client for LLM API calls with optional OAuth support.
+    Client for LLM API calls with OAuth support.
 
-    This is a base implementation with stub methods. For production use,
-    either:
-    1. Subclass this and implement generate_async/generate_structured_async
-    2. Use a pre-built adapter from your LLM provider
-    3. Replace with your own LLM gateway implementation
+    Uses OAuth token management to authenticate with LLM gateway.
+    Supports OpenAI-compatible chat completion API.
 
     Usage:
-        client = LLMGatewayClient(server_url="...", api_key="...", model_name="gpt-4")
+        client = LLMGatewayClient(
+            server_url="https://llm-gateway/v1/chat/completions",
+            oauth_endpoint="https://auth/token",
+            client_id="...",
+            client_secret="...",
+            model_name="claude-sonnet-4",
+        )
         response = await client.generate_async("What is 2+2?")
     """
 
     def __init__(
         self,
         server_url: str | None = None,
-        model_name: str = "gpt-4",
-        temperature: float = 0.0,
+        model_name: str | None = None,
+        temperature: float = 0.2,
         max_tokens: int = 4096,
-        timeout: float = 60.0,
+        timeout: float = 120.0,
         oauth_endpoint: str | None = None,
         client_id: str | None = None,
         client_secret: str | None = None,
@@ -112,12 +189,21 @@ class LLMGatewayClient:
                 client_id=client_id,
                 client_secret=client_secret,
             )
+            logger.info(f"LLMGatewayClient configured with OAuth: {oauth_endpoint}")
         else:
             self._token_manager = None
+            if api_key:
+                logger.info("LLMGatewayClient configured with API key")
+            else:
+                logger.warning("LLMGatewayClient has no auth configured (will use stub mode)")
 
         # Lock for async client initialization
         self._async_client_lock = asyncio.Lock()
         self._async_client = None
+
+    def _is_configured(self) -> bool:
+        """Check if client is properly configured for real API calls."""
+        return bool(self.server_url and (self._token_manager or self.api_key))
 
     async def _get_async_client(self):
         """Get or create async HTTP client (thread-safe)."""
@@ -125,21 +211,137 @@ class LLMGatewayClient:
             if self._async_client is None:
                 try:
                     import httpx
-                    self._async_client = httpx.AsyncClient(timeout=self.timeout)
+                    self._async_client = httpx.AsyncClient(timeout=self.timeout, verify=False)
                 except ImportError:
                     logger.warning("httpx not installed, using stub client")
             return self._async_client
+
+    async def _get_auth_token(self) -> str | None:
+        """Get authentication token (OAuth or API key)."""
+        if self._token_manager:
+            return await self._token_manager.get_token()
+        return self.api_key
+
+    async def _call_llm_api(
+        self,
+        messages: list[dict[str, str]],
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Call the LLM API with proper authentication."""
+        client = await self._get_async_client()
+        if not client:
+            raise RuntimeError("HTTP client not available")
+
+        token = await self._get_auth_token()
+        if not token:
+            raise RuntimeError("No authentication token available")
+
+        payload = {
+            "model": self.model_name,
+            "messages": messages,
+            "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+        }
+
+        # Add temperature if supported
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
+
+        # Add any additional parameters
+        for key in ["tools", "tool_choice", "response_format"]:
+            if key in kwargs:
+                payload[key] = kwargs[key]
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        }
+
+        logger.debug(f"Calling LLM API: {self.server_url}, model={self.model_name}")
+
+        response = await client.post(
+            self.server_url,
+            json=payload,
+            headers=headers,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def _estimate_tokens(self, text: str) -> int:
+        """Estimate token count (~4 chars per token for most models)."""
+        return len(text) // 4
+
+    def _truncate_if_needed(
+        self,
+        prompt: str,
+        max_input_tokens: int = 100000,
+    ) -> str:
+        """Truncate prompt if it exceeds max input tokens.
+
+        This is a safety measure to prevent 400 errors from the LLM API.
+        The framework's OffloadMiddleware should handle large payloads properly,
+        but this provides a fallback in case content is still too large.
+        """
+        estimated_tokens = self._estimate_tokens(prompt)
+        if estimated_tokens <= max_input_tokens:
+            return prompt
+
+        # Truncate to fit, leaving room for response
+        max_chars = max_input_tokens * 4
+        logger.warning(
+            f"Prompt too large ({estimated_tokens} tokens), truncating to {max_input_tokens} tokens. "
+            "Consider using OffloadMiddleware or SummarizerMiddleware for better handling."
+        )
+        return prompt[:max_chars] + "\n\n... [CONTENT TRUNCATED - use SummarizerMiddleware for intelligent summarization]"
 
     async def generate_async(
         self,
         prompt: str,
         system_prompt: str | None = None,
+        max_input_tokens: int = 100000,
         **kwargs,
     ) -> str:
-        """Generate text from a prompt."""
-        # Stub implementation - in production, call actual LLM API
-        logger.info(f"LLM generate (stub): {prompt[:50]}...")
-        return f"[LLM Response for: {prompt[:30]}...]"
+        """Generate text from a prompt.
+
+        Args:
+            prompt: The user prompt
+            system_prompt: Optional system prompt
+            max_input_tokens: Max input tokens before truncation (default 100K)
+            **kwargs: Additional parameters for the LLM API
+        """
+        # Check if configured for real API calls
+        if not self._is_configured():
+            logger.info(f"LLM generate (stub): {prompt[:50]}...")
+            return f"[LLM Response for: {prompt[:30]}...]"
+
+        # Truncate if needed to prevent 400 errors
+        prompt = self._truncate_if_needed(prompt, max_input_tokens)
+
+        # Build messages
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        try:
+            data = await self._call_llm_api(messages, **kwargs)
+
+            # Parse OpenAI-compatible response
+            choice = data.get("choices", [{}])[0]
+            message = choice.get("message", {})
+
+            if "content" in message:
+                return message["content"]
+            elif "tool_calls" in message:
+                # Return tool calls as formatted string
+                tool_calls = message["tool_calls"]
+                return json.dumps(tool_calls, indent=2)
+            else:
+                logger.warning(f"Unexpected LLM response format: {data}")
+                return str(data)
+
+        except Exception as e:
+            logger.error(f"LLM API call failed: {e}")
+            raise
 
     async def generate_structured_async(
         self,
@@ -149,15 +351,61 @@ class LLMGatewayClient:
         **kwargs,
     ) -> T | dict:
         """Generate structured output from a prompt."""
-        # Stub implementation - in production, use instructor or similar
-        logger.info(f"LLM structured generate (stub): {prompt[:50]}...")
-        if response_model:
-            # Return empty model instance
+        # Check if configured for real API calls
+        if not self._is_configured():
+            logger.info(f"LLM structured generate (stub): {prompt[:50]}...")
+            if response_model:
+                try:
+                    return response_model()
+                except Exception:
+                    return {}
+            return {}
+
+        # For structured output, we'll ask the LLM to respond in JSON
+        # and then parse it into the response model
+        if system_prompt:
+            enhanced_system = f"{system_prompt}\n\nRespond with valid JSON only."
+        else:
+            enhanced_system = "Respond with valid JSON only."
+
+        try:
+            response_text = await self.generate_async(
+                prompt=prompt,
+                system_prompt=enhanced_system,
+                **kwargs,
+            )
+
+            # Try to parse as JSON
             try:
-                return response_model()
-            except Exception:
-                return {}
-        return {}
+                # Handle markdown code blocks
+                if "```json" in response_text:
+                    response_text = response_text.split("```json")[1].split("```")[0]
+                elif "```" in response_text:
+                    response_text = response_text.split("```")[1].split("```")[0]
+
+                data = json.loads(response_text.strip())
+
+                if response_model:
+                    return response_model(**data)
+                return data
+
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse LLM response as JSON: {response_text[:200]}")
+                if response_model:
+                    try:
+                        return response_model()
+                    except Exception:
+                        pass
+                return {"raw_response": response_text}
+
+        except Exception as e:
+            logger.error(f"Structured generation failed: {e}")
+            if response_model:
+                try:
+                    return response_model()
+                except Exception:
+                    pass
+            return {}
 
     def get_langchain_llm(self):
         """Return a LangChain-compatible LLM wrapper."""
@@ -197,6 +445,31 @@ def get_llm_client(**kwargs) -> LLMGatewayClient:
     return LLMGatewayClient(**kwargs)
 
 
+def create_llm_client_from_env() -> LLMGatewayClient:
+    """Create an LLM client from environment variables.
+
+    Required env vars:
+        LLM_SERVER_URL: The LLM API endpoint
+        LLM_OAUTH_ENDPOINT: OAuth token endpoint
+        LLM_CLIENT_ID: OAuth client ID
+        LLM_CLIENT_SECRET: OAuth client secret
+
+    Optional env vars:
+        LLM_MODEL_NAME: Model to use (default: gpt-4)
+        LLM_MAX_TOKENS: Max tokens (default: 4096)
+        LLM_TEMPERATURE: Temperature (default: 0.2)
+    """
+    return LLMGatewayClient(
+        server_url=os.getenv("LLM_SERVER_URL"),
+        oauth_endpoint=os.getenv("LLM_OAUTH_ENDPOINT"),
+        client_id=os.getenv("LLM_CLIENT_ID"),
+        client_secret=os.getenv("LLM_CLIENT_SECRET"),
+        model_name=os.getenv("LLM_MODEL_NAME", "gpt-4"),
+        max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4096")),
+        temperature=float(os.getenv("LLM_TEMPERATURE", "0.2")),
+    )
+
+
 def create_managed_client(
     token_url: str | None = None,
     client_id: str | None = None,
@@ -216,9 +489,11 @@ __all__ = [
     "LLMGatewayClient",
     "OAuthTokenManager",
     "timed_lru_cache",
+    "async_timed_lru_cache",
     "get_llm_client",
     "get_default_llm_client",
     "set_default_llm_client",
     "init_default_llm_client",
+    "create_llm_client_from_env",
     "create_managed_client",
 ]

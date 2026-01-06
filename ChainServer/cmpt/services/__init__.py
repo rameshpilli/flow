@@ -19,7 +19,7 @@ Usage:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from cmpt.services._01_context_builder import ContextBuilderService
-from cmpt.services._02_content_prioritization import ContentPrioritizationService, ToolName
+from cmpt.services._02_content_prioritization import ContentPrioritizationService
 from cmpt.services._03_response_builder import ResponseBuilderService
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -58,8 +58,10 @@ from cmpt.services.agents import (
     EarningsAgent,
     NewsAgent,
     SECFilingAgent,
+    ToolName,
     create_cmpt_agents,
-    create_composite_agent,
+    get_cmpt_agents,
+    register_cmpt_agents,
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -86,8 +88,10 @@ __all__ = [
     "SECFilingAgent",
     "EarningsAgent",
     "NewsAgent",
+    "ToolName",
     "create_cmpt_agents",
-    "create_composite_agent",
+    "get_cmpt_agents",
+    "register_cmpt_agents",
     # CMPT Models
     "ChainRequest",
     "ChainRequestOverrides",

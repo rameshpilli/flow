@@ -1,140 +1,327 @@
 """
-CMPT Data Agents
-
-Agents for fetching SEC filings, earnings transcripts, and news via MCP.
-These extend AgentOrchestrator's MCPAgent with CMPT-specific logic.
+CMPT Data Agents - SEC filings, earnings transcripts, and news via MCP.
 """
 
 import logging
+import os
 import time
+from enum import Enum
+from typing import Any
 
-from agentorchestrator.agents.base import (
-    AgentResult,
-    BaseAgent,
-    ResilientAgent,
-    ResilientAgentConfig,
-)
-from agentorchestrator.connectors.base import ConnectorConfig
-from agentorchestrator.connectors.mcp import MCPAgent
-
-from cmpt.services._02_content_prioritization import ToolName
+from agentorchestrator.agents.base import AgentResult, BaseAgent
+from agentorchestrator.plugins.mcp_adapter import MCPAdapterAgent, MCPAdapterConfig
+from agentorchestrator.testing import testable
 
 logger = logging.getLogger(__name__)
 
 
-class SECFilingAgent(MCPAgent):
-    """Agent for fetching SEC filings (10-K, 10-Q, 8-K)."""
+class ToolName(Enum):
+    """Data agent tool names."""
+    EARNINGS_TOOL = "earnings_agent"
+    NEWS_TOOL = "news_agent"
+    SEC_TOOL = "sec_filing_agent"
+
+
+def _create_mcp_config(name: str, url: str, token: str | None, timeout: float = 30.0) -> MCPAdapterConfig:
+    """Create MCP adapter config with auth header if token provided."""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    return MCPAdapterConfig(
+        name=name,
+        server_url=url,
+        transport="http",
+        headers=headers,
+        timeout_seconds=timeout,
+        verify_ssl=False,  # Corporate self-signed certs
+    )
+
+
+def _agent_result(source: str, query: str, start: float, data: Any = None, error: str | None = None) -> AgentResult:
+    """Helper to create AgentResult with timing."""
+    return AgentResult(
+        data=data or {"items": []},
+        source=source,
+        query=query,
+        duration_ms=(time.perf_counter() - start) * 1000,
+        error=error,
+    )
+
+
+class SECFilingAgent(MCPAdapterAgent):
+    """Fetches SEC filings (10-K, 10-Q, 8-K) via MCP."""
 
     _ao_name = ToolName.SEC_TOOL.value
 
+    def __init__(self, mcp_url: str | None = None, bearer_token: str | None = None, **kwargs):
+        config = (_create_mcp_config("sec_mcp", mcp_url, bearer_token)
+                  if mcp_url else MCPAdapterConfig(name="sec_mcp"))
+        super().__init__(config)
+
     async def fetch(self, query: str, **kwargs) -> AgentResult:
-        """Fetch SEC filings for a company using params from Subquery."""
+        """Fetch SEC filings for a company."""
         start = time.perf_counter()
+
+        if not self._config.server_url:
+            return _agent_result(self._ao_name, query, start, error="No MCP server configured")
+
+        # Lazy initialization - connect if not already connected
+        if not self._mcp_session:
+            try:
+                await self.initialize()
+            except Exception as e:
+                logger.error(f"Failed to initialize SEC agent: {e}")
+                return _agent_result(self._ao_name, query, start, error=f"Initialization failed: {e}")
+
         try:
-            if self.connector:
-                # Use params from Subquery (propagated from GRID config)
-                args = {
-                    "reporting_entity": kwargs.get("ticker") or query,
-                    "retrieve": kwargs.get("quarters", 8),
-                    "filing_types": kwargs.get("types", ["10-K", "10-Q"]),
-                    "max_results": kwargs.get("max_results", 20),
-                }
-                result = await self.connector.call_tool("search_sec", args)
-                return AgentResult(data=result, source=self._ao_name, query=query, duration_ms=(time.perf_counter() - start) * 1000)
-            return AgentResult(data={"items": []}, source=self._ao_name, query=query, duration_ms=(time.perf_counter() - start) * 1000, error="No MCP connector")
+            ticker = kwargs.get("ticker", query)
+            company_name = kwargs.get("company_name", "")
+            filing_types = kwargs.get("types", ["10-K", "10-Q"])
+
+            # Build args matching MCP tool schema:
+            # reporting_entity (required), search_queries (required), keywords (required),
+            # retrieve (required), filing_type_filters (default: [])
+            # Use company_name for search_queries if provided
+            search_queries = kwargs.get("search_queries", [])
+            if not search_queries and company_name:
+                search_queries = [company_name]
+
+            args = {
+                "reporting_entity": ticker,
+                "search_queries": search_queries,
+                "keywords": kwargs.get("keywords", []),  # Required but can be empty
+                "retrieve": kwargs.get("quarters", 8),
+                "filing_type_filters": [f"RNS-SEC-{t}" for t in filing_types] if filing_types else [],
+            }
+            logger.info(f"SEC agent calling with: ticker={ticker}, company={company_name}, search_queries={search_queries}, filing_types={filing_types}")
+            result = await self.call_tool("sec_filing_retrieval_tool", args)
+            return _agent_result(self._ao_name, query, start, data=result)
+
         except Exception as e:
             logger.error(f"SEC agent failed: {e}")
-            return AgentResult(data=None, source=self._ao_name, query=query, duration_ms=(time.perf_counter() - start) * 1000, error=str(e))
+            return _agent_result(self._ao_name, query, start, error=str(e))
 
 
-class EarningsAgent(MCPAgent):
-    """Agent for fetching earnings transcripts."""
+class EarningsAgent(MCPAdapterAgent):
+    """Fetches earnings transcripts via MCP."""
 
     _ao_name = ToolName.EARNINGS_TOOL.value
 
+    def __init__(self, mcp_url: str | None = None, bearer_token: str | None = None, **kwargs):
+        config = (_create_mcp_config("earnings_mcp", mcp_url, bearer_token)
+                  if mcp_url else MCPAdapterConfig(name="earnings_mcp"))
+        super().__init__(config)
+
     async def fetch(self, query: str, **kwargs) -> AgentResult:
-        """Fetch earnings transcripts for a company using params from Subquery."""
+        """Fetch earnings transcripts for a company."""
         start = time.perf_counter()
-        # Use params from Subquery (propagated from temporal context)
-        ticker = kwargs.get("ticker") or query
-        fiscal_year = kwargs.get("fiscal_year", "2025")
-        fiscal_quarter = kwargs.get("fiscal_quarter", "Q1")
-        quarters = kwargs.get("quarters", 4)
+
+        if not self._config.server_url:
+            return _agent_result(self._ao_name, query, start, error="No MCP server configured")
+
+        # Lazy initialization - connect if not already connected
+        if not self._mcp_session:
+            try:
+                await self.initialize()
+            except Exception as e:
+                logger.error(f"Failed to initialize Earnings agent: {e}")
+                return _agent_result(self._ao_name, query, start, error=f"Initialization failed: {e}")
+
         try:
-            if self.connector:
-                args = {
-                    "ticker": ticker,
-                    "fiscal_year": fiscal_year,
-                    "fiscal_quarter": fiscal_quarter,
-                    "quarters": quarters,
-                    "include_estimates": kwargs.get("include_estimates", True),
-                    "include_historical": kwargs.get("include_historical", True),
-                }
-                result = await self.connector.call_tool("get_transcript", args)
-                return AgentResult(data=result, source=self._ao_name, query=query, duration_ms=(time.perf_counter() - start) * 1000)
-            return AgentResult(data={"items": []}, source=self._ao_name, query=query, duration_ms=(time.perf_counter() - start) * 1000, error="No MCP connector")
+            ticker = kwargs.get("ticker", query)
+            fiscal_year = kwargs.get("fiscal_year", "2025")
+            fiscal_quarter = kwargs.get("fiscal_quarter", "Q1")
+
+            # Build args matching MCP tool schema:
+            # query (required) - The tool expects a natural language query string
+            earnings_query = f"{ticker} {fiscal_quarter} {fiscal_year} earnings call summary"
+
+            args = {
+                "query": earnings_query,
+            }
+            result = await self.call_tool("_earnings_call_analyzer_with_docs", args)
+            return _agent_result(self._ao_name, query, start, data=result)
+
         except Exception as e:
             logger.error(f"Earnings agent failed: {e}")
-            return AgentResult(data=None, source=self._ao_name, query=query, duration_ms=(time.perf_counter() - start) * 1000, error=str(e))
+            return _agent_result(self._ao_name, query, start, error=str(e))
 
 
-class NewsAgent(MCPAgent):
-    """Agent for fetching news articles."""
+class NewsAgent(MCPAdapterAgent):
+    """Fetches news articles via MCP."""
 
     _ao_name = ToolName.NEWS_TOOL.value
 
+    def __init__(self, mcp_url: str | None = None, bearer_token: str | None = None, **kwargs):
+        config = (_create_mcp_config("news_mcp", mcp_url, bearer_token, timeout=20.0)
+                  if mcp_url else MCPAdapterConfig(name="news_mcp"))
+        super().__init__(config)
+
     async def fetch(self, query: str, **kwargs) -> AgentResult:
-        """Fetch news articles for a company using params from Subquery."""
+        """Fetch news articles for a company."""
         start = time.perf_counter()
-        # Use params from Subquery (propagated from GRID config)
-        ticker = kwargs.get("ticker") or query
-        days = kwargs.get("days", 30)
-        max_results = kwargs.get("max_results", 50)
+
+        if not self._config.server_url:
+            return _agent_result(self._ao_name, query, start, error="No MCP server configured")
+
+        # Lazy initialization - connect if not already connected
+        if not self._mcp_session:
+            try:
+                await self.initialize()
+            except Exception as e:
+                logger.error(f"Failed to initialize News agent: {e}")
+                return _agent_result(self._ao_name, query, start, error=f"Initialization failed: {e}")
+
         try:
-            if self.connector:
-                args = {
-                    "search_query": f"{ticker} news",
-                    "entities": [ticker],
-                    "days": days,
-                    "max_results": max_results,
-                    "sentiment": kwargs.get("sentiment", True),
-                }
-                result = await self.connector.call_tool("search_news", args)
-                return AgentResult(data=result, source=self._ao_name, query=query, duration_ms=(time.perf_counter() - start) * 1000)
-            return AgentResult(data={"items": []}, source=self._ao_name, query=query, duration_ms=(time.perf_counter() - start) * 1000, error="No MCP connector")
+            ticker = kwargs.get("ticker", query)
+            days = kwargs.get("days", 30)
+
+            # Build args matching MCP tool schema:
+            # search_query (string), entities (array), topics (array),
+            # relative_date_range (any), absolute_date_range (any), news_source (any)
+            # Map days to proper enum format: 30 -> "last_thirty_days", 7 -> "last_seven_days"
+            date_map = {7: "last_seven_days", 30: "last_thirty_days", 90: "last_ninety_days"}
+            relative_date = date_map.get(days, f"last_{days}_days")
+            
+            args = {
+                "search_query": f"{ticker} news",
+                "entities": [ticker],
+                "topics": kwargs.get("topics", []),
+                "relative_date_range": relative_date,
+            }
+            result = await self.call_tool("news_retrieval_tool", args)
+            return _agent_result(self._ao_name, query, start, data=result)
+
         except Exception as e:
             logger.error(f"News agent failed: {e}")
-            return AgentResult(data=None, source=self._ao_name, query=query, duration_ms=(time.perf_counter() - start) * 1000, error=str(e))
+            return _agent_result(self._ao_name, query, start, error=str(e))
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#                           FACTORY FUNCTIONS
-# ═══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+#                           AGENT REGISTRATION
+# ══════════════════════════════════════════════════════════════════════════════
 
-def create_cmpt_agents(sec_url: str | None = None, earnings_url: str | None = None, news_url: str | None = None) -> dict[str, BaseAgent]:
-    """Create all CMPT agents with optional MCP URLs."""
-    agents = {}
+def _load_mcp_configs_from_env() -> dict[str, dict[str, Any]]:
+    """Load MCP configs from AGENT_CONFIG environment variable."""
+    import json
 
-    for AgentClass, url, tool_name, timeout in [
-        (SECFilingAgent, sec_url, ToolName.SEC_TOOL, 30.0),
-        (EarningsAgent, earnings_url, ToolName.EARNINGS_TOOL, 30.0),
-        (NewsAgent, news_url, ToolName.NEWS_TOOL, 20.0),
-    ]:
-        agent = AgentClass()
-        if url:
-            agent.connector_config = ConnectorConfig(name=f"{tool_name.value}_mcp", base_url=url)
-        agents[tool_name.value] = ResilientAgent(agent=agent, config=ResilientAgentConfig(timeout_seconds=timeout, max_retries=2))
+    agent_configs_json = os.getenv("AGENT_CONFIG", "[]")
+    agent_configs_list = json.loads(agent_configs_json)
 
-    return agents
+    # Map by agent name
+    config_map = {}
+    for config in agent_configs_list:
+        name = config.get("name")
+        if name == "sec":
+            config_map["sec_filing_agent"] = {
+                "mcp_url": config.get("mcp_url"),
+                "bearer_token": config.get("mcp_bearer_token"),
+            }
+        elif name == "earnings":
+            config_map["earnings_agent"] = {
+                "mcp_url": config.get("mcp_url"),
+                "bearer_token": config.get("mcp_bearer_token"),
+            }
+        elif name == "news":
+            config_map["news_agent"] = {
+                "mcp_url": config.get("mcp_url"),
+                "bearer_token": config.get("mcp_bearer_token"),
+            }
+
+    return config_map
 
 
-def create_composite_agent(sec_url: str | None = None, earnings_url: str | None = None, news_url: str | None = None) -> BaseAgent:
-    """Create a composite agent that fetches from all sources in parallel."""
-    from agentorchestrator.agents.base import ResilientCompositeAgent
+@testable(
+    agent_configs=_load_mcp_configs_from_env(),
+    test_query="AAPL",
+    test_params={"ticker": "AAPL", "max_results": 5}
+)
+def register_cmpt_agents(ao: Any) -> None:
+    """
+    Register CMPT agents with resilience configuration.
 
-    agents = create_cmpt_agents(sec_url, earnings_url, news_url)
-    return ResilientCompositeAgent(
-        agents=list(agents.values()),
-        config=ResilientAgentConfig(timeout_seconds=30.0, max_retries=2),
-        name="cmpt_composite",
-    )
+    Call ao.get_agent(name, mcp_url=..., bearer_token=...) to get instances.
+
+    To test: await register_cmpt_agents.test(ao)
+    """
+    ao.agent(
+        name=ToolName.SEC_TOOL.value,
+        group="cmpt",
+        description="Fetches SEC filings (10-K, 10-Q, 8-K)",
+        resilient=True,
+        resilient_config={"timeout_seconds": 30.0, "max_retries": 2},
+    )(SECFilingAgent)
+
+    ao.agent(
+        name=ToolName.EARNINGS_TOOL.value,
+        group="cmpt",
+        description="Fetches earnings transcripts",
+        resilient=True,
+        resilient_config={"timeout_seconds": 30.0, "max_retries": 2},
+    )(EarningsAgent)
+
+    ao.agent(
+        name=ToolName.NEWS_TOOL.value,
+        group="cmpt",
+        description="Fetches news articles",
+        resilient=True,
+        resilient_config={"timeout_seconds": 20.0, "max_retries": 2},
+    )(NewsAgent)
+
+    logger.info("Registered CMPT agents with resilience: SEC, Earnings, News")
+
+
+def get_cmpt_agents(
+    ao: Any,
+    sec_url: str | None = None,
+    earnings_url: str | None = None,
+    news_url: str | None = None,
+    sec_token: str | None = None,
+    earnings_token: str | None = None,
+    news_token: str | None = None,
+) -> dict[str, BaseAgent]:
+    """
+    Get configured CMPT agent instances.
+
+    Returns dict of {agent_name: agent_instance}.
+    If URLs provided, creates real MCP agents. Otherwise creates mock agents.
+
+    Note: MCP agents will auto-connect on first fetch() call.
+    """
+    # If MCP URLs provided, create real agents directly
+    if sec_url or earnings_url or news_url:
+        agents = {
+            ToolName.SEC_TOOL.value: SECFilingAgent(mcp_url=sec_url, bearer_token=sec_token) if sec_url else SECFilingAgent(),
+            ToolName.EARNINGS_TOOL.value: EarningsAgent(mcp_url=earnings_url, bearer_token=earnings_token) if earnings_url else EarningsAgent(),
+            ToolName.NEWS_TOOL.value: NewsAgent(mcp_url=news_url, bearer_token=news_token) if news_url else NewsAgent(),
+        }
+        return agents
+
+    # Otherwise, try to get registered agents from orchestrator
+    return {
+        ToolName.SEC_TOOL.value: ao.get_agent(ToolName.SEC_TOOL.value),
+        ToolName.EARNINGS_TOOL.value: ao.get_agent(ToolName.EARNINGS_TOOL.value),
+        ToolName.NEWS_TOOL.value: ao.get_agent(ToolName.NEWS_TOOL.value),
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#                           LEGACY COMPATIBILITY
+# ══════════════════════════════════════════════════════════════════════════════
+
+def create_cmpt_agents(
+    sec_url: str | None = None,
+    earnings_url: str | None = None,
+    news_url: str | None = None,
+    sec_token: str | None = None,
+    earnings_token: str | None = None,
+    news_token: str | None = None,
+) -> dict[str, BaseAgent]:
+    """
+    Legacy function - creates CMPT agents directly without orchestrator.
+
+    Prefer using register_cmpt_agents(ao) + get_cmpt_agents(ao, ...) instead.
+    """
+    return {
+        ToolName.SEC_TOOL.value: SECFilingAgent(mcp_url=sec_url, bearer_token=sec_token) if sec_url else SECFilingAgent(),
+        ToolName.EARNINGS_TOOL.value: EarningsAgent(mcp_url=earnings_url, bearer_token=earnings_token) if earnings_url else EarningsAgent(),
+        ToolName.NEWS_TOOL.value: NewsAgent(mcp_url=news_url, bearer_token=news_token) if news_url else NewsAgent(),
+    }

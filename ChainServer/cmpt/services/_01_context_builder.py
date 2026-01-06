@@ -1,20 +1,20 @@
 """
-Context Builder Service
+Context Builder Service - Stage 1 of the CMPT Chain
 
-Extracts context from user request:
-- Customer Firm Extractor: Company info from foundation service
-- Temporal Context Extractor: Earnings dates, fiscal periods
-- RBC Persona Extractor: RBC employee info from LDAP
-- Corporate Client Persona Extractor: Client info from ZoomInfo
-
-This is the first stage of the CMPT chain.
+Extracts context from user request by calling external APIs:
+- Foundation Service: Query resolution (company name → ticker, industry)
+- Foundation Service: Earnings calendar (earnings dates)
+- LDAP: RBC employee info (TODO: implement real API)
+- ZoomInfo: Client persona info (TODO: implement real API)
 """
 
 import asyncio
 import logging
+import os
 from datetime import date, datetime
-from difflib import SequenceMatcher
 from typing import Any
+
+import httpx
 
 from cmpt.services.models import (
     ChainRequest,
@@ -27,151 +27,95 @@ from cmpt.services.models import (
 
 logger = logging.getLogger(__name__)
 
+# Foundation Service URLs
+FOUNDATION_BASE_URL = os.getenv(
+    "FOUNDATION_BASE_URL",
+    "https://tg40-aiden-foundation-service.cfk.devfg.rbc.com"
+)
+FOUNDATION_QUERY_RESOLUTION_URL = os.getenv(
+    "FOUNDATION_QUERY_RESOLUTION_URL",
+    f"{FOUNDATION_BASE_URL}/query_resolution"
+)
+FOUNDATION_EARNINGS_CALENDAR_URL = os.getenv(
+    "FOUNDATION_EARNING_CALENDAR_URL",
+    f"{FOUNDATION_BASE_URL}/company_earnings_calendar"
+)
+
 
 class ContextBuilderService:
     """
-    Service for extracting context from meeting requests.
+    Extracts context from meeting requests via external APIs.
 
     Usage:
         service = ContextBuilderService()
         output = await service.execute(request)
-
-    Or as a step in AgentOrchestrator:
-        @forge.step(produces=["context_builder_output"])
-        async def context_builder(ctx):
-            service = ContextBuilderService()
-            output = await service.execute(ctx.get("request"))
-            ctx.set("context_builder_output", output)
-            return output.model_dump()
     """
 
-    # Configuration
     HTTP_TIMEOUT: float = 20.0
     DEFAULT_NEWS_LOOKBACK_DAYS: int = 30
     DEFAULT_FILING_QUARTERS: int = 8
-
-    # Default per-extractor time budgets (seconds)
     DEFAULT_EXTRACTOR_TIMEOUTS: dict[str, float] = {
-        "firm": 10.0,           # Company lookup
-        "temporal": 5.0,        # Earnings calendar
-        "rbc_persona": 5.0,     # LDAP lookup
-        "client_persona": 8.0,  # ZoomInfo lookup
+        "firm_temporal": 10.0,
+        "rbc_persona": 5.0,
+        "client_persona": 8.0,
     }
 
-    def __init__(
-        self,
-        http_timeout: float = 20.0,
-        company_match_url: str | None = None,
-        earnings_calendar_url: str | None = None,
-        extractor_timeouts: dict[str, float] | None = None,
-    ):
-        """
-        Initialize the Context Builder service.
-
-        Args:
-            http_timeout: HTTP request timeout in seconds
-            company_match_url: URL for company matching service
-            earnings_calendar_url: URL for earnings calendar service
-            extractor_timeouts: Per-extractor time budgets in seconds
-                Keys: "firm", "temporal", "rbc_persona", "client_persona"
-                If not specified, uses DEFAULT_EXTRACTOR_TIMEOUTS
-        """
+    def __init__(self, http_timeout: float = 20.0, extractor_timeouts: dict[str, float] | None = None):
         self.http_timeout = http_timeout
-        self.company_match_url = company_match_url
-        self.earnings_calendar_url = earnings_calendar_url
-        self.extractor_timeouts = {
-            **self.DEFAULT_EXTRACTOR_TIMEOUTS,
-            **(extractor_timeouts or {}),
-        }
+        self.extractor_timeouts = {**self.DEFAULT_EXTRACTOR_TIMEOUTS, **(extractor_timeouts or {})}
 
-    async def execute(
-        self,
-        request: ChainRequest,
-    ) -> ContextBuilderOutput:
-        """
-        Execute all context extraction steps.
-
-        Args:
-            request: The chain request with meeting details
-
-        Returns:
-            ContextBuilderOutput with all extracted context
-
-        User Overrides:
-            If request.overrides is provided, those values take precedence
-            over API-extracted values. Overrides can also skip API calls entirely.
-        """
+    async def execute(self, request: ChainRequest) -> ContextBuilderOutput:
+        """Execute all context extraction steps."""
         start_time = datetime.now()
         timing: dict[str, float] = {}
         errors: dict[str, str] = {}
         overrides = request.overrides or ChainRequestOverrides()
-
-        # Initialize output
         output = ContextBuilderOutput(errors={}, timing_ms={})
 
-        # Run extractors in parallel where possible
+        # Build list of extractors to run in parallel
         tasks = []
 
-        # 1. Corporate Client Firm Extractor (can be skipped via override)
-        if request.corporate_company_name and not overrides.skip_company_lookup:
-            tasks.append(("firm", self._extract_firm(request.corporate_company_name)))
+        # Firm + Temporal extraction via earnings calendar API
+        # The API accepts company_name and returns company info + earnings dates
+        if request.corporate_company_name and not overrides.skip_earnings_calendar_api:
+            tasks.append(("firm_temporal", self._extract_firm_and_temporal(
+                company_name=request.corporate_company_name,
+                ticker=overrides.ticker,
+                meeting_datetime=request.meeting_datetime,
+                earnings_override=overrides.next_earnings_date,
+            )))
 
-        # 2. Temporal Context Extractor (depends on firm result for ticker)
-        # Will run after firm extraction
-
-        # 3. RBC Persona Extractor
         if request.rbc_employee_email:
             tasks.append(("rbc_persona", self._extract_rbc_persona(request.rbc_employee_email)))
 
-        # 4. Corporate Client Persona Extractor
         if request.corporate_client_email or request.corporate_client_names:
-            tasks.append(
-                (
-                    "client_persona",
-                    self._extract_client_persona(
-                        email=request.corporate_client_email,
-                        names=request.corporate_client_names,
-                        company_name=request.corporate_company_name,
-                    ),
-                )
-            )
+            tasks.append(("client_persona", self._extract_client_persona(
+                email=request.corporate_client_email,
+                names=request.corporate_client_names,
+                company_name=request.corporate_company_name,
+            )))
 
-        # Execute parallel tasks with per-extractor timeouts
+        # Execute parallel tasks
         if tasks:
-            # Wrap each task with asyncio.wait_for for timeout protection
-            wrapped_tasks = []
-            for name, coro in tasks:
-                timeout = self.extractor_timeouts.get(name, 10.0)
-                wrapped_tasks.append((name, asyncio.wait_for(coro, timeout=timeout)))
+            wrapped = [(name, asyncio.wait_for(coro, timeout=self.extractor_timeouts.get(name, 10.0)))
+                       for name, coro in tasks]
+            results = await asyncio.gather(*[t[1] for t in wrapped], return_exceptions=True)
 
-            results = await asyncio.gather(
-                *[task[1] for task in wrapped_tasks],
-                return_exceptions=True,
-            )
-
-            for (name, _), result in zip(wrapped_tasks, results):
+            for (name, _), result in zip(wrapped, results):
                 if isinstance(result, asyncio.TimeoutError):
-                    timeout = self.extractor_timeouts.get(name, 10.0)
-                    errors[name] = f"Extractor timed out after {timeout}s"
-                    logger.error(f"Extractor {name} timed out after {timeout}s")
+                    errors[name] = f"Timed out after {self.extractor_timeouts.get(name, 10.0)}s"
                 elif isinstance(result, Exception):
                     errors[name] = str(result)
-                    logger.error(f"Extractor {name} failed: {result}")
                 else:
                     data, error, duration = result
                     timing[name] = duration
-
                     if error:
                         errors[name] = error
-                    else:
+                    elif data:
                         self._apply_result(output, name, data)
 
-        # Extract firm info first to get ticker for temporal context
-        # Apply user overrides to company info
-        if output.company_info:
-            output.company_info = self._apply_company_overrides(output.company_info, overrides)
-        elif overrides.skip_company_lookup and request.corporate_company_name:
-            # Create minimal company info from overrides when API is skipped
+        # Fallback: create company info from request if API failed
+        if not output.company_info and request.corporate_company_name:
             output.company_info = CompanyInfo(
                 name=request.corporate_company_name,
                 ticker=overrides.ticker,
@@ -180,216 +124,218 @@ class ContextBuilderService:
                 sector=overrides.sector,
             )
 
-        ticker = overrides.ticker or (output.company_info.ticker if output.company_info else None)
+        # Fallback: create temporal context if API failed
+        if not output.temporal_context:
+            output.temporal_context = self._create_default_temporal(request.meeting_datetime, overrides)
 
-        # 2. Temporal Context Extractor (needs ticker or company name)
-        # Can be skipped if user provides fiscal quarter override
-        if not overrides.skip_earnings_calendar_api and (request.corporate_company_name or ticker):
-            temporal_timeout = self.extractor_timeouts.get("temporal", 5.0)
-            try:
-                temporal_start = datetime.now()
-                temporal_data, temporal_error = await asyncio.wait_for(
-                    self._extract_temporal_context(
-                        company_name=request.corporate_company_name,
-                        ticker=ticker,
-                        meeting_datetime=request.meeting_datetime,
-                        earnings_date_override=overrides.next_earnings_date,  # Pass override
-                    ),
-                    timeout=temporal_timeout,
-                )
-                timing["temporal"] = (datetime.now() - temporal_start).total_seconds() * 1000
-
-                if temporal_error:
-                    errors["temporal"] = temporal_error
-                else:
-                    output.temporal_context = temporal_data
-            except asyncio.TimeoutError:
-                errors["temporal"] = f"Extractor timed out after {temporal_timeout}s"
-                logger.error(f"Temporal extractor timed out after {temporal_timeout}s")
-            except Exception as e:
-                errors["temporal"] = str(e)
-                logger.error(f"Temporal extractor failed: {e}")
-        elif overrides.skip_earnings_calendar_api or overrides.fiscal_quarter:
-            # Create temporal context from overrides/computed values
-            output.temporal_context = self._create_temporal_from_overrides(
-                request.meeting_datetime, overrides
-            )
-
-        # Apply temporal overrides
+        # Apply overrides
+        if output.company_info:
+            output.company_info = self._apply_company_overrides(output.company_info, overrides)
         if output.temporal_context:
-            output.temporal_context = self._apply_temporal_overrides(
-                output.temporal_context, overrides
-            )
+            output.temporal_context = self._apply_temporal_overrides(output.temporal_context, overrides)
 
-        # Set resolved company name
+        # Set resolved company name and ticker
         if output.company_info:
             output.company_name = output.company_info.name
             output.ticker = output.company_info.ticker
 
-        # Apply persona overrides
-        if output.rbc_persona:
-            output.rbc_persona = self._apply_rbc_persona_overrides(
-                output.rbc_persona, overrides
-            )
-        if output.corporate_client_personas:
-            output.corporate_client_personas = [
-                self._apply_client_persona_overrides(p, overrides)
-                for p in output.corporate_client_personas
-            ]
-
         output.errors = errors
         output.timing_ms = timing
-
-        total_duration = (datetime.now() - start_time).total_seconds() * 1000
-        timing["total"] = total_duration
-
-        logger.info(f"Context builder completed in {total_duration:.2f}ms")
+        timing["total"] = (datetime.now() - start_time).total_seconds() * 1000
+        logger.info(f"Context builder completed in {timing['total']:.0f}ms")
         return output
 
-    def _apply_result(
-        self,
-        output: ContextBuilderOutput,
-        name: str,
-        data: Any,
-    ) -> None:
-        """Apply extractor result to output"""
-        if name == "firm" and data:
-            output.company_info = data
-            output.raw_firm_response = data.model_dump() if hasattr(data, "model_dump") else data
-        elif name == "rbc_persona" and data:
+    def _apply_result(self, output: ContextBuilderOutput, name: str, data: Any) -> None:
+        """Apply extractor result to output."""
+        if name == "firm_temporal":
+            company_info, temporal_context = data
+            if company_info:
+                output.company_info = company_info
+                output.raw_firm_response = company_info.model_dump()
+            if temporal_context:
+                output.temporal_context = temporal_context
+        elif name == "rbc_persona":
             output.rbc_persona = data
-        elif name == "client_persona" and data:
-            if isinstance(data, list):
-                output.corporate_client_personas = data
-            else:
-                output.corporate_client_personas = [data] if data else []
+        elif name == "client_persona":
+            output.corporate_client_personas = data if isinstance(data, list) else [data] if data else []
 
     # ═══════════════════════════════════════════════════════════════════════════
-    #                           EXTRACTORS
+    # EXTRACTORS
     # ═══════════════════════════════════════════════════════════════════════════
 
-    async def _extract_firm(
+    async def _extract_firm_and_temporal(
         self,
         company_name: str,
-    ) -> tuple[CompanyInfo | None, str | None, float]:
+        ticker: str | None,
+        meeting_datetime: str | None,
+        earnings_override: str | None,
+    ) -> tuple[tuple[CompanyInfo | None, TemporalContext | None], str | None, float]:
         """
-        Extract company information from foundation service.
+        Extract company info AND temporal context using Foundation Service APIs.
 
-        Returns:
-            Tuple of (CompanyInfo, error_message, duration_ms)
+        1. Query Resolution API: Resolve company name → ticker, industry
+        2. Earnings Calendar API: Get earnings dates using resolved ticker
         """
         start = datetime.now()
+        company_info = None
+        temporal_context = None
         error = None
-        result = None
 
         try:
-            # In production, this would call the foundation service
-            # For now, return mock data
-            logger.info(f"Extracting firm info for: {company_name}")
-
-            # Mock implementation - replace with actual API call
-            result = CompanyInfo(
-                name=company_name,
-                ticker=company_name[:4].upper() if len(company_name) >= 4 else company_name.upper(),
-                industry="Technology",
-                sector="Information Technology",
-                market_cap="Large Cap",
-                country="United States",
-            )
-
-        except Exception as e:
-            error = str(e)
-            logger.error(f"Firm extraction failed: {e}")
-
-        duration = (datetime.now() - start).total_seconds() * 1000
-        return result, error, duration
-
-    async def _extract_temporal_context(
-        self,
-        company_name: str | None = None,
-        ticker: str | None = None,
-        meeting_datetime: str | None = None,
-        earnings_date_override: str | None = None,
-    ) -> tuple[TemporalContext | None, str | None]:
-        """
-        Extract temporal context based on company and meeting date.
-
-        Returns:
-            Tuple of (TemporalContext, error_message)
-        """
-        error = None
-        result = None
-
-        try:
-            # Parse meeting date
             meeting_date = self._parse_date(meeting_datetime)
 
-            # Determine current quarter
-            quarter = (meeting_date.month - 1) // 3 + 1
-            fiscal_quarter = str(quarter)
-            fiscal_year = str(meeting_date.year)
+            # Step 1: Resolve company info via query_resolution API
+            resolved = await self._fetch_query_resolution(company_name)
+            resolved_name = company_name
+            resolved_ticker = ticker
+            resolved_industry = None
 
-            # In production, call earnings calendar API to get event_dt
-            # For now, simulate with a mock date ~30 days from meeting
-            # This would be replaced by actual API call
-            event_dt: str | None = None
-            days_to_earnings: int | None = None
+            if resolved:
+                resolved_name = resolved.get("company_name") or company_name
+                resolved_ticker = ticker or resolved.get("ticker_symbol")
+                resolved_industry = resolved.get("industry")
+                logger.info(f"Resolved: {company_name} → {resolved_name} ({resolved_ticker})")
 
-            if earnings_date_override:
-                # Use override if provided
-                event_dt = earnings_date_override
-            elif self.earnings_calendar_url:
-                # In production: call earnings calendar API
-                # event_dt = await self._call_earnings_api(ticker or company_name)
-                pass
+            # Step 2: Fetch earnings calendar using resolved ticker
+            earnings_data = None
+            if resolved_ticker:
+                earnings_data = await self._fetch_earnings_calendar(ticker=resolved_ticker)
 
-            # Compute days_to_earnings if we have an earnings date
-            if event_dt:
-                try:
-                    earnings_date = datetime.strptime(event_dt, "%Y-%m-%d").date()
-                    days_to_earnings = (earnings_date - meeting_date).days
-                except ValueError:
-                    logger.warning(f"Invalid earnings date format: {event_dt}")
+            # Build CompanyInfo
+            if resolved or earnings_data:
+                company_info = CompanyInfo(
+                    name=resolved_name,
+                    ticker=resolved_ticker,
+                    industry=resolved_industry,
+                )
 
-            result = TemporalContext(
-                meeting_date=str(meeting_date),
-                event_dt=event_dt,
-                fiscal_quarter=fiscal_quarter,
-                fiscal_year=fiscal_year,
-                days_to_earnings=days_to_earnings,
-                news_lookback_days=self.DEFAULT_NEWS_LOOKBACK_DAYS,
-                filing_quarters=self.DEFAULT_FILING_QUARTERS,
-            )
+            # Build TemporalContext from earnings data
+            if earnings_data:
+                next_earnings = self._find_next_earnings(earnings_data, meeting_date)
+                event_dt = earnings_override or (next_earnings.get("event_dt") if next_earnings else None)
+                fiscal_quarter = (next_earnings.get("fiscal_period") if next_earnings else None) or str((meeting_date.month - 1) // 3 + 1)
+                fy = next_earnings.get("fiscal_year") if next_earnings else None
+                fiscal_year = str(int(fy)) if fy else str(meeting_date.year)
+
+                # Compute days to earnings
+                days_to_earnings = None
+                if event_dt:
+                    try:
+                        earnings_date = datetime.strptime(event_dt, "%Y-%m-%d").date()
+                        days_to_earnings = (earnings_date - meeting_date).days
+                    except ValueError:
+                        pass
+
+                temporal_context = TemporalContext(
+                    meeting_date=str(meeting_date),
+                    event_dt=event_dt,
+                    fiscal_quarter=fiscal_quarter,
+                    fiscal_year=fiscal_year,
+                    days_to_earnings=days_to_earnings,
+                    news_lookback_days=self.DEFAULT_NEWS_LOOKBACK_DAYS,
+                    filing_quarters=self.DEFAULT_FILING_QUARTERS,
+                )
+            elif not resolved:
+                error = f"Could not resolve company: {company_name}"
 
         except Exception as e:
             error = str(e)
-            logger.error(f"Temporal extraction failed: {e}")
+            logger.error(f"Firm/temporal extraction failed: {e}")
 
-        return result, error
+        duration = (datetime.now() - start).total_seconds() * 1000
+        return (company_info, temporal_context), error, duration
 
-    async def _extract_rbc_persona(
-        self,
-        email: str,
-    ) -> tuple[PersonaInfo | None, str | None, float]:
+    async def _fetch_query_resolution(self, query: str) -> dict | None:
         """
-        Extract RBC employee persona from LDAP.
+        Resolve company name to structured data via query_resolution API.
 
-        Returns:
-            Tuple of (PersonaInfo, error_message, duration_ms)
+        Returns: {company_name, ticker_symbol, industry} or None
         """
-        start = datetime.now()
-        error = None
-        result = None
-
         try:
-            logger.info(f"Extracting RBC persona for: {email}")
+            async with httpx.AsyncClient(timeout=self.http_timeout, verify=False) as client:
+                response = await client.post(
+                    FOUNDATION_QUERY_RESOLUTION_URL,
+                    json={"query": query},
+                    headers={"Content-Type": "application/json"}
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    # Parse response: result.companies.<name>.matches[0]
+                    result = data.get("result", {})
+                    companies = result.get("companies", {})
+                    if companies:
+                        # Get first company's first match
+                        first_company = next(iter(companies.values()), {})
+                        matches = first_company.get("matches", [])
+                        if matches:
+                            return matches[0]
+                else:
+                    logger.warning(f"Query resolution API returned {response.status_code}: {response.text[:200]}")
+                return None
+        except Exception as e:
+            logger.warning(f"Query resolution API failed: {e}")
+            return None
 
-            # In production, this would call LDAP service
-            # For now, return mock data
+    async def _fetch_earnings_calendar(self, company_name: str | None = None, ticker: str | None = None) -> list[dict] | None:
+        """
+        Fetch earnings calendar from Foundation Service API.
+
+        API accepts: company_name, ticker, isin, region, top_n
+        Returns: list of earnings events with company info
+        """
+        try:
+            # Build payload - API accepts company_name or ticker
+            payload: dict[str, Any] = {}
+            if ticker:
+                payload["ticker"] = ticker
+            if company_name:
+                payload["company_name"] = company_name
+
+            async with httpx.AsyncClient(timeout=self.http_timeout, verify=False) as client:
+                response = await client.post(
+                    FOUNDATION_EARNINGS_CALENDAR_URL,
+                    json=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    if isinstance(data, dict) and "result" in data:
+                        return data["result"]
+                    if isinstance(data, list):
+                        return data
+                else:
+                    logger.warning(f"Earnings calendar API returned {response.status_code}: {response.text[:200]}")
+                return None
+        except Exception as e:
+            logger.warning(f"Earnings calendar API failed: {e}")
+            return None
+
+    def _find_next_earnings(self, earnings_data: list[dict], reference_date: date) -> dict | None:
+        """Find next upcoming earnings event after reference date."""
+        seen, unique = set(), []
+        for event in earnings_data:
+            dt = event.get("event_dt")
+            if dt and dt not in seen:
+                seen.add(dt)
+                unique.append(event)
+        unique.sort(key=lambda x: x.get("event_dt", ""))
+
+        for event in unique:
+            try:
+                event_date = datetime.strptime(event["event_dt"], "%Y-%m-%d").date()
+                if event_date >= reference_date:
+                    return event
+            except (ValueError, KeyError):
+                continue
+        return unique[-1] if unique else None
+
+    async def _extract_rbc_persona(self, email: str) -> tuple[PersonaInfo | None, str | None, float]:
+        """Extract RBC employee persona (TODO: implement real LDAP call)."""
+        start = datetime.now()
+        try:
             name_parts = email.split("@")[0].split(".")
             first_name = name_parts[0].title() if name_parts else ""
             last_name = name_parts[1].title() if len(name_parts) > 1 else ""
-
             result = PersonaInfo(
                 name=f"{first_name} {last_name}".strip(),
                 first_name=first_name,
@@ -398,122 +344,62 @@ class ContextBuilderService:
                 is_internal=True,
                 source="LDAP",
             )
-
+            return result, None, (datetime.now() - start).total_seconds() * 1000
         except Exception as e:
-            error = str(e)
-            logger.error(f"RBC persona extraction failed: {e}")
-
-        duration = (datetime.now() - start).total_seconds() * 1000
-        return result, error, duration
+            return None, str(e), (datetime.now() - start).total_seconds() * 1000
 
     async def _extract_client_persona(
-        self,
-        email: str | None = None,
-        names: str | None = None,
-        company_name: str | None = None,
-    ) -> tuple[list | None, str | None, float]:
-        """
-        Extract corporate client persona from ZoomInfo.
-
-        Returns:
-            Tuple of (list of PersonaInfo, error_message, duration_ms)
-        """
+        self, email: str | None, names: str | None, company_name: str | None
+    ) -> tuple[list[PersonaInfo], str | None, float]:
+        """Extract client persona (TODO: implement real ZoomInfo call)."""
         start = datetime.now()
-        error = None
         result = []
-
         try:
-            logger.info(f"Extracting client persona: email={email}, names={names}")
-
-            # In production, this would call ZoomInfo service
-            # For now, return mock data
             if email:
                 name_parts = email.split("@")[0].split(".")
                 first_name = name_parts[0].title() if name_parts else ""
                 last_name = name_parts[1].title() if len(name_parts) > 1 else ""
-
-                result = [
-                    PersonaInfo(
-                        name=f"{first_name} {last_name}".strip(),
-                        first_name=first_name,
-                        last_name=last_name,
-                        email=email,
-                        company=company_name,
-                        is_internal=False,
-                        source="ZoomInfo",
-                    )
-                ]
-
+                result.append(PersonaInfo(
+                    name=f"{first_name} {last_name}".strip(),
+                    first_name=first_name,
+                    last_name=last_name,
+                    email=email,
+                    company=company_name,
+                    is_internal=False,
+                    source="ZoomInfo",
+                ))
             elif names:
-                # Parse comma-separated names
                 for name in names.split(","):
                     name = name.strip()
                     if name:
                         parts = name.split()
-                        result.append(
-                            PersonaInfo(
-                                name=name,
-                                first_name=parts[0] if parts else "",
-                                last_name=parts[-1] if len(parts) > 1 else "",
-                                company=company_name,
-                                is_internal=False,
-                                source="ZoomInfo",
-                            )
-                        )
-
+                        result.append(PersonaInfo(
+                            name=name,
+                            first_name=parts[0] if parts else "",
+                            last_name=parts[-1] if len(parts) > 1 else "",
+                            company=company_name,
+                            is_internal=False,
+                            source="ZoomInfo",
+                        ))
+            return result, None, (datetime.now() - start).total_seconds() * 1000
         except Exception as e:
-            error = str(e)
-            logger.error(f"Client persona extraction failed: {e}")
-
-        duration = (datetime.now() - start).total_seconds() * 1000
-        return result, error, duration
+            return [], str(e), (datetime.now() - start).total_seconds() * 1000
 
     # ═══════════════════════════════════════════════════════════════════════════
-    #                           UTILITIES
+    # OVERRIDE & FALLBACK HELPERS
     # ═══════════════════════════════════════════════════════════════════════════
 
-    @staticmethod
-    def rank_profiles_by_company(
-        profiles: list,
-        user_company: str,
-    ) -> list:
-        """
-        Rank profiles by similarity to user's company name.
-
-        Args:
-            profiles: List of profile dictionaries
-            user_company: Target company name to match
-
-        Returns:
-            Sorted list of profiles with company_similarity_score added
-        """
-        if not profiles or not user_company:
-            return profiles
-
-        for profile in profiles:
-            company_from_profile = profile.get("company", "") or profile.get("department", "")
-
-            if company_from_profile:
-                similarity = SequenceMatcher(
-                    None, user_company.lower(), company_from_profile.lower()
-                ).ratio()
-                profile["company_similarity_score"] = similarity
-            else:
-                profile["company_similarity_score"] = 0.0
-
-        return sorted(profiles, key=lambda x: x.get("company_similarity_score", 0), reverse=True)
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    #                       USER OVERRIDE HELPERS
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    def _apply_company_overrides(self, company_info: CompanyInfo, overrides: ChainRequestOverrides) -> CompanyInfo:
+    def _apply_company_overrides(self, company: CompanyInfo, overrides: ChainRequestOverrides) -> CompanyInfo:
         """Apply user overrides to company info."""
-        data = company_info.model_dump()
-        override_map = {"ticker": "ticker", "company_cik": "cik", "industry": "industry", "sector": "sector"}
-        for override_key, data_key in override_map.items():
-            if val := getattr(overrides, override_key, None):
-                data[data_key] = val
+        data = company.model_dump()
+        if overrides.ticker:
+            data["ticker"] = overrides.ticker
+        if overrides.company_cik:
+            data["cik"] = overrides.company_cik
+        if overrides.industry:
+            data["industry"] = overrides.industry
+        if overrides.sector:
+            data["sector"] = overrides.sector
         return CompanyInfo(**data)
 
     def _apply_temporal_overrides(self, temporal: TemporalContext, overrides: ChainRequestOverrides) -> TemporalContext:
@@ -531,46 +417,18 @@ class ContextBuilderService:
             data["filing_quarters"] = overrides.filing_quarters
         return TemporalContext(**data)
 
-    def _create_temporal_from_overrides(self, meeting_datetime: str | None, overrides: ChainRequestOverrides) -> TemporalContext:
-        """Create temporal context from user overrides when API is skipped."""
+    def _create_default_temporal(self, meeting_datetime: str | None, overrides: ChainRequestOverrides) -> TemporalContext:
+        """Create default temporal context when API fails."""
         meeting_date = self._parse_date(meeting_datetime)
-        fiscal_quarter = overrides.fiscal_quarter.upper().replace("Q", "").strip() if overrides.fiscal_quarter else str((meeting_date.month - 1) // 3 + 1)
-        fiscal_year = overrides.fiscal_year.upper().replace("FY", "").strip() if overrides.fiscal_year else str(meeting_date.year)
-
-        # Compute days_to_earnings if override provides earnings date
-        days_to_earnings: int | None = None
-        if overrides.next_earnings_date:
-            try:
-                earnings_date = datetime.strptime(overrides.next_earnings_date, "%Y-%m-%d").date()
-                days_to_earnings = (earnings_date - meeting_date).days
-            except ValueError:
-                pass
-
+        quarter = (meeting_date.month - 1) // 3 + 1
         return TemporalContext(
-            meeting_date=str(meeting_date), fiscal_quarter=fiscal_quarter, fiscal_year=fiscal_year,
+            meeting_date=str(meeting_date),
+            fiscal_quarter=str(quarter),
+            fiscal_year=str(meeting_date.year),
             event_dt=overrides.next_earnings_date,
-            days_to_earnings=days_to_earnings,
             news_lookback_days=overrides.news_lookback_days or self.DEFAULT_NEWS_LOOKBACK_DAYS,
             filing_quarters=overrides.filing_quarters or self.DEFAULT_FILING_QUARTERS,
         )
-
-    def _apply_persona_overrides(self, persona: PersonaInfo, name_override: str | None, role_override: str | None) -> PersonaInfo:
-        """Apply name/role overrides to a persona."""
-        data = persona.model_dump()
-        if name_override:
-            data["name"] = name_override
-            parts = name_override.split()
-            data["first_name"] = parts[0] if parts else ""
-            data["last_name"] = parts[-1] if len(parts) > 1 else ""
-        if role_override:
-            data["role"] = role_override
-        return PersonaInfo(**data)
-
-    def _apply_rbc_persona_overrides(self, persona: PersonaInfo, overrides: ChainRequestOverrides) -> PersonaInfo:
-        return self._apply_persona_overrides(persona, overrides.rbc_persona_name, overrides.rbc_persona_role)
-
-    def _apply_client_persona_overrides(self, persona: PersonaInfo, overrides: ChainRequestOverrides) -> PersonaInfo:
-        return self._apply_persona_overrides(persona, overrides.client_persona_name, overrides.client_persona_role)
 
     def _parse_date(self, date_str: str | None) -> date:
         """Parse date string or return today's date."""
@@ -580,3 +438,4 @@ class ContextBuilderService:
             except ValueError:
                 pass
         return date.today()
+

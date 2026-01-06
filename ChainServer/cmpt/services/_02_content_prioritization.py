@@ -32,7 +32,7 @@ class ToolName(Enum):
     """Data agent tool names"""
     EARNINGS_TOOL = "earnings_agent"
     NEWS_TOOL = "news_agent"
-    SEC_TOOL = "SEC_agent"
+    SEC_TOOL = "sec_filing_agent"
 
 
 # Priority profiles for temporal source prioritization
@@ -156,7 +156,8 @@ class ContentPrioritizationService:
                 source=DataSource.NEWS, priority=Priority.PRIMARY if market_cap_key == "large_cap" else Priority.SECONDARY,
                 enabled=True, lookback_days=news_lookback, max_results=self.grid_config["max_news_results"],
             ),
-            PrioritizedSource(source=DataSource.TRANSCRIPTS, priority=Priority.SECONDARY, enabled=True, lookback_quarters=4),
+            # TRANSCRIPTS disabled - no agent available
+            # PrioritizedSource(source=DataSource.TRANSCRIPTS, priority=Priority.SECONDARY, enabled=True, lookback_quarters=4),
         ]
         sources.sort(key=lambda s: {Priority.PRIMARY: 0, Priority.SECONDARY: 1, Priority.TERTIARY: 2}.get(s.priority, 99))
         return sources
@@ -177,6 +178,7 @@ class ContentPrioritizationService:
                 ToolName.SEC_TOOL.value, 30000,
                 lambda s: {
                     "ticker": ticker,
+                    "company_name": company_name,  # Pass company name for search_queries
                     "quarters": s.lookback_quarters or filing_quarters,
                     "types": s.include_types or ["10-K", "10-Q"],
                     "max_results": s.max_results or 20,
@@ -202,16 +204,17 @@ class ContentPrioritizationService:
                     "quarters": s.lookback_quarters or 4,
                 }
             ),
-            DataSource.TRANSCRIPTS: (
-                "transcripts", 30000,
-                lambda s: {
-                    "ticker": ticker,
-                    "fiscal_year": fiscal_year,
-                    "fiscal_quarter": fiscal_quarter,
-                    "quarters": s.lookback_quarters or 4,
-                    "types": ["earnings_call", "investor_day"],
-                }
-            ),
+            # TRANSCRIPTS disabled - no agent available
+            # DataSource.TRANSCRIPTS: (
+            #     "transcripts", 30000,
+            #     lambda s: {
+            #         "ticker": ticker,
+            #         "fiscal_year": fiscal_year,
+            #         "fiscal_quarter": fiscal_quarter,
+            #         "quarters": s.lookback_quarters or 4,
+            #         "types": ["earnings_call", "investor_day"],
+            #     }
+            # ),
         }
 
         return [

@@ -213,12 +213,16 @@ class AgentsConfig:
                         if isinstance(agent_data, dict) and "name" in agent_data:
                             name = agent_data["name"]
                             # Map MCP-specific fields to generic AgentConfig
+                            # Note: token can be in "mcp_bearer_token" or "bearer_token" field
+                            token = agent_data.get("mcp_bearer_token") or agent_data.get("bearer_token")
+                            # DEBUG: log what we're loading
+                            logger.debug(f"Loading agent '{name}': url={agent_data.get('mcp_url')}, token_len={len(token) if token else 0}, keys={list(agent_data.keys())}")
                             config.register(
                                 name,
                                 AgentConfig(
                                     name=name,
                                     url=agent_data.get("mcp_url", ""),
-                                    api_key=agent_data.get("mcp_bearer_token"),
+                                    api_key=token,
                                     timeout=float(agent_data.get("timeout", 30.0)),
                                     retries=int(agent_data.get("retries", 3)),
                                     metadata={

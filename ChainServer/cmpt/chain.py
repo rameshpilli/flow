@@ -29,7 +29,13 @@ from typing import Any
 
 from agentorchestrator import AgentOrchestrator
 
-from agentorchestrator.services.llm_gateway import get_llm_client
+# LLM client import - optional for now
+try:
+    from agentorchestrator.services.llm_gateway import get_llm_client
+except ImportError:
+    def get_llm_client():
+        """Placeholder when LLM gateway not available."""
+        return None
 
 from cmpt.services import (
     # Models
@@ -43,7 +49,8 @@ from cmpt.services import (
     ContentPrioritizationService,
     ResponseBuilderService,
     # Agents
-    create_cmpt_agents,
+    register_cmpt_agents,
+    get_cmpt_agents,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,21 +86,48 @@ def register_cmpt_chain(
     """
 
     # ══════════════════════════════════════════════════════════════════════════
-    # CREATE AGENTS (always created, MCP URLs optional)
+    # ENABLE DEFAULT MIDDLEWARE
     # ══════════════════════════════════════════════════════════════════════════
 
-    # Create agents - if MCP URLs provided, they'll connect to real services
-    # Otherwise they'll return "No MCP connector" errors (handled gracefully)
+    # Add OffloadMiddleware to handle large agent responses (e.g., SEC filings ~1MB)
+    # This prevents LLM context overflow by offloading large payloads to storage
+    # while keeping summaries and key fields in context
+    from agentorchestrator.middleware.offload import OffloadMiddleware
+
+    offload_middleware = OffloadMiddleware(
+        default_threshold_bytes=100_000,  # 100KB threshold
+        step_thresholds={
+            "response_builder": 50_000,  # Lower threshold for response builder
+        },
+    )
+    ao.use(offload_middleware)
+    logger.debug("Added OffloadMiddleware for large payload handling")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # REGISTER AGENTS (using decorator pattern)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # Register agent classes with resilience config (no instantiation yet)
+    register_cmpt_agents(ao)
+    logger.info("Registered CMPT agent classes with resilience config")
+
+    # Get configured agent instances with runtime MCP URLs
     agents: dict[str, Any] = {}
     if use_mcp:
-        agents = create_cmpt_agents(
+        agents = get_cmpt_agents(
+            ao,
             sec_url=mcp_config.get("sec_url") if mcp_config else None,
             earnings_url=mcp_config.get("earnings_url") if mcp_config else None,
             news_url=mcp_config.get("news_url") if mcp_config else None,
+            sec_token=mcp_config.get("sec_token") if mcp_config else None,
+            earnings_token=mcp_config.get("earnings_token") if mcp_config else None,
+            news_token=mcp_config.get("news_token") if mcp_config else None,
         )
-        for name, agent in agents.items():
-            ao.register_agent(name, agent)
-            logger.info(f"Registered MCP agent: {name}")
+        logger.info(f"Created MCP agent instances: {list(agents.keys())}")
+    else:
+        # Mock mode - get agents without MCP URLs
+        agents = get_cmpt_agents(ao)
+        logger.info("Created mock agent instances (no MCP URLs)")
 
     # ══════════════════════════════════════════════════════════════════════════
     # INITIALIZE SERVICES (after agents are created)
@@ -216,6 +250,7 @@ def register_cmpt_chain(
         description="Execute agents, extract metrics, generate strategic analysis, build final response",
         deps=["content_prioritization"],  # Depends on Step 2
         produces=["response_output", "final_response"],
+        timeout_ms=120000,  # 2 minutes for agent calls + LLM processing
     )
     async def response_builder_step(ctx) -> dict[str, Any]:
         """
