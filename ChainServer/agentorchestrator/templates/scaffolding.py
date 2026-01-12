@@ -410,23 +410,52 @@ def get_env_example(name: str) -> str:
 # Environment
 {snake_name.upper()}_ENV=development
 
-# Redis
-REDIS_URL=redis://localhost:6379
+# ═══════════════════════════════════════════════════════════════════════════════
+# Redis Configuration (Enterprise)
+# ═══════════════════════════════════════════════════════════════════════════════
+# For corporate Redis clusters with SSL/TLS authentication
+REDIS_HOST=redis-18834.cl12.redisgcc12.abc.com
+REDIS_PORT=18834
+REDIS_USERNAME=your_service_id
+REDIS_PASSWORD=your_service_id_password
+REDIS_SSL=true
+REDIS_SSL_CERT_REQS=none
 
+# For local development (uncomment to use local Redis)
+# REDIS_HOST=localhost
+# REDIS_PORT=6379
+# REDIS_USERNAME=
+# REDIS_PASSWORD=
+# REDIS_SSL=false
+
+# Redis connection settings
+REDIS_DECODE_RESPONSES=true
+REDIS_SOCKET_TIMEOUT=30
+REDIS_CONNECTION_TIMEOUT=10
+REDIS_MAX_CONNECTIONS=10
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # LLM Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
 LLM_API_KEY=
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-4
 
+# ═══════════════════════════════════════════════════════════════════════════════
 # Logging
+# ═══════════════════════════════════════════════════════════════════════════════
 LOG_LEVEL=INFO
 LOG_FORMAT=text
 
+# ═══════════════════════════════════════════════════════════════════════════════
 # OpenTelemetry (optional)
+# ═══════════════════════════════════════════════════════════════════════════════
 OTEL_ENABLED=false
 OTEL_EXPORTER_OTLP_ENDPOINT=
 
+# ═══════════════════════════════════════════════════════════════════════════════
 # AgentOrchestrator
+# ═══════════════════════════════════════════════════════════════════════════════
 AO_MAX_PARALLEL=10
 AO_CACHE_ENABLED=true
 AO_CACHE_TTL_SECONDS=300
@@ -1185,6 +1214,265 @@ Business Logic Services
 
 Encapsulate complex business logic in services, then use them in steps.
 """
+
+from .redis_service import RedisServiceClient, get_redis
+
+__all__ = ["RedisServiceClient", "get_redis"]
+'''
+
+
+def get_redis_service_py(name: str) -> str:
+    """Generate services/redis_service.py content for enterprise Redis connection."""
+    snake_name = to_snake_case(name)
+    return f'''"""
+Redis Service Client
+
+Enterprise Redis connection service for {snake_name}.
+Supports SSL/TLS connections with service account authentication.
+
+Configuration via environment variables:
+    REDIS_HOST: Redis server hostname
+    REDIS_PORT: Redis server port
+    REDIS_USERNAME: Service account username (service_id)
+    REDIS_PASSWORD: Service account password (service_id_password)
+    REDIS_SSL: Enable SSL (default: true)
+
+Usage:
+    from {snake_name}.services import get_redis
+
+    # Get the configured Redis client
+    redis = get_redis()
+
+    # Connect and use
+    await redis.connect()
+    await redis.set("key", "value", ttl=300)
+    value = await redis.get("key")
+
+    # Health check
+    status = await redis.health_check()
+    print(f"Redis healthy: {{status.healthy}}")
+"""
+
+import os
+import logging
+
+from agentorchestrator.services import (
+    RedisService,
+    RedisConfig,
+    REDIS_AVAILABLE,
+)
+
+logger = logging.getLogger(__name__)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#                         CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Default configuration for your corporate Redis environment
+# Update these values for your specific Redis cluster
+DEFAULT_REDIS_CONFIG = {{
+    "host": os.getenv("REDIS_HOST", "redis-18834.cl12.redisgcc12.abc.com"),
+    "port": int(os.getenv("REDIS_PORT", "18834")),
+    "username": os.getenv("REDIS_USERNAME", ""),  # Your service_id
+    "password": os.getenv("REDIS_PASSWORD", ""),  # Your service_id_password
+    "ssl": os.getenv("REDIS_SSL", "true").lower() == "true",
+    "ssl_cert_reqs": None,  # Set to None for corporate environments
+    "decode_responses": True,
+}}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#                         SERVICE CLIENT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class RedisServiceClient(RedisService):
+    """
+    Redis client configured for {snake_name}.
+
+    Extends the base RedisService with application-specific defaults
+    and helper methods.
+
+    Example:
+        ```python
+        redis = RedisServiceClient()
+        await redis.connect()
+
+        # Cache operations
+        await redis.cache_user_session("user123", {{"token": "abc"}})
+        session = await redis.get_user_session("user123")
+
+        # Health check
+        status = await redis.health_check()
+        ```
+    """
+
+    # Cache key prefixes for your application
+    PREFIX_SESSION = "session:"
+    PREFIX_CACHE = "cache:"
+    PREFIX_RATE_LIMIT = "ratelimit:"
+
+    def __init__(self, **kwargs):
+        """
+        Initialize Redis client with defaults.
+
+        Override defaults by passing keyword arguments:
+            redis = RedisServiceClient(host="custom-host", port=6379)
+        """
+        # Merge defaults with provided kwargs
+        config = {{**DEFAULT_REDIS_CONFIG, **kwargs}}
+        super().__init__(**config)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    #                         APPLICATION-SPECIFIC METHODS
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def cache_user_session(
+        self,
+        user_id: str,
+        session_data: dict,
+        ttl: int = 3600,
+    ) -> bool:
+        """
+        Cache user session data.
+
+        Args:
+            user_id: User identifier
+            session_data: Session data to cache
+            ttl: Time-to-live in seconds (default: 1 hour)
+
+        Returns:
+            True if cached successfully
+        """
+        key = f"{{self.PREFIX_SESSION}}{{user_id}}"
+        return await self.set_json(key, session_data, ttl=ttl)
+
+    async def get_user_session(self, user_id: str) -> dict | None:
+        """
+        Get cached user session.
+
+        Args:
+            user_id: User identifier
+
+        Returns:
+            Session data or None if not found
+        """
+        key = f"{{self.PREFIX_SESSION}}{{user_id}}"
+        return await self.get_json(key)
+
+    async def invalidate_user_session(self, user_id: str) -> bool:
+        """
+        Invalidate user session.
+
+        Args:
+            user_id: User identifier
+
+        Returns:
+            True if deleted
+        """
+        key = f"{{self.PREFIX_SESSION}}{{user_id}}"
+        return await self.delete(key) > 0
+
+    async def check_rate_limit(
+        self,
+        key: str,
+        limit: int,
+        window_seconds: int = 60,
+    ) -> tuple[bool, int]:
+        """
+        Check and increment rate limit.
+
+        Args:
+            key: Rate limit key (e.g., user_id, ip_address)
+            limit: Maximum requests allowed
+            window_seconds: Time window in seconds
+
+        Returns:
+            Tuple of (allowed, remaining)
+        """
+        rate_key = f"{{self.PREFIX_RATE_LIMIT}}{{key}}"
+
+        # Use Redis pipeline for atomic operations
+        pipe = self.client.pipeline()
+        pipe.incr(rate_key)
+        pipe.expire(rate_key, window_seconds)
+        results = await pipe.execute()
+
+        current = results[0]
+        remaining = max(0, limit - current)
+        allowed = current <= limit
+
+        return allowed, remaining
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#                         MODULE-LEVEL SINGLETON
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_redis_instance: RedisServiceClient | None = None
+
+
+def get_redis() -> RedisServiceClient:
+    """
+    Get the Redis service singleton.
+
+    Returns:
+        RedisServiceClient instance
+
+    Raises:
+        ImportError: If redis package is not installed
+    """
+    global _redis_instance
+
+    if not REDIS_AVAILABLE:
+        raise ImportError(
+            "redis package is required. Install with: pip install redis>=4.5.0"
+        )
+
+    if _redis_instance is None:
+        _redis_instance = RedisServiceClient()
+
+    return _redis_instance
+
+
+def init_redis(
+    host: str | None = None,
+    port: int | None = None,
+    username: str | None = None,
+    password: str | None = None,
+    **kwargs,
+) -> RedisServiceClient:
+    """
+    Initialize Redis with custom configuration.
+
+    Args:
+        host: Redis server hostname
+        port: Redis server port
+        username: Service account username
+        password: Service account password
+        **kwargs: Additional configuration options
+
+    Returns:
+        RedisServiceClient instance
+    """
+    global _redis_instance
+
+    config = {{}}
+    if host:
+        config["host"] = host
+    if port:
+        config["port"] = port
+    if username:
+        config["username"] = username
+    if password:
+        config["password"] = password
+    config.update(kwargs)
+
+    _redis_instance = RedisServiceClient(**config)
+    return _redis_instance
+
+
+__all__ = ["RedisServiceClient", "get_redis", "init_redis"]
 '''
 
 
@@ -1354,8 +1642,29 @@ agentorchestrator:
     enabled: true
     ttl_seconds: 300
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Redis Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+# Enterprise Redis cluster configuration
+# Update these values for your specific Redis environment
 redis:
-  url: redis://localhost:6379
+  # Corporate Redis cluster (SSL enabled)
+  host: redis-18834.cl12.redisgcc12.abc.com
+  port: 18834
+  ssl: true
+  ssl_cert_reqs: null  # Set to null for corporate environments
+  # Authentication - use environment variables for secrets
+  # username: ${{REDIS_USERNAME}}
+  # password: ${{REDIS_PASSWORD}}
+  decode_responses: true
+  socket_timeout: 30
+  connection_timeout: 10
+  max_connections: 10
+
+  # Local development configuration (uncomment to use)
+  # host: localhost
+  # port: 6379
+  # ssl: false
 
 logging:
   level: INFO
@@ -1428,6 +1737,7 @@ def generate_project(
         agents_dir / "__init__.py": get_agents_init_py(),
         agents_dir / "example_agent.py": get_example_agent_py(name),
         services_dir / "__init__.py": get_services_init_py(),
+        services_dir / "redis_service.py": get_redis_service_py(name),
         models_dir / "__init__.py": get_models_init_py(),
         # Tests
         tests_dir / "__init__.py": "",
@@ -1455,754 +1765,5 @@ def generate_project(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
         created_files.append(str(path.relative_to(project_dir)))
-
-    return created_files
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#                         CMPT-STYLE CHAIN GENERATOR
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-def get_cmpt_style_models_py(name: str) -> str:
-    """Generate models.py for a cmpt-style chain."""
-    snake_name = to_snake_case(name)
-    pascal_name = to_pascal_case(name)
-    return f'''"""
-{pascal_name} Service Models
-
-Pydantic models for all chain services with validation.
-"""
-
-from enum import Enum
-from typing import Any
-
-from pydantic import BaseModel, Field
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#                              ENUMS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-class DataSource(str, Enum):
-    """Available data sources for the chain"""
-    SOURCE_A = "source_a"
-    SOURCE_B = "source_b"
-
-
-class Priority(str, Enum):
-    """Priority levels for data sources"""
-    PRIMARY = "primary"
-    SECONDARY = "secondary"
-    TERTIARY = "tertiary"
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#                         CHAIN REQUEST/RESPONSE
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-class ChainRequest(BaseModel):
-    """Unified request model for the {pascal_name} chain."""
-    primary_input: str = Field(..., description="Main input for the chain")
-    secondary_input: str | None = None
-    options: dict[str, Any] = Field(default_factory=dict)
-    overrides: "ChainRequestOverrides | None" = Field(
-        None, description="User-provided overrides"
-    )
-
-
-class ChainRequestOverrides(BaseModel):
-    """User-provided overrides for computed values."""
-    skip_api_calls: bool = False
-
-    class Config:
-        extra = "allow"
-
-
-ChainRequest.model_rebuild()
-
-
-class ChainResponse(BaseModel):
-    """Unified response model for the chain"""
-    result: dict[str, Any] | None = None
-    agent_results: dict[str, Any] | None = None
-    validation_results: dict[str, Any] | None = None
-    timing_ms: dict[str, float] | None = None
-    success: bool = True
-    error: str | None = None
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#                         CONTEXT BUILDER MODELS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-class ContextBuilderOutput(BaseModel):
-    """Output from Context Builder."""
-    extracted_data: dict[str, Any] | None = None
-    errors: dict[str, str] = Field(default_factory=dict)
-    timing_ms: dict[str, float] | None = None
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#                         CONTENT PRIORITIZATION MODELS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-class PrioritizedSource(BaseModel):
-    """A prioritized data source."""
-    source: DataSource
-    priority: Priority
-    enabled: bool = True
-
-
-class Subquery(BaseModel):
-    """A subquery for a data agent."""
-    agent: str
-    query: str
-    params: dict[str, Any] = Field(default_factory=dict)
-    priority: Priority = Priority.PRIMARY
-    timeout_ms: int = 30000
-
-
-class ContentPrioritizationOutput(BaseModel):
-    """Output from Content Prioritization."""
-    prioritized_sources: list[PrioritizedSource] = Field(default_factory=list)
-    subqueries: list[Subquery] = Field(default_factory=list)
-    subqueries_by_agent: dict[str, list[Subquery]] = Field(default_factory=dict)
-    prioritization_reasoning: str | None = None
-    timing_ms: dict[str, float] | None = None
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#                         RESPONSE BUILDER MODELS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-class AgentResult(BaseModel):
-    """Result from a data agent."""
-    agent: str
-    success: bool
-    data: dict[str, Any] | None = None
-    duration_ms: float | None = None
-    error: str | None = None
-
-
-class ResponseBuilderOutput(BaseModel):
-    """Output from Response Builder."""
-    agent_results: dict[str, AgentResult] = Field(default_factory=dict)
-    final_output: dict[str, Any] | None = None
-    agents_succeeded: int = 0
-    agents_failed: int = 0
-    errors: dict[str, str] = Field(default_factory=dict)
-    timing_ms: dict[str, float] | None = None
-'''
-
-
-def get_cmpt_style_context_builder_py(name: str) -> str:
-    """Generate _01_context_builder.py for a cmpt-style chain."""
-    snake_name = to_snake_case(name)
-    return f'''"""
-Context Builder Service
-
-First stage of the {snake_name} chain - extracts context from request.
-"""
-
-import asyncio
-import logging
-from datetime import datetime
-from typing import Any
-
-from {snake_name}.services.models import (
-    ChainRequest,
-    ChainRequestOverrides,
-    ContextBuilderOutput,
-)
-
-logger = logging.getLogger(__name__)
-
-
-class ContextBuilderService:
-    """Service for extracting context from requests."""
-
-    DEFAULT_TIMEOUT: float = 20.0
-
-    def __init__(self, http_timeout: float = 20.0):
-        self.http_timeout = http_timeout
-
-    async def execute(self, request: ChainRequest) -> ContextBuilderOutput:
-        """Execute context extraction."""
-        start_time = datetime.now()
-        timing: dict[str, float] = {{}}
-        errors: dict[str, str] = {{}}
-        overrides = request.overrides or ChainRequestOverrides()
-
-        output = ContextBuilderOutput(errors={{}}, timing_ms={{}})
-
-        # Run extractors
-        if not overrides.skip_api_calls:
-            try:
-                result, error, duration = await self._extract_data(request)
-                timing["extract"] = duration
-                if error:
-                    errors["extract"] = error
-                else:
-                    output.extracted_data = result
-            except Exception as e:
-                errors["extract"] = str(e)
-
-        output.errors = errors
-        output.timing_ms = timing
-        timing["total"] = (datetime.now() - start_time).total_seconds() * 1000
-
-        logger.info(f"Context builder completed in {{timing['total']:.2f}}ms")
-        return output
-
-    async def _extract_data(
-        self, request: ChainRequest
-    ) -> tuple[dict[str, Any] | None, str | None, float]:
-        """Extract data from request."""
-        start = datetime.now()
-        try:
-            result = {{"processed": request.primary_input}}
-            return result, None, (datetime.now() - start).total_seconds() * 1000
-        except Exception as e:
-            return None, str(e), (datetime.now() - start).total_seconds() * 1000
-'''
-
-
-def get_cmpt_style_content_prioritization_py(name: str) -> str:
-    """Generate _02_content_prioritization.py for a cmpt-style chain."""
-    snake_name = to_snake_case(name)
-    return f'''"""
-Content Prioritization Service
-
-Second stage of the {snake_name} chain - prioritizes data sources.
-"""
-
-import logging
-from datetime import datetime
-from typing import Any
-
-from {snake_name}.services.models import (
-    ContentPrioritizationOutput,
-    ContextBuilderOutput,
-    DataSource,
-    Priority,
-    PrioritizedSource,
-    Subquery,
-)
-
-logger = logging.getLogger(__name__)
-
-
-class ContentPrioritizationService:
-    """Service for prioritizing content sources."""
-
-    def __init__(self, config: dict[str, Any] | None = None):
-        self.config = config or {{}}
-
-    async def execute(self, context: ContextBuilderOutput) -> ContentPrioritizationOutput:
-        """Execute content prioritization."""
-        start_time = datetime.now()
-
-        # Prioritize sources
-        sources = [
-            PrioritizedSource(source=DataSource.SOURCE_A, priority=Priority.PRIMARY, enabled=True),
-            PrioritizedSource(source=DataSource.SOURCE_B, priority=Priority.SECONDARY, enabled=True),
-        ]
-
-        # Generate subqueries
-        subqueries = self._generate_subqueries(context, sources)
-        subqueries_by_agent = {{}}
-        for sq in subqueries:
-            subqueries_by_agent.setdefault(sq.agent, []).append(sq)
-
-        return ContentPrioritizationOutput(
-            prioritized_sources=sources,
-            subqueries=subqueries,
-            subqueries_by_agent=subqueries_by_agent,
-            prioritization_reasoning="Default prioritization",
-            timing_ms={{"total": (datetime.now() - start_time).total_seconds() * 1000}},
-        )
-
-    def _generate_subqueries(
-        self, context: ContextBuilderOutput, sources: list[PrioritizedSource]
-    ) -> list[Subquery]:
-        """Generate subqueries for agents."""
-        query = context.extracted_data.get("processed", "") if context.extracted_data else ""
-        return [
-            Subquery(agent="agent_a", query=query, params={{}}, priority=Priority.PRIMARY),
-        ]
-'''
-
-
-def get_cmpt_style_response_builder_py(name: str) -> str:
-    """Generate _03_response_builder.py for a cmpt-style chain."""
-    snake_name = to_snake_case(name)
-    return f'''"""
-Response Builder Service
-
-Third stage of the {snake_name} chain - executes agents and builds response.
-"""
-
-import asyncio
-import logging
-from datetime import datetime
-from typing import Any
-
-from agentorchestrator.agents.base import AgentResult as BaseAgentResult, BaseAgent
-
-from {snake_name}.services.models import (
-    AgentResult,
-    ContentPrioritizationOutput,
-    ContextBuilderOutput,
-    ResponseBuilderOutput,
-)
-
-logger = logging.getLogger(__name__)
-
-
-class ResponseBuilderService:
-    """Service for executing agents and building response."""
-
-    def __init__(
-        self,
-        llm_client: Any | None = None,
-        agents: dict[str, BaseAgent] | None = None,
-        agent_timeout: float = 60.0,
-    ):
-        self.llm_client = llm_client
-        self.agents = agents or {{}}
-        self.agent_timeout = agent_timeout
-
-    async def execute(
-        self,
-        context: ContextBuilderOutput,
-        prioritization: ContentPrioritizationOutput,
-    ) -> ResponseBuilderOutput:
-        """Execute agents and build response."""
-        start_time = datetime.now()
-        timing: dict[str, float] = {{}}
-        errors: dict[str, str] = {{}}
-
-        output = ResponseBuilderOutput()
-
-        # Execute agents
-        agent_results = await self._execute_agents(
-            prioritization.subqueries_by_agent, context
-        )
-
-        for agent_name, result in agent_results.items():
-            if result.success:
-                output.agents_succeeded += 1
-            else:
-                output.agents_failed += 1
-                errors[agent_name] = result.error or "Unknown error"
-
-            output.agent_results[agent_name] = AgentResult(
-                agent=agent_name,
-                success=result.success,
-                data=result.data,
-                duration_ms=result.duration_ms,
-                error=result.error,
-            )
-            timing[f"agent_{{agent_name}}"] = result.duration_ms
-
-        # Build final output
-        output.final_output = {{"processed": True, "sources": list(agent_results.keys())}}
-        output.errors = errors
-        output.timing_ms = timing
-        output.timing_ms["total"] = (datetime.now() - start_time).total_seconds() * 1000
-
-        return output
-
-    async def _execute_agents(
-        self,
-        subqueries_by_agent: dict[str, list],
-        context: ContextBuilderOutput,
-    ) -> dict[str, BaseAgentResult]:
-        """Execute all agents in parallel."""
-        results: dict[str, BaseAgentResult] = {{}}
-
-        if not subqueries_by_agent:
-            return results
-
-        tasks = []
-        agent_names = []
-
-        for agent_name, subqueries in subqueries_by_agent.items():
-            agent = self.agents.get(agent_name)
-            if not agent or not subqueries:
-                continue
-
-            subquery = subqueries[0]
-            task = asyncio.wait_for(
-                agent.fetch(subquery.query, **subquery.params),
-                timeout=self.agent_timeout,
-            )
-            tasks.append(task)
-            agent_names.append(agent_name)
-
-        if tasks:
-            task_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            for agent_name, result in zip(agent_names, task_results):
-                if isinstance(result, Exception):
-                    results[agent_name] = BaseAgentResult(
-                        data=None, source=agent_name, query="",
-                        duration_ms=0, error=str(result),
-                    )
-                else:
-                    results[agent_name] = result
-
-        return results
-'''
-
-
-def get_cmpt_style_agents_py(name: str) -> str:
-    """Generate agents.py for a cmpt-style chain."""
-    snake_name = to_snake_case(name)
-    pascal_name = to_pascal_case(name)
-    return f'''"""
-{pascal_name} Data Agents
-"""
-
-import logging
-import time
-from enum import Enum
-from typing import Any
-
-from agentorchestrator.agents.base import AgentResult, BaseAgent
-from agentorchestrator.plugins.mcp_adapter import MCPAdapterAgent, MCPAdapterConfig
-
-logger = logging.getLogger(__name__)
-
-
-class ToolName(Enum):
-    """Agent tool names."""
-    AGENT_A = "agent_a"
-    AGENT_B = "agent_b"
-
-
-def _agent_result(source: str, query: str, start: float, data: Any = None, error: str | None = None) -> AgentResult:
-    """Helper to create AgentResult."""
-    return AgentResult(
-        data=data or {{"items": []}},
-        source=source,
-        query=query,
-        duration_ms=(time.perf_counter() - start) * 1000,
-        error=error,
-    )
-
-
-class AgentA(MCPAdapterAgent):
-    """Agent A - fetches data from source A."""
-
-    _ao_name = ToolName.AGENT_A.value
-
-    def __init__(self, mcp_url: str | None = None, bearer_token: str | None = None, **kwargs):
-        headers = {{"Authorization": f"Bearer {{bearer_token}}"}} if bearer_token else {{}}
-        config = MCPAdapterConfig(
-            name="agent_a_mcp",
-            server_url=mcp_url or "",
-            transport="http",
-            headers=headers,
-        )
-        super().__init__(config)
-
-    async def fetch(self, query: str, **kwargs) -> AgentResult:
-        """Fetch data."""
-        start = time.perf_counter()
-        if not self._config.server_url:
-            return _agent_result(self._ao_name, query, start, error="No MCP server configured")
-        try:
-            result = await self.call_tool("your_tool", {{"query": query, **kwargs}})
-            return _agent_result(self._ao_name, query, start, data=result)
-        except Exception as e:
-            return _agent_result(self._ao_name, query, start, error=str(e))
-
-
-def register_{snake_name}_agents(ao: Any) -> None:
-    """Register agents with resilience configuration."""
-    ao.agent(
-        name=ToolName.AGENT_A.value,
-        group="{snake_name}",
-        description="Fetches data from source A",
-        resilient=True,
-        resilient_config={{"timeout_seconds": 30.0, "max_retries": 2}},
-    )(AgentA)
-    logger.info("Registered {snake_name} agents")
-
-
-def get_{snake_name}_agents(
-    ao: Any,
-    agent_a_url: str | None = None,
-    agent_a_token: str | None = None,
-) -> dict[str, BaseAgent]:
-    """Get configured agent instances."""
-    if agent_a_url:
-        return {{ToolName.AGENT_A.value: AgentA(mcp_url=agent_a_url, bearer_token=agent_a_token)}}
-    return {{ToolName.AGENT_A.value: ao.get_agent(ToolName.AGENT_A.value)}}
-'''
-
-
-def get_cmpt_style_chain_py(name: str, description: str) -> str:
-    """Generate chain.py for a cmpt-style chain."""
-    snake_name = to_snake_case(name)
-    pascal_name = to_pascal_case(name)
-    return f'''"""
-{pascal_name} Chain Definition
-
-{description}
-
-Usage:
-    from agentorchestrator import AgentOrchestrator
-    from {snake_name}.chain import register_{snake_name}_chain
-
-    ao = AgentOrchestrator(name="{snake_name}")
-    register_{snake_name}_chain(ao)
-    result = await ao.launch("{snake_name}_chain", {{"request": {{...}}}})
-"""
-
-import logging
-from typing import Any
-
-from agentorchestrator import AgentOrchestrator
-
-from {snake_name}.services import (
-    ChainRequest,
-    ChainResponse,
-    ContextBuilderOutput,
-    ContentPrioritizationOutput,
-    ResponseBuilderOutput,
-    ContextBuilderService,
-    ContentPrioritizationService,
-    ResponseBuilderService,
-    register_{snake_name}_agents,
-    get_{snake_name}_agents,
-)
-
-logger = logging.getLogger(__name__)
-
-
-def register_{snake_name}_chain(
-    ao: AgentOrchestrator,
-    use_mcp: bool = False,
-    mcp_config: dict[str, str] | None = None,
-    llm_client: Any | None = None,
-) -> None:
-    """Register the chain with an AgentOrchestrator instance."""
-
-    # Add middleware
-    from agentorchestrator.middleware.offload import OffloadMiddleware
-    ao.add_middleware(OffloadMiddleware(default_threshold_bytes=100_000))
-
-    # Register agents
-    register_{snake_name}_agents(ao)
-    agents = get_{snake_name}_agents(ao, **(mcp_config or {{}})) if use_mcp else get_{snake_name}_agents(ao)
-
-    # Initialize services
-    context_builder_service = ContextBuilderService()
-    content_prioritization_service = ContentPrioritizationService()
-    response_builder_service = ResponseBuilderService(llm_client=llm_client, agents=agents)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # STEP 1: CONTEXT BUILDER
-    # ══════════════════════════════════════════════════════════════════════════
-
-    @ao.step(
-        name="context_builder",
-        description="Extract context from the request",
-        produces=["context_output"],
-    )
-    async def context_builder_step(ctx) -> dict[str, Any]:
-        request_data = ctx.get("request", {{}})
-        request = ChainRequest(**request_data) if isinstance(request_data, dict) else request_data
-        logger.info(f"[Step 1] Context Builder: {{request.primary_input}}")
-        output: ContextBuilderOutput = await context_builder_service.execute(request)
-        ctx.set("context_output", output)
-        return {{"step": "context_builder", "success": len(output.errors) == 0}}
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # STEP 2: CONTENT PRIORITIZATION
-    # ══════════════════════════════════════════════════════════════════════════
-
-    @ao.step(
-        name="content_prioritization",
-        description="Prioritize data sources",
-        deps=["context_builder"],
-        produces=["prioritization_output"],
-    )
-    async def content_prioritization_step(ctx) -> dict[str, Any]:
-        context_output: ContextBuilderOutput = ctx.get("context_output")
-        logger.info("[Step 2] Content Prioritization")
-        output: ContentPrioritizationOutput = await content_prioritization_service.execute(context_output)
-        ctx.set("prioritization_output", output)
-        return {{"step": "content_prioritization", "sources": len(output.prioritized_sources)}}
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # STEP 3: RESPONSE BUILDER
-    # ══════════════════════════════════════════════════════════════════════════
-
-    @ao.step(
-        name="response_builder",
-        description="Execute agents and build response",
-        deps=["content_prioritization"],
-        produces=["response_output", "final_response"],
-        timeout_ms=120000,
-    )
-    async def response_builder_step(ctx) -> dict[str, Any]:
-        context_output: ContextBuilderOutput = ctx.get("context_output")
-        prioritization_output: ContentPrioritizationOutput = ctx.get("prioritization_output")
-        logger.info("[Step 3] Response Builder")
-        output: ResponseBuilderOutput = await response_builder_service.execute(context_output, prioritization_output)
-        final_response = ChainResponse(
-            result=output.final_output,
-            agent_results={{k: v.model_dump() for k, v in output.agent_results.items()}},
-            timing_ms=output.timing_ms,
-        )
-        ctx.set("response_output", output)
-        ctx.set("final_response", final_response)
-        return {{"step": "response_builder", "agents_succeeded": output.agents_succeeded}}
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # CHAIN DEFINITION
-    # ══════════════════════════════════════════════════════════════════════════
-
-    @ao.chain(name="{snake_name}_chain", description="{description}")
-    class {pascal_name}Chain:
-        """
-        {pascal_name} Chain
-
-        Pipeline:
-            context_builder -> content_prioritization -> response_builder
-        """
-        steps = ["context_builder", "content_prioritization", "response_builder"]
-
-
-async def run_{snake_name}_chain(
-    primary_input: str,
-    use_mcp: bool = False,
-    mcp_config: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    """Convenience function to run the chain."""
-    ao = AgentOrchestrator(name="{snake_name}", isolated=True)
-    register_{snake_name}_chain(ao, use_mcp=use_mcp, mcp_config=mcp_config)
-    return await ao.launch("{snake_name}_chain", {{"request": {{"primary_input": primary_input}}}})
-'''
-
-
-def get_cmpt_style_services_init_py(name: str) -> str:
-    """Generate services/__init__.py for a cmpt-style chain."""
-    snake_name = to_snake_case(name)
-    return f'''"""
-{to_pascal_case(name)} Services
-
-Pipeline:
-  01_context_builder.py     -> Extract context
-  02_content_prioritization.py -> Prioritize sources
-  03_response_builder.py    -> Build response
-"""
-
-from {snake_name}.services._01_context_builder import ContextBuilderService
-from {snake_name}.services._02_content_prioritization import ContentPrioritizationService
-from {snake_name}.services._03_response_builder import ResponseBuilderService
-
-from {snake_name}.services.models import (
-    ChainRequest,
-    ChainRequestOverrides,
-    ChainResponse,
-    ContextBuilderOutput,
-    ContentPrioritizationOutput,
-    ResponseBuilderOutput,
-    AgentResult,
-    DataSource,
-    Priority,
-    PrioritizedSource,
-    Subquery,
-)
-
-from {snake_name}.services.agents import (
-    register_{snake_name}_agents,
-    get_{snake_name}_agents,
-    ToolName,
-)
-
-__all__ = [
-    "ContextBuilderService",
-    "ContentPrioritizationService",
-    "ResponseBuilderService",
-    "ChainRequest",
-    "ChainRequestOverrides",
-    "ChainResponse",
-    "ContextBuilderOutput",
-    "ContentPrioritizationOutput",
-    "ResponseBuilderOutput",
-    "AgentResult",
-    "DataSource",
-    "Priority",
-    "PrioritizedSource",
-    "Subquery",
-    "register_{snake_name}_agents",
-    "get_{snake_name}_agents",
-    "ToolName",
-]
-'''
-
-
-def generate_cmpt_style_chain(
-    name: str,
-    output_dir: Path,
-    description: str = "",
-) -> list[str]:
-    """
-    Generate a cmpt-style chain structure.
-
-    Args:
-        name: Chain name (e.g., "risk_analysis")
-        output_dir: Directory to create chain in
-        description: Chain description
-
-    Returns:
-        List of created file paths
-    """
-    snake_name = to_snake_case(name)
-    pascal_name = to_pascal_case(name)
-
-    if not description:
-        description = f"{pascal_name} - A 3-stage data processing pipeline"
-
-    chain_dir = output_dir / snake_name
-    services_dir = chain_dir / "services"
-    tests_dir = chain_dir / "tests"
-
-    created_files = []
-
-    # Create directories
-    for d in [chain_dir, services_dir, tests_dir]:
-        d.mkdir(parents=True, exist_ok=True)
-
-    # Generate files
-    files = {
-        chain_dir / "__init__.py": f'"""{pascal_name} Chain"""\n',
-        chain_dir / "chain.py": get_cmpt_style_chain_py(name, description),
-        chain_dir / "run.py": f'''"""CLI runner for {pascal_name}."""\nimport asyncio\nfrom {snake_name}.chain import run_{snake_name}_chain\n\nif __name__ == "__main__":\n    import sys\n    input_data = sys.argv[1] if len(sys.argv) > 1 else "test"\n    result = asyncio.run(run_{snake_name}_chain(input_data))\n    print(result)\n''',
-        services_dir / "__init__.py": get_cmpt_style_services_init_py(name),
-        services_dir / "models.py": get_cmpt_style_models_py(name),
-        services_dir / "_01_context_builder.py": get_cmpt_style_context_builder_py(name),
-        services_dir / "_02_content_prioritization.py": get_cmpt_style_content_prioritization_py(name),
-        services_dir / "_03_response_builder.py": get_cmpt_style_response_builder_py(name),
-        services_dir / "agents.py": get_cmpt_style_agents_py(name),
-        tests_dir / "__init__.py": "",
-        tests_dir / f"test_{snake_name}.py": f'''"""Tests for {pascal_name} chain."""\nimport pytest\nfrom {snake_name}.chain import run_{snake_name}_chain\n\n@pytest.mark.asyncio\nasync def test_{snake_name}_chain():\n    result = await run_{snake_name}_chain("test input")\n    assert result.get("success", False)\n''',
-    }
-
-    for path, content in files.items():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
-        created_files.append(str(path.relative_to(output_dir)))
 
     return created_files

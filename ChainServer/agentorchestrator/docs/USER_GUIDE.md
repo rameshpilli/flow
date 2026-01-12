@@ -27,6 +27,7 @@ A comprehensive guide to building data pipelines and AI chains with AgentOrchest
 19. [API Reference](#api-reference)
 20. [Best Practices](#best-practices)
 21. [Testing](#testing)
+22. [Redis Service](#redis-service)
 
 ---
 
@@ -112,32 +113,32 @@ import asyncio
 from agentorchestrator import AgentOrchestrator, ChainContext
 
 # 1. Create AgentOrchestrator instance
-forge = AgentOrchestrator(name="quickstart")
+ao = AgentOrchestrator(name="quickstart")
 
 # 2. Define steps with decorators
-@forge.step(name="extract", produces=["data"])
+@ao.step(name="extract", produces=["data"])
 async def extract(ctx: ChainContext):
     ctx.set("data", {"message": "Hello"})
     return {"data": ctx.get("data")}
 
-@forge.step(name="transform", dependencies=["extract"], produces=["result"])
+@ao.step(name="transform", dependencies=["extract"], produces=["result"])
 async def transform(ctx: ChainContext):
     data = ctx.get("data")
     ctx.set("result", f"Transformed: {data['message']}")
     return {"result": ctx.get("result")}
 
-@forge.step(name="load", dependencies=["transform"])
+@ao.step(name="load", dependencies=["transform"])
 async def load(ctx: ChainContext):
     return {"final": ctx.get("result")}
 
 # 3. Define chain
-@forge.chain(name="etl_chain")
+@ao.chain(name="etl_chain")
 class ETLChain:
     steps = ["extract", "transform", "load"]
 
 # 4. Run it!
 async def main():
-    result = await forge.run("etl_chain")
+    result = await ao.run("etl_chain")
     print(f"Success: {result['success']}")
     print(f"Output: {result['context']['data']['result']}")
 
@@ -294,7 +295,7 @@ The `AgentOrchestrator` class is your entry point. It manages:
 ```python
 from agentorchestrator import AgentOrchestrator
 
-forge = AgentOrchestrator(
+ao = AgentOrchestrator(
     name="my_app",
     version="1.0.0",
     max_parallel=5,           # Max concurrent steps
@@ -306,34 +307,36 @@ forge = AgentOrchestrator(
 # state bleed between different instances or tests.
 
 # Resource cleanup with timeout (prevents hanging)
-async with forge:
-    result = await forge.run("my_chain")
+async with ao:
+    result = await ao.run("my_chain")
 # Resources automatically cleaned up with 30s timeout
 ```
 
-### Module-Level Decorators
+### Instance-Based Pattern
 
-For quick scripts, you can use module-level decorators that delegate to a global forge instance:
+Always create an AgentOrchestrator instance to use the decorators:
 
 ```python
-from agentorchestrator.core.decorators import agent, step, chain
+from agentorchestrator import AgentOrchestrator
 
-# These register to the global AgentOrchestrator instance
-@step
+# Create your orchestrator instance
+ao = AgentOrchestrator(name="my_app")
+
+# Use instance decorators
+@ao.step(name="my_step")
 async def my_step(ctx):
     return {"done": True}
 
-@step(name="custom_step", deps=[my_step], produces=["output"])
+@ao.step(name="custom_step", deps=["my_step"], produces=["output"])
 async def another_step(ctx):
     return {"output": "result"}
 
-@chain
+@ao.chain(name="my_chain")
 class MyChain:
     steps = ["my_step", "custom_step"]
 
-# Access the global forge to run
-from agentorchestrator.core.forge import get_forge
-result = await get_forge().run("mychain")
+# Run using the instance
+result = await ao.run("my_chain")
 ```
 
 ### Context (ChainContext)
@@ -362,7 +365,7 @@ async def my_step(ctx: ChainContext):
 Steps are the building blocks of your chain:
 
 ```python
-@forge.step(
+@ao.step(
     name="my_step",                    # Unique identifier
     dependencies=["previous_step"],    # Steps that must run first
     produces=["output_key"],           # Keys this step writes to context
@@ -380,7 +383,7 @@ async def my_step(ctx: ChainContext, db=None, llm=None):
 Chains group steps together:
 
 ```python
-@forge.chain(
+@ao.chain(
     name="my_chain",
     version="1.0",
     description="Does something useful",
@@ -394,7 +397,7 @@ class MyChain:
 Override automatic dependency-based ordering with explicit parallel groups:
 
 ```python
-@forge.chain(
+@ao.chain(
     name="my_pipeline",
     parallel_groups=[
         ["extract"],                              # Group 1: runs first
@@ -418,7 +421,7 @@ Agents wrap data sources (APIs, databases, MCP servers):
 ```python
 from agentorchestrator.agents import BaseAgent, AgentResult
 
-@forge.agent(
+@ao.agent(
     name="my_agent",
     capabilities=["search", "fetch"],
 )
@@ -466,9 +469,9 @@ Final Output
 ```python
 from agentorchestrator import AgentOrchestrator, ChainContext
 
-forge = AgentOrchestrator(name="data_pipeline")
+ao = AgentOrchestrator(name="data_pipeline")
 
-@forge.step(name="extract", produces=["raw_data"])
+@ao.step(name="extract", produces=["raw_data"])
 async def extract(ctx: ChainContext):
     """Extract data from source"""
     company = ctx.get("company_name", "Unknown")
@@ -482,7 +485,7 @@ async def extract(ctx: ChainContext):
     return {"raw_data": raw_data}
 
 
-@forge.step(name="transform", dependencies=["extract"], produces=["metrics"])
+@ao.step(name="transform", dependencies=["extract"], produces=["metrics"])
 async def transform(ctx: ChainContext):
     """Transform raw data into metrics"""
     raw = ctx.get("raw_data", {})
@@ -495,7 +498,7 @@ async def transform(ctx: ChainContext):
     return {"metrics": metrics}
 
 
-@forge.step(name="load", dependencies=["transform"], produces=["report"])
+@ao.step(name="load", dependencies=["transform"], produces=["report"])
 async def load(ctx: ChainContext):
     """Generate final report"""
     metrics = ctx.get("metrics", {})
@@ -508,7 +511,7 @@ async def load(ctx: ChainContext):
 ### Step 3: Define Chain
 
 ```python
-@forge.chain(name="data_pipeline")
+@ao.chain(name="data_pipeline")
 class DataPipeline:
     steps = ["extract", "transform", "load"]
 ```
@@ -517,22 +520,22 @@ class DataPipeline:
 
 ```python
 # Check for issues
-forge.check()
+ao.check()
 
 # List all definitions
-print(forge.list_agents())
-print(forge.list_steps())
-print(forge.list_chains())
+print(ao.list_agents())
+print(ao.list_steps())
+print(ao.list_chains())
 
 # Visualize DAG
-print(forge.visualize_chain("data_pipeline"))
+print(ao.visualize_chain("data_pipeline"))
 ```
 
 ### Step 5: Run
 
 ```python
 async def main():
-    result = await forge.run(
+    result = await ao.run(
         "data_pipeline",
         initial_data={"company_name": "Acme Corp"}
     )
@@ -559,29 +562,29 @@ Simply include a chain name in another chain's steps list:
 from agentorchestrator import AgentOrchestrator, ChainContext
 from agentorchestrator.core.context import ContextScope
 
-forge = AgentOrchestrator(name="composed_app")
+ao = AgentOrchestrator(name="composed_app")
 
 # ═══════════════════════════════════════════════════════════════════
 # Define reusable subchains
 # ═══════════════════════════════════════════════════════════════════
 
 # Data fetching chain
-@forge.step(name="fetch_users")
+@ao.step(name="fetch_users")
 async def fetch_users(ctx: ChainContext):
     ctx.set("users", [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}], scope=ContextScope.CHAIN)
     return {"fetched": 2}
 
-@forge.step(name="fetch_orders")
+@ao.step(name="fetch_orders")
 async def fetch_orders(ctx: ChainContext):
     ctx.set("orders", [{"user_id": 1, "amount": 100}], scope=ContextScope.CHAIN)
     return {"fetched": 1}
 
-@forge.chain(name="data_fetching")
+@ao.chain(name="data_fetching")
 class DataFetching:
     steps = ["fetch_users", "fetch_orders"]
 
 # Data processing chain
-@forge.step(name="join_data")
+@ao.step(name="join_data")
 async def join_data(ctx: ChainContext):
     users = ctx.get("users", [])
     orders = ctx.get("orders", [])
@@ -589,7 +592,7 @@ async def join_data(ctx: ChainContext):
     ctx.set("joined_data", {"users": len(users), "orders": len(orders)}, scope=ContextScope.CHAIN)
     return {"joined": True}
 
-@forge.chain(name="data_processing")
+@ao.chain(name="data_processing")
 class DataProcessing:
     steps = ["join_data"]
 
@@ -597,17 +600,17 @@ class DataProcessing:
 # Compose into parent pipeline
 # ═══════════════════════════════════════════════════════════════════
 
-@forge.step(name="initialize")
+@ao.step(name="initialize")
 async def initialize(ctx: ChainContext):
     ctx.set("config", {"mode": "production"}, scope=ContextScope.CHAIN)
     return {"initialized": True}
 
-@forge.step(name="generate_report", deps=["__subchain__data_processing"])
+@ao.step(name="generate_report", deps=["__subchain__data_processing"])
 async def generate_report(ctx: ChainContext):
     joined = ctx.get("joined_data")
     return {"report": f"Processed {joined['users']} users with {joined['orders']} orders"}
 
-@forge.chain(name="full_etl_pipeline")
+@ao.chain(name="full_etl_pipeline")
 class FullETLPipeline:
     steps = [
         "initialize",
@@ -618,7 +621,7 @@ class FullETLPipeline:
 
 # Run the composed pipeline
 async def main():
-    result = await forge.launch("full_etl_pipeline")
+    result = await ao.launch("full_etl_pipeline")
     print(result)
 
 asyncio.run(main())
@@ -633,16 +636,16 @@ asyncio.run(main())
 
 ### Explicit Subchain References
 
-For more control over subchain dependencies, use `forge.subchain()`:
+For more control over subchain dependencies, use `ao.subchain()`:
 
 ```python
 # Create explicit subchain reference with dependencies
-@forge.chain(name="controlled_pipeline")
+@ao.chain(name="controlled_pipeline")
 class ControlledPipeline:
     steps = [
         "init",
-        forge.subchain("data_fetching", deps=["init"]),
-        forge.subchain("data_processing", deps=["__subchain__data_fetching"]),
+        ao.subchain("data_fetching", deps=["init"]),
+        ao.subchain("data_processing", deps=["__subchain__data_fetching"]),
         "finalize",
     ]
 ```
@@ -653,17 +656,17 @@ Chains can be nested multiple levels deep:
 
 ```python
 # Level 3 (deepest)
-@forge.chain(name="inner_most")
+@ao.chain(name="inner_most")
 class InnerMost:
     steps = ["step_a", "step_b"]
 
 # Level 2
-@forge.chain(name="middle")
+@ao.chain(name="middle")
 class Middle:
     steps = ["setup", "inner_most", "teardown"]
 
 # Level 1 (top)
-@forge.chain(name="outer")
+@ao.chain(name="outer")
 class Outer:
     steps = ["init", "middle", "report"]
 ```
@@ -690,7 +693,7 @@ from agentorchestrator.agents import BaseAgent, AgentResult
 ### Creating a Custom Agent
 
 ```python
-@forge.agent(
+@ao.agent(
     name="stock_api",
     version="1.0",
     capabilities=["quote", "history"],
@@ -727,12 +730,12 @@ class StockAPIAgent(BaseAgent):
 ### Using Agents in Steps
 
 ```python
-@forge.step(name="fetch_stock", produces=["stock_data"])
+@ao.step(name="fetch_stock", produces=["stock_data"])
 async def fetch_stock(ctx: ChainContext):
     ticker = ctx.get("ticker", "AAPL")
 
     # Get agent instance
-    agent = forge.get_agent("stock_api")
+    agent = ao.get_agent("stock_api")
 
     # Call agent
     result = await agent.fetch(ticker)
@@ -750,14 +753,14 @@ async def fetch_stock(ctx: ChainContext):
 ```python
 import asyncio
 
-@forge.step(name="fetch_all", produces=["all_data"])
+@ao.step(name="fetch_all", produces=["all_data"])
 async def fetch_all_data(ctx: ChainContext):
     company = ctx.get("company_name")
 
     # Get agents
-    sec_agent = forge.get_agent("sec_filing")
-    news_agent = forge.get_agent("news")
-    earnings_agent = forge.get_agent("earnings")
+    sec_agent = ao.get_agent("sec_filing")
+    news_agent = ao.get_agent("news")
+    earnings_agent = ao.get_agent("earnings")
 
     # Execute in parallel
     results = await asyncio.gather(
@@ -802,19 +805,19 @@ from agentorchestrator import (
     create_domain_aware_middleware,
 )
 
-forge = AgentOrchestrator(name="my_app")
+ao = AgentOrchestrator(name="my_app")
 
 # Add logging
-forge.use_middleware(LoggerMiddleware(level=logging.INFO))
+ao.use_middleware(LoggerMiddleware(level=logging.INFO))
 
 # Add caching (5 minute TTL)
-forge.use_middleware(CacheMiddleware(ttl_seconds=300))
+ao.use_middleware(CacheMiddleware(ttl_seconds=300))
 
 # Add token tracking
-forge.use_middleware(TokenManagerMiddleware(max_total_tokens=100000))
+ao.use_middleware(TokenManagerMiddleware(max_total_tokens=100000))
 
 # Add domain-aware summarization
-forge.use_middleware(create_domain_aware_middleware(
+ao.use_middleware(create_domain_aware_middleware(
     llm=my_llm,
     max_tokens=4000,
 ))
@@ -849,7 +852,7 @@ class TimingMiddleware(Middleware):
         print(f"Step {step_name} failed: {error}")
 
 # Use it
-forge.use_middleware(TimingMiddleware())
+ao.use_middleware(TimingMiddleware())
 ```
 
 ---
@@ -868,7 +871,7 @@ middleware = create_domain_aware_middleware(
     llm=my_llm,      # LangChain LLM instance
     max_tokens=4000,
 )
-forge.use_middleware(middleware)
+ao.use_middleware(middleware)
 ```
 
 ### What Each Domain Extracts
@@ -1021,7 +1024,7 @@ Conditionally offload based on size threshold:
 ```python
 from agentorchestrator.core import offload_to_redis
 
-@forge.step(name="fetch_sec_data")
+@ao.step(name="fetch_sec_data")
 async def fetch_sec_data(ctx):
     raw_filings = await fetch_large_filings()  # Could be 1.2MB
 
@@ -1051,7 +1054,7 @@ from agentorchestrator.core import RedisContextStore
 store = RedisContextStore(host="localhost", port=6380)
 
 # Auto-offload large outputs to Redis
-forge.use_middleware(OffloadMiddleware(
+ao.use_middleware(OffloadMiddleware(
     store=store,
     default_threshold_bytes=100_000,  # 100KB default
     step_thresholds={
@@ -1090,7 +1093,7 @@ from agentorchestrator.core import RedisContextStore
 store = RedisContextStore(port=6380)
 summarizer = LangChainSummarizer(llm=my_llm)
 
-forge.use_middleware(TokenManagerMiddleware(
+ao.use_middleware(TokenManagerMiddleware(
     max_total_tokens=100000,
     warning_threshold=0.8,
     # Auto-summarize oldest steps when over limit
@@ -1201,7 +1204,7 @@ class FinancialMetricsOutput(BaseModel):
     eps: float
     pe_ratio: Optional[float] = None
 
-@forge.step(
+@ao.step(
     name="analyze_financials",
     input_model=CompanyInfoInput,
     input_key="company_info",      # Key in context to validate
@@ -1231,7 +1234,7 @@ async def analyze_financials(ctx):
 from agentorchestrator.core import ContractValidationError
 
 try:
-    result = await forge.run("my_chain", initial_data={
+    result = await ao.run("my_chain", initial_data={
         "company_info": {"ticker": "", "fiscal_year": 2024}  # Invalid: empty ticker
     })
 except ContractValidationError as e:
@@ -1254,7 +1257,7 @@ class ChainInput(BaseModel):
     meeting_datetime: str
     rbc_employee_email: str
 
-@forge.chain(
+@ao.chain(
     name="cmpt_chain",
     input_model=ChainInput,  # Validated before chain starts
 )
@@ -1280,7 +1283,7 @@ run_store = InMemoryRunStore()
 run_store = FileRunStore(base_dir="./checkpoints")
 
 # Create resumable runner
-runner = ResumableChainRunner(forge, run_store)
+runner = ResumableChainRunner(ao, run_store)
 ```
 
 ### Running with Checkpoints
@@ -1417,16 +1420,16 @@ Register resources with automatic lifecycle management and dependency injection:
 ```python
 from agentorchestrator import AgentOrchestrator, ResourceScope
 
-forge = AgentOrchestrator(name="my_app")
+ao = AgentOrchestrator(name="my_app")
 
 # Register a singleton resource (one instance for app lifetime)
-forge.register_resource(
+ao.register_resource(
     "config",
     resource=load_config(),  # Pass instance directly
 )
 
 # Register with factory and cleanup
-forge.register_resource(
+ao.register_resource(
     "db",
     factory=lambda: create_db_pool(),
     cleanup=lambda pool: pool.close(),
@@ -1434,21 +1437,21 @@ forge.register_resource(
 )
 
 # Register async resource
-forge.register_resource(
+ao.register_resource(
     "cache",
     factory=create_redis_client,  # async factory auto-detected
     cleanup=lambda c: c.close(),
 )
 
 # Register with dependencies
-forge.register_resource(
+ao.register_resource(
     "user_service",
     factory=lambda: UserService(),
     dependencies=["db", "cache"],  # Initialized first
 )
 
 # Inject into steps
-@forge.step(name="process", resources=["db", "cache"])
+@ao.step(name="process", resources=["db", "cache"])
 async def process(ctx, db, cache):
     data = await db.query("SELECT ...")
     await cache.set("key", data)
@@ -1508,8 +1511,8 @@ configure_tracing(
 
 # Tracing is automatic for all chain executions
 # Each chain creates a parent span with child spans for each step
-forge = AgentOrchestrator(name="my_app")
-result = await forge.run("my_chain")  # Automatically traced
+ao = AgentOrchestrator(name="my_app")
+result = await ao.run("my_chain")  # Automatically traced
 
 # Get a tracer for custom operations
 tracer = get_tracer("my_module")
@@ -1533,7 +1536,7 @@ Debug callbacks let you inspect context state after each step, useful for troubl
 ```python
 from agentorchestrator import AgentOrchestrator, ChainContext
 
-forge = AgentOrchestrator(name="my_app")
+ao = AgentOrchestrator(name="my_app")
 
 # Define a debug callback
 def on_step_complete(ctx: ChainContext, step_name: str, result: dict):
@@ -1554,7 +1557,7 @@ def on_step_complete(ctx: ChainContext, step_name: str, result: dict):
         json.dump(snapshot, f, indent=2, default=str)
 
 # Pass callback when running chains
-result = await forge.launch(
+result = await ao.launch(
     "my_chain",
     data={"company": "Apple"},
     debug_callback=on_step_complete,
@@ -1621,18 +1624,18 @@ from agentorchestrator import AgentOrchestrator
 
 def test_my_chain():
     # Use temp_registries for fully isolated test
-    with AgentOrchestrator.temp_registries("test") as forge:
-        @forge.step(name="test_step")
+    with AgentOrchestrator.temp_registries("test") as ao:
+        @ao.step(name="test_step")
         async def test_step(ctx):
             return {"result": "ok"}
 
-        @forge.chain(name="test_chain")
+        @ao.chain(name="test_chain")
         class TestChain:
             steps = ["test_step"]
 
         # Run test
         import asyncio
-        result = asyncio.run(forge.run("test_chain"))
+        result = asyncio.run(ao.run("test_chain"))
         assert result["success"]
 
     # Registries automatically cleaned up after context exit
@@ -1663,26 +1666,26 @@ Prevent indefinite hanging during cleanup:
 ```python
 from agentorchestrator import AgentOrchestrator
 
-forge = AgentOrchestrator(name="my_app")
+ao = AgentOrchestrator(name="my_app")
 
 # Register resource with potentially slow cleanup
-forge.register_resource(
+ao.register_resource(
     "db_pool",
     factory=create_db_pool,
     cleanup=lambda pool: pool.close(),
 )
 
 # Async context manager uses 30s default timeout
-async with forge:
-    result = await forge.run("my_chain")
+async with ao:
+    result = await ao.run("my_chain")
 # Cleanup runs with timeout
 
 # Manual cleanup with custom timeout
-await forge.cleanup_resources(timeout_seconds=60.0)
+await ao.cleanup_resources(timeout_seconds=60.0)
 
 # Handle timeout explicitly
 try:
-    await forge.cleanup_resources(timeout_seconds=5.0)
+    await ao.cleanup_resources(timeout_seconds=5.0)
 except asyncio.TimeoutError:
     logger.error("Cleanup timed out - some resources may not be freed")
 ```
@@ -1703,7 +1706,7 @@ AgentOrchestrator implements true fail-fast behavior - when one task fails, all 
 # - Total time: ~100ms, not 30+ seconds
 # - No unwanted side effects
 
-@forge.chain(name="my_chain", error_handling="fail_fast")
+@ao.chain(name="my_chain", error_handling="fail_fast")
 class MyChain:
     steps = ["step_a", "step_b", "step_c", "step_d"]
 ```
@@ -1719,12 +1722,12 @@ class MyChain:
 For multi-agent workflows where partial success is acceptable, use continue mode:
 
 ```python
-@forge.chain(name="data_pipeline", error_handling="continue")
+@ao.chain(name="data_pipeline", error_handling="continue")
 class DataPipeline:
     steps = ["fetch_news", "fetch_sec", "fetch_earnings", "aggregate"]
 
 # Run the chain
-result = await forge.run("data_pipeline", {"company": "Apple"})
+result = await ao.run("data_pipeline", {"company": "Apple"})
 
 # Check partial success
 if result["success"]:
@@ -2192,9 +2195,9 @@ from agentorchestrator import AgentOrchestrator, ChainContext
 from agentorchestrator.agents import BaseAgent, AgentResult
 import httpx
 
-forge = AgentOrchestrator(name="enhanced_pipeline")
+ao = AgentOrchestrator(name="enhanced_pipeline")
 
-@forge.agent(
+@ao.agent(
     name="capiq",
     version="1.0",
     description="Capital IQ data agent for financial metrics",
@@ -2328,7 +2331,7 @@ class CapIQAgent(BaseAgent):
 ### Step 2: Create Steps Using CapIQ
 
 ```python
-@forge.step(
+@ao.step(
     name="fetch_capiq_financials",
     produces=["capiq_financials"],
 )
@@ -2337,7 +2340,7 @@ async def fetch_capiq_financials(ctx: ChainContext):
     company = ctx.get("company_name", "")
     ticker = ctx.get("ticker", "")
 
-    agent = forge.get_agent("capiq")
+    agent = ao.get_agent("capiq")
     result = await agent.fetch(
         ticker or company,
         data_type="financials",
@@ -2349,7 +2352,7 @@ async def fetch_capiq_financials(ctx: ChainContext):
     return {"capiq_financials": result.data}
 
 
-@forge.step(
+@ao.step(
     name="fetch_capiq_estimates",
     produces=["capiq_estimates"],
 )
@@ -2357,7 +2360,7 @@ async def fetch_capiq_estimates(ctx: ChainContext):
     """Fetch analyst estimates from Capital IQ"""
     ticker = ctx.get("ticker", "")
 
-    agent = forge.get_agent("capiq")
+    agent = ao.get_agent("capiq")
     result = await agent.fetch(
         ticker,
         data_type="estimates",
@@ -2367,7 +2370,7 @@ async def fetch_capiq_estimates(ctx: ChainContext):
     return {"capiq_estimates": result.data}
 
 
-@forge.step(
+@ao.step(
     name="fetch_capiq_ownership",
     produces=["capiq_ownership"],
 )
@@ -2375,7 +2378,7 @@ async def fetch_capiq_ownership(ctx: ChainContext):
     """Fetch ownership data from Capital IQ"""
     ticker = ctx.get("ticker", "")
 
-    agent = forge.get_agent("capiq")
+    agent = ao.get_agent("capiq")
     result = await agent.fetch(
         ticker,
         data_type="ownership",
@@ -2388,7 +2391,7 @@ async def fetch_capiq_ownership(ctx: ChainContext):
 ### Step 3: Chain CapIQ with Other Steps
 
 ```python
-@forge.step(
+@ao.step(
     name="aggregate_financial_data",
     dependencies=["fetch_capiq_financials", "fetch_capiq_estimates", "fetch_sec_filings"],
     produces=["aggregated_financials"],
@@ -2416,7 +2419,7 @@ async def aggregate_financial_data(ctx: ChainContext):
     return {"aggregated_financials": aggregated}
 
 
-@forge.step(
+@ao.step(
     name="generate_report",
     dependencies=["aggregate_financial_data", "fetch_capiq_ownership"],
     produces=["final_report"],
@@ -2443,7 +2446,7 @@ async def generate_report(ctx: ChainContext):
 ### Step 4: Define the Complete Chain
 
 ```python
-@forge.chain(
+@ao.chain(
     name="enhanced_meeting_prep",
     version="2.0",
     description="Meeting prep with Capital IQ integration",
@@ -2501,13 +2504,13 @@ class EnhancedMeetingPrepChain:
 ```python
 async def main():
     # Validate
-    forge.check()
+    ao.check()
 
     # Visualize
-    print(forge.visualize_chain("enhanced_meeting_prep"))
+    print(ao.visualize_chain("enhanced_meeting_prep"))
 
     # Run
-    result = await forge.run(
+    result = await ao.run(
         "enhanced_meeting_prep",
         initial_data={
             "company_name": "Apple Inc",
@@ -2647,20 +2650,20 @@ class AgentResult:
 
 ```python
 # Good
-@forge.step(name="fetch_sec_filings")
-@forge.step(name="extract_company_info")
-@forge.step(name="aggregate_financial_metrics")
+@ao.step(name="fetch_sec_filings")
+@ao.step(name="extract_company_info")
+@ao.step(name="aggregate_financial_metrics")
 
 # Avoid
-@forge.step(name="step1")
-@forge.step(name="do_stuff")
+@ao.step(name="step1")
+@ao.step(name="do_stuff")
 ```
 
 ### 2. Always Define `produces`
 
 ```python
 # Good - explicit output keys
-@forge.step(name="fetch", produces=["raw_data", "metadata"])
+@ao.step(name="fetch", produces=["raw_data", "metadata"])
 async def fetch(ctx):
     ctx.set("raw_data", data)
     ctx.set("metadata", meta)
@@ -2672,17 +2675,17 @@ async def fetch(ctx):
 ```python
 # Don't repeat logging/caching in every step
 # Use middleware instead
-forge.use_middleware(LoggerMiddleware())
-forge.use_middleware(CacheMiddleware(ttl_seconds=300))
+ao.use_middleware(LoggerMiddleware())
+ao.use_middleware(CacheMiddleware(ttl_seconds=300))
 ```
 
 ### 4. Handle Errors Gracefully
 
 ```python
-@forge.step(name="fetch_data")
+@ao.step(name="fetch_data")
 async def fetch_data(ctx):
     try:
-        agent = forge.get_agent("data_source")
+        agent = ao.get_agent("data_source")
         result = await agent.fetch(query)
         if result.success:
             ctx.set("data", result.data)
@@ -2697,7 +2700,7 @@ async def fetch_data(ctx):
 
 ```python
 # For financial data, use content-aware summarization
-forge.use_middleware(create_domain_aware_middleware(
+ao.use_middleware(create_domain_aware_middleware(
     llm=my_llm,
     max_tokens=4000,
 ))
@@ -2707,10 +2710,10 @@ forge.use_middleware(create_domain_aware_middleware(
 
 ```python
 # Always check your definitions first
-forge.check()  # Raises if issues found
+ao.check()  # Raises if issues found
 
 # Then run
-result = await forge.run("my_chain")
+result = await ao.run("my_chain")
 ```
 
 ---
@@ -2761,21 +2764,21 @@ from agentorchestrator import AgentOrchestrator, ChainContext
 
 class TestMyChain:
     @pytest.fixture
-    def forge(self):
-        """Create an isolated forge for each test."""
+    def ao(self):
+        """Create an isolated ao for each test."""
         return AgentOrchestrator.temp_registries("test")
 
     @pytest.mark.asyncio
-    async def test_chain_execution(self, forge):
-        @forge.step(name="step1")
+    async def test_chain_execution(self, ao):
+        @ao.step(name="step1")
         async def step1(ctx):
             return {"result": "ok"}
 
-        @forge.chain(name="test_chain")
+        @ao.chain(name="test_chain")
         class TestChain:
             steps = ["step1"]
 
-        result = await forge.launch("test_chain")
+        result = await ao.launch("test_chain")
         assert result["success"] is True
 ```
 
@@ -2783,27 +2786,27 @@ class TestMyChain:
 
 ```python
 @pytest.mark.asyncio
-async def test_composed_chain(self, forge):
+async def test_composed_chain(self, ao):
     # Define inner chain
-    @forge.step(name="inner")
+    @ao.step(name="inner")
     async def inner(ctx):
         ctx.set("inner_ran", True)
         return {"inner": True}
 
-    @forge.chain(name="inner_chain")
+    @ao.chain(name="inner_chain")
     class InnerChain:
         steps = ["inner"]
 
     # Define outer chain that uses inner
-    @forge.step(name="outer", deps=["__subchain__inner_chain"])
+    @ao.step(name="outer", deps=["__subchain__inner_chain"])
     async def outer(ctx):
         return {"saw_inner": ctx.get("inner_ran")}
 
-    @forge.chain(name="outer_chain")
+    @ao.chain(name="outer_chain")
     class OuterChain:
         steps = ["inner_chain", "outer"]
 
-    result = await forge.launch("outer_chain")
+    result = await ao.launch("outer_chain")
     assert result["success"] is True
 ```
 
@@ -2820,13 +2823,13 @@ from agentorchestrator.tests.conftest import (
     create_failing_step,
 )
 
-def test_with_mock_agent(forge, mock_agent):
+def test_with_mock_agent(ao, mock_agent):
     # mock_agent.fetch_count tracks calls
     result = await mock_agent.fetch("test query")
     assert mock_agent.fetch_count == 1
 
-def test_middleware_tracking(forge, tracking_middleware):
-    forge.use(tracking_middleware)
+def test_middleware_tracking(ao, tracking_middleware):
+    ao.use(tracking_middleware)
     # tracking_middleware.before_calls contains step names
     # tracking_middleware.after_calls contains (step_name, success) tuples
 ```
@@ -2855,10 +2858,10 @@ This checks:
 
 ```python
 # Make sure step is defined before chain
-@forge.step(name="my_step")  # Define first
+@ao.step(name="my_step")  # Define first
 async def my_step(ctx): ...
 
-@forge.chain(name="my_chain")  # Then reference
+@ao.chain(name="my_chain")  # Then reference
 class MyChain:
     steps = ["my_step"]
 ```
@@ -2870,19 +2873,232 @@ class MyChain:
 # A -> B -> C -> A  # BAD
 
 # Use visualize_chain to debug
-print(forge.visualize_chain("my_chain"))
+print(ao.visualize_chain("my_chain"))
 ```
 
 ### "Agent not registered"
 
 ```python
 # Make sure agent is decorated
-@forge.agent(name="my_agent")  # Required!
+@ao.agent(name="my_agent")  # Required!
 class MyAgent(BaseAgent):
     ...
 
 # Then get it
-agent = forge.get_agent("my_agent")
+agent = ao.get_agent("my_agent")
+```
+
+---
+
+## Redis Service
+
+AgentOrchestrator provides a Redis service template for enterprise environments with SSL/TLS and service account authentication.
+
+### Installation
+
+```bash
+pip install redis>=4.5.0
+```
+
+### Quick Start
+
+```python
+from agentorchestrator.services import RedisService, get_redis_client, init_redis_client
+
+# Option 1: Initialize with explicit credentials
+redis = init_redis_client(
+    host="redis-18834.cl12.redisgcc12.abc.com",
+    port=18834,
+    username="your_service_id",
+    password="your_service_password",
+    ssl=True,
+)
+
+# Option 2: Use environment variables (recommended)
+# Set REDIS_HOST, REDIS_PORT, REDIS_USERNAME, REDIS_PASSWORD, REDIS_SSL
+redis = get_redis_client()
+
+# Connect and use
+await redis.connect()
+await redis.set("key", "value", ttl=300)
+value = await redis.get("key")
+
+# Health check
+status = await redis.health_check()
+print(f"Redis healthy: {status.healthy}")
+print(f"Redis version: {status.redis_version}")
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_HOST` | `localhost` | Redis server hostname |
+| `REDIS_PORT` | `6379` | Redis server port |
+| `REDIS_USERNAME` | - | Service account username |
+| `REDIS_PASSWORD` | - | Service account password |
+| `REDIS_SSL` | `false` | Enable SSL/TLS connection |
+| `REDIS_SSL_CERT_REQS` | `none` | SSL certificate requirements |
+| `REDIS_DB` | `0` | Database number |
+| `REDIS_DECODE_RESPONSES` | `true` | Decode responses to strings |
+| `REDIS_SOCKET_TIMEOUT` | `30` | Socket timeout in seconds |
+| `REDIS_CONNECTION_TIMEOUT` | `10` | Connection timeout in seconds |
+| `REDIS_MAX_CONNECTIONS` | `10` | Maximum pool connections |
+
+### Enterprise Configuration
+
+For corporate Redis clusters with SSL:
+
+```python
+from agentorchestrator.services import RedisService
+
+redis = RedisService(
+    host="redis-18834.cl12.redisgcc12.abc.com",
+    port=18834,
+    username="your_service_id",
+    password="your_service_password",
+    ssl=True,
+    ssl_cert_reqs=None,  # For self-signed certificates
+    decode_responses=True,
+)
+
+await redis.connect()
+```
+
+### Using in Steps and Agents
+
+```python
+from agentorchestrator.services import get_redis_client
+
+@ao.step(name="fetch_with_cache", produces=["data"])
+async def fetch_with_cache(ctx: ChainContext):
+    redis = get_redis_client()
+    ticker = ctx.get("ticker")
+
+    # Check cache first
+    cache_key = f"sec:{ticker}"
+    cached = await redis.get_json(cache_key)
+    if cached:
+        ctx.set("data", cached)
+        return {"data": cached, "from_cache": True}
+
+    # Fetch from agent if not cached
+    agent = ao.get_agent("sec_filing_agent")
+    result = await agent.fetch(ticker)
+
+    # Cache for 1 hour
+    await redis.set_json(cache_key, result.data, ttl=3600)
+
+    ctx.set("data", result.data)
+    return {"data": result.data, "from_cache": False}
+```
+
+### Available Operations
+
+**Basic Operations:**
+```python
+await redis.get("key")                    # Get string value
+await redis.set("key", "value", ttl=300)  # Set with TTL
+await redis.delete("key1", "key2")        # Delete keys
+await redis.exists("key")                 # Check existence
+await redis.expire("key", 600)            # Set expiration
+await redis.ttl("key")                    # Get TTL
+await redis.keys("pattern:*")             # Get keys by pattern (uses SCAN)
+```
+
+**JSON Operations:**
+```python
+await redis.get_json("key")                        # Get JSON value
+await redis.set_json("key", {"foo": "bar"}, ttl=300)  # Set JSON value
+```
+
+**Hash Operations:**
+```python
+await redis.hget("hash", "field")              # Get hash field
+await redis.hset("hash", "field", "value")     # Set hash field
+await redis.hgetall("hash")                    # Get all hash fields
+await redis.hdel("hash", "field1", "field2")   # Delete hash fields
+```
+
+**List Operations:**
+```python
+await redis.lpush("list", "value1", "value2")  # Push to left
+await redis.rpush("list", "value1", "value2")  # Push to right
+await redis.lpop("list")                       # Pop from left
+await redis.rpop("list")                       # Pop from right
+await redis.lrange("list", 0, -1)              # Get range
+await redis.llen("list")                       # Get length
+```
+
+**Set Operations:**
+```python
+await redis.sadd("set", "member1", "member2")  # Add members
+await redis.srem("set", "member1")             # Remove members
+await redis.smembers("set")                    # Get all members
+await redis.sismember("set", "member1")        # Check membership
+await redis.scard("set")                       # Get cardinality
+```
+
+### Cache Helpers
+
+```python
+# Get or compute pattern
+value = await redis.cache_get_or_set(
+    key="expensive_computation",
+    factory=compute_expensive_value,  # Called only if not cached
+    ttl=3600,
+)
+
+# Invalidate by pattern
+deleted = await redis.invalidate_pattern("cache:user:*")
+```
+
+### Health Check
+
+```python
+status = await redis.health_check()
+
+print(f"Healthy: {status.healthy}")
+print(f"Latency: {status.latency_ms:.2f}ms")
+print(f"Version: {status.redis_version}")
+print(f"Uptime: {status.uptime_days} days")
+print(f"Connected clients: {status.connected_clients}")
+print(f"Memory usage: {status.used_memory_human}")
+
+if status.error:
+    print(f"Error: {status.error}")
+```
+
+### Connection Management
+
+```python
+# Using context manager (recommended)
+async with redis.connection() as r:
+    await r.set("key", "value")
+    value = await r.get("key")
+# Connection automatically closed
+
+# Manual connection management
+await redis.connect()
+try:
+    await redis.set("key", "value")
+finally:
+    await redis.close()
+```
+
+### Synchronous Usage
+
+For synchronous code paths:
+
+```python
+redis = RedisService(host="localhost", port=6379)
+redis.connect_sync()
+
+# Use sync client
+redis.sync_client.set("key", "value")
+value = redis.sync_client.get("key")
+
+redis.close()
 ```
 
 ---
