@@ -9,7 +9,7 @@ The main entry point for creating pipelines.
 ```python
 from agentorchestrator import AgentOrchestrator
 
-forge = AgentOrchestrator(
+ao = AgentOrchestrator(
     name="my_app",           # Required: Unique name for this instance
     isolated=True,           # Default: Use isolated registries
 )
@@ -19,10 +19,10 @@ forge = AgentOrchestrator(
 
 | Decorator | Description |
 |-----------|-------------|
-| `@forge.step(name, deps, produces)` | Register a processing step |
-| `@forge.chain(name, steps)` | Register a chain of steps |
-| `@forge.agent(name, capabilities)` | Register a data agent |
-| `@forge.middleware(name, priority)` | Register middleware |
+| `@ao.step(name, deps, produces)` | Register a processing step |
+| `@ao.chain(name, steps)` | Register a chain of steps |
+| `@ao.agent(name, capabilities)` | Register a data agent |
+| `@ao.middleware(name, priority)` | Register middleware |
 
 #### Methods
 
@@ -41,8 +41,8 @@ forge = AgentOrchestrator(
 #### Context Manager
 
 ```python
-async with forge:
-    result = await forge.launch("my_chain", data)
+async with ao:
+    result = await ao.launch("my_chain", data)
 # Resources cleaned up automatically
 ```
 
@@ -56,7 +56,7 @@ Shared state across steps in a chain execution.
 from agentorchestrator import ChainContext
 
 # Access in steps
-@forge.step(name="my_step")
+@ao.step(name="my_step")
 async def my_step(ctx: ChainContext):
     # Read values
     value = ctx.get("key", default=None)
@@ -100,12 +100,12 @@ ctx.set("config", value, scope=ContextScope.GLOBAL)
 
 ## Decorators
 
-### @forge.step
+### @ao.step
 
 Register a processing step.
 
 ```python
-@forge.step(
+@ao.step(
     name="process_data",              # Required: Unique step name
     deps=["fetch_data"],              # Optional: Dependencies (run after these)
     produces=["processed_data"],      # Optional: Keys this step produces
@@ -118,12 +118,12 @@ async def process_data(ctx: ChainContext):
     return {"result": "done"}
 ```
 
-### @forge.chain
+### @ao.chain
 
 Register a chain of steps.
 
 ```python
-@forge.chain(
+@ao.chain(
     name="my_pipeline",               # Required: Unique chain name
     error_handling="fail_fast",       # Optional: "fail_fast" or "continue"
 )
@@ -137,14 +137,14 @@ class MyPipeline:
     ]
 ```
 
-### @forge.agent
+### @ao.agent
 
 Register a data fetching agent.
 
 ```python
 from agentorchestrator.agents import BaseAgent, AgentResult
 
-@forge.agent(
+@ao.agent(
     name="news_agent",
     capabilities=["search", "sentiment"],
 )
@@ -178,28 +178,28 @@ from agentorchestrator.middleware import (
 )
 
 # Logging
-forge.use(LoggerMiddleware(level="INFO"))
+ao.use(LoggerMiddleware(level="INFO"))
 
 # Caching
-forge.use(CacheMiddleware(ttl_seconds=300))
+ao.use(CacheMiddleware(ttl_seconds=300))
 
 # Summarization (requires LLM)
 from agentorchestrator import create_openai_summarizer
 summarizer = create_openai_summarizer(api_key="sk-...")
-forge.use(SummarizerMiddleware(summarizer=summarizer, max_tokens=4000))
+ao.use(SummarizerMiddleware(summarizer=summarizer, max_tokens=4000))
 
 # Token management
-forge.use(TokenManagerMiddleware(max_total_tokens=100000))
+ao.use(TokenManagerMiddleware(max_total_tokens=100000))
 
 # Rate limiting
-forge.use(RateLimiterMiddleware({
+ao.use(RateLimiterMiddleware({
     "fetch_data": {"requests_per_second": 10},
 }))
 
 # Large payload offloading
 from agentorchestrator.core.context_store import RedisContextStore
 store = RedisContextStore(host="localhost", port=6380)
-forge.use(OffloadMiddleware(store=store, threshold_bytes=100000))
+ao.use(OffloadMiddleware(store=store, threshold_bytes=100000))
 ```
 
 ### Custom Middleware
@@ -224,7 +224,7 @@ class MyMiddleware(Middleware):
         """Called when step fails."""
         print(f"Failed: {step_name} - {error}")
 
-forge.use(MyMiddleware(priority=50))
+ao.use(MyMiddleware(priority=50))
 ```
 
 ---
@@ -293,6 +293,186 @@ result = AgentResult(
 
 ---
 
+## Agent Squad Integration
+
+AgentOrchestrator integrates with [AWS Labs Agent Squad](https://github.com/awslabs/agent-squad) for intelligent multi-agent routing and supervisor patterns.
+
+### SupervisorAgent
+
+Coordinates multiple team agents with dynamic delegation.
+
+```python
+from agentorchestrator.agents import SupervisorAgent, SupervisorConfig
+
+supervisor = SupervisorAgent(
+    team=[sec_agent, capiq_agent, news_agent],
+    config=SupervisorConfig(
+        lead_model="anthropic.claude-3-sonnet-20240229-v1:0",
+        parallel_execution=True,
+        response_strategy=ResponseStrategy.SUMMARIZE,
+        max_tokens_per_agent=2000,
+    ),
+    llm=my_llm,
+)
+
+# Lead agent decides which team members to invoke
+result = await supervisor.fetch("What are Apple's key financial risks?")
+# Only sec_agent and capiq_agent may be called - news_agent skipped if not relevant
+```
+
+### AgentSquadBridge
+
+Bridge for intelligent routing between agents.
+
+```python
+from agentorchestrator.agents import (
+    AgentSquadBridge,
+    AgentSquadConfig,
+    RoutingStrategy,
+    ResponseStrategy,
+)
+
+bridge = AgentSquadBridge(
+    config=AgentSquadConfig(
+        default_strategy=RoutingStrategy.CLASSIFIER,
+        response_strategy=ResponseStrategy.SUMMARIZE,
+        max_tokens_per_agent=2000,
+    ),
+    llm=my_llm,
+)
+
+# Add agents with descriptions for routing
+bridge.add_ao_agent(sec_agent, description="SEC filing expert")
+bridge.add_ao_agent(capiq_agent, description="Financial data analyst")
+
+# Classifier routes to single best agent
+result = await bridge.route("What was Apple's revenue?")
+
+# Or broadcast to all agents
+result = await bridge.broadcast("Analyze Apple's financial health")
+```
+
+### Routing Strategies
+
+| Strategy | Description | Use Case |
+|----------|-------------|----------|
+| `CLASSIFIER` | Routes to single best agent | When query fits one specialist |
+| `BROADCAST` | Sends to all agents in parallel | Comprehensive analysis needed |
+| `SUPERVISOR` | Lead agent decides dynamically | Complex queries requiring coordination |
+| `ROUND_ROBIN` | Distributes across agents | Load balancing |
+
+### Response Strategies
+
+| Strategy | Description | Token Cost |
+|----------|-------------|------------|
+| `SUMMARIZE` | Summarize each response | ~2K per agent |
+| `EXTRACT` | Extract structured data | Depends on model |
+| `TRUNCATE` | Cut to max tokens | Fixed limit |
+| `MAP_REDUCE` | Two-phase synthesis | 2 LLM calls |
+| `RAW` | Pass through unchanged | Full content |
+
+### Pluggable Interfaces
+
+The integration provides pluggable interfaces for custom implementations:
+
+#### ConversationMemoryStore
+
+Implement for custom conversation persistence (Redis, PostgreSQL, MongoDB, etc.).
+
+```python
+from agentorchestrator.agents import ConversationMemoryStore, AgentSquadBridge
+
+class RedisMemoryStore(ConversationMemoryStore):
+    def __init__(self, redis_client):
+        self.redis = redis_client
+
+    async def store(self, session_id, user_id, entry):
+        key = f"conv:{session_id}:{user_id}"
+        await self.redis.rpush(key, json.dumps(entry))
+        await self.redis.ltrim(key, -100, -1)  # Keep last 100
+
+    async def retrieve(self, session_id, user_id, limit=10):
+        key = f"conv:{session_id}:{user_id}"
+        entries = await self.redis.lrange(key, -limit, -1)
+        return [json.loads(e) for e in entries]
+
+    async def clear(self, session_id, user_id):
+        await self.redis.delete(f"conv:{session_id}:{user_id}")
+
+# Use with bridge
+bridge = AgentSquadBridge(memory_store=RedisMemoryStore(redis_client))
+```
+
+#### AgentClassifier
+
+Implement for custom routing logic.
+
+```python
+from agentorchestrator.agents import AgentClassifier, AgentSquadBridge
+
+class EmbeddingClassifier(AgentClassifier):
+    def __init__(self, embeddings_model):
+        self.embeddings = embeddings_model
+        self.agent_embeddings = {}
+
+    async def classify(self, query, agents, context=None):
+        query_embedding = await self.embeddings.embed(query)
+
+        # Compute agent embeddings if not cached
+        for name, desc in agents.items():
+            if name not in self.agent_embeddings:
+                self.agent_embeddings[name] = await self.embeddings.embed(desc)
+
+        # Find best match by cosine similarity
+        best_agent = max(
+            agents.keys(),
+            key=lambda n: cosine_similarity(query_embedding, self.agent_embeddings[n])
+        )
+        return {"agent": best_agent, "confidence": 0.85}
+
+# Use with bridge
+bridge = AgentSquadBridge(classifier=EmbeddingClassifier(embeddings))
+```
+
+#### Built-in Classifiers
+
+| Classifier | Description | Requirements |
+|------------|-------------|--------------|
+| `KeywordClassifier` | Simple keyword matching | None |
+| `LLMClassifier` | LLM-based intelligent routing | LangChain LLM |
+| `LLMGatewayClassifier` | Uses LLM Gateway with OAuth | LLMGatewayClient |
+
+```python
+from agentorchestrator.agents import LLMClassifier, KeywordClassifier, LLMGatewayClassifier
+
+# LLM Gateway classifier (recommended for proxy environments)
+from agentorchestrator.services.llm_gateway import LLMGatewayClient
+from cmpt.config import Config
+
+llm_client = LLMGatewayClient(
+    server_url=Config.LLM_SERVER_URL,
+    oauth_endpoint=Config.LLM_OAUTH_ENDPOINT,
+    client_id=Config.LLM_CLIENT_ID,
+    client_secret=Config.LLM_CLIENT_SECRET,
+    model_name=Config.LLM_MODEL_NAME,
+)
+bridge = AgentSquadBridge(
+    classifier=LLMGatewayClassifier(llm_client),
+)
+
+# LLM classifier (for direct LangChain LLM access)
+bridge = AgentSquadBridge(
+    classifier=LLMClassifier(llm=my_llm, temperature=0.0),
+)
+
+# Keyword classifier (no LLM required)
+bridge = AgentSquadBridge(
+    classifier=KeywordClassifier(),
+)
+```
+
+---
+
 ## Context Store
 
 ### RedisContextStore
@@ -348,16 +528,16 @@ from agentorchestrator.testing import (
 
 # Isolated testing
 async def test_my_chain():
-    async with IsolatedOrchestrator() as forge:
-        @forge.step(name="test_step")
+    async with IsolatedOrchestrator() as ao:
+        @ao.step(name="test_step")
         async def test_step(ctx):
             return {"done": True}
 
-        @forge.chain(name="test_chain")
+        @ao.chain(name="test_chain")
         class TestChain:
             steps = ["test_step"]
 
-        result = await forge.launch("test_chain", {})
+        result = await ao.launch("test_chain", {})
         assert result["success"]
 
 # Mock agent
@@ -370,7 +550,7 @@ mock = MockAgent(
 # Mock step decorator
 @mock_step("fetch_data", returns={"data": "mocked"})
 async def test_with_mock():
-    result = await forge.launch("my_chain", {})
+    result = await ao.launch("my_chain", {})
     assert_step_completed(result, "fetch_data")
 ```
 
