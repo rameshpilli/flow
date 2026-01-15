@@ -30,19 +30,19 @@ ingress:
   enabled: true
   className: ""
   namespace: isa0-prod
-  host: memory-store.cfkprod.fg.rbc.com
-  secretName: memory-store-cert-tls
+  host: mem0.cfkprod.fg.rbc.com
+  secretName: mem0-cert-tls
   annotations:
     cert-manager.io.issuer: chorus
     nginx.ingress.kubernetes.io/rewrite-target: /
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
     nginx.ingress.kubernetes.io/rate-limit: "100"  # Rate limiting in prod
   tls:
-    - secretName: memory-store-cert-tls
+    - secretName: mem0-cert-tls
       hosts:
-        - memory-store.cfkprod.fg.rbc.com
+        - mem0.cfkprod.fg.rbc.com
   hosts:
-    - host: memory-store.cfkprod.fg.rbc.com
+    - host: mem0.cfkprod.fg.rbc.com
       paths:
         - path: /
           pathType: Prefix
@@ -63,12 +63,12 @@ configuration:
   COHERE_MODEL: "embed-english-v3.0"
   
   # Qdrant Configuration
-  QDRANT_HOST: "memory-store-qdrant"
+  QDRANT_HOST: "mem0-qdrant"
   QDRANT_PORT: "'6333'"
   QDRANT_COLLECTION_NAME: "agent_memories_prod"
   
   # Memgraph Configuration
-  MEMGRAPH_HOST: "memory-store-memgraph"
+  MEMGRAPH_HOST: "mem0-memgraph"
   MEMGRAPH_PORT: "'7687'"
   
   # Mem0 Configuration
@@ -106,5 +106,5 @@ affinity:
               - key: app.kubernetes.io/name
                 operator: In
                 values:
-                  - memory-store
+                  - mem0
           topologyKey: kubernetes.io/hostname

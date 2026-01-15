@@ -2,9 +2,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "memory-store.fullname" . }}
+  name: {{ include "mem0.fullname" . }}
   labels:
-    {{- include "memory-store.labels" . | nindent 4 }}
+    {{- include "mem0.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -33,7 +33,7 @@ spec:
             pathType: {{ .pathType }}
             backend:
               service:
-                name: {{ include "memory-store.fullname" $ }}
+                name: {{ include "mem0.fullname" $ }}
                 port:
                   number: {{ $.Values.service.port }}
           {{- end }}

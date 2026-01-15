@@ -1,5 +1,5 @@
 apiVersion: v2
-name: memory-store
+name: mem0
 description: Production-ready Memory Store service with mem0, Qdrant, and Memgraph
 type: application
 version: 0.1.0

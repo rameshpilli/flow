@@ -8,7 +8,7 @@ services:
   # Qdrant Vector Database
   qdrant:
     image: qdrant/qdrant:latest
-    container_name: memory-store-qdrant
+    container_name: mem0-qdrant
     ports:
       - "6333:6333"  # HTTP API
       - "6334:6334"  # gRPC API
@@ -18,7 +18,7 @@ services:
       - QDRANT__SERVICE__HTTP_PORT=6333
       - QDRANT__SERVICE__GRPC_PORT=6334
     networks:
-      - memory-store-network
+      - mem0-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
       interval: 30s
@@ -26,11 +26,11 @@ services:
       retries: 3
 
   # Memory Store Service
-  memory-store:
+  mem0:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: memory-store-service
+    container_name: mem0-service
     ports:
       - "8000:8000"
     environment:
@@ -70,7 +70,7 @@ services:
     depends_on:
       - qdrant
     networks:
-      - memory-store-network
+      - mem0-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -82,7 +82,7 @@ services:
   # Uncomment to enable relationship-based memory
   memgraph:
     image: memgraph/memgraph:latest
-    container_name: memory-store-memgraph
+    container_name: mem0-memgraph
     ports:
       - "7687:7687"  # Bolt protocol
       - "7444:7444"  # Monitoring
@@ -93,7 +93,7 @@ services:
       - MEMGRAPH_LOG_LEVEL=WARNING
     command: ["--log-level=WARNING"]
     networks:
-      - memory-store-network
+      - mem0-network
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "7687"]
       interval: 30s
@@ -109,5 +109,5 @@ volumes:
   memgraph_log:
 
 networks:
-  memory-store-network:
+  mem0-network:
     driver: bridge

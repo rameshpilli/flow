@@ -19,7 +19,7 @@ jobs:
       docker_repository: docker-${{ steps.helios_context.outputs.app_code_lowercase }}-dev
       docker_qa_repository: docker-${{ steps.helios_context.outputs.app_code_lowercase }}-qa
       docker_prod_repository: docker-${{ steps.helios_context.outputs.app_code_lowercase }}-prod
-      app_image_name: ${{ steps.helios_context.outputs.app_code_lowercase }}-memory-store
+      app_image_name: ${{ steps.helios_context.outputs.app_code_lowercase }}-mem0
       app_image_tag: ${{ steps.helios_context.outputs.default_image_tag }}
     steps:
       - name: Initialization

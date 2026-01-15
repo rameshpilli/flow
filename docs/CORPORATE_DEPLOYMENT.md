@@ -190,20 +190,20 @@ Each environment has specific overrides in `helm/environments/<env>/values.yaml`
 - Minimal resources
 - Debug logging
 - Autoscaling: 1-3 replicas
-- Ingress: `memory-store.cfk.devfg.rbc.com`
+- Ingress: `mem0.cfk.devfg.rbc.com`
 
 #### QAT (`helm/environments/qat/values.yaml`)
 - Medium resources
 - Memgraph enabled for testing
 - Autoscaling: 2-5 replicas
-- Ingress: `memory-store.cfkqa.saifg.rbc.com`
+- Ingress: `mem0.cfkqa.saifg.rbc.com`
 
 #### PROD (`helm/environments/prod/values.yaml`)
 - Full resources
 - Memgraph enabled
 - Autoscaling: 3-10 replicas
 - Pod anti-affinity for HA
-- Ingress: `memory-store.cfkprod.fg.rbc.com`
+- Ingress: `mem0.cfkprod.fg.rbc.com`
 
 ### Template Customization
 
@@ -301,7 +301,7 @@ configuration:
 - Memgraph: 2Gi (if enabled)
 
 **Access**:
-- URL: `https://memory-store.cfk.devfg.rbc.com`
+- URL: `https://mem0.cfk.devfg.rbc.com`
 
 ### QAT Environment
 
@@ -328,7 +328,7 @@ configuration:
 - Memgraph: 5Gi
 
 **Access**:
-- URL: `https://memory-store.cfkqa.saifg.rbc.com`
+- URL: `https://mem0.cfkqa.saifg.rbc.com`
 
 ### PROD Environment
 
@@ -362,7 +362,7 @@ affinity:
 - Memgraph: 20Gi
 
 **Access**:
-- URL: `https://memory-store.cfkprod.fg.rbc.com`
+- URL: `https://mem0.cfkprod.fg.rbc.com`
 
 ---
 
@@ -442,7 +442,7 @@ The `deploy.sh` script automatically verifies:
 
 3. **Health endpoint**:
    ```bash
-   curl https://memory-store.cfk.devfg.rbc.com/health
+   curl https://mem0.cfk.devfg.rbc.com/health
    ```
 
 4. **Qdrant status**:
@@ -599,7 +599,7 @@ kubectl get ingress memory-store -o yaml
 kubectl get certificate memory-store-cert-tls
 
 # Test DNS
-nslookup memory-store.cfk.devfg.rbc.com
+nslookup mem0.cfk.devfg.rbc.com
 ```
 
 ### Debugging Commands
@@ -684,9 +684,9 @@ helm uninstall memory-store --namespace isa0-dev
 
 | Environment | URL |
 |-------------|-----|
-| DEV | https://memory-store.cfk.devfg.rbc.com |
-| QAT | https://memory-store.cfkqa.saifg.rbc.com |
-| PROD | https://memory-store.cfkprod.fg.rbc.com |
+| DEV | https://mem0.cfk.devfg.rbc.com |
+| QAT | https://mem0.cfkqa.saifg.rbc.com |
+| PROD | https://mem0.cfkprod.fg.rbc.com |
 
 ### Resource Limits
 

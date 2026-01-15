@@ -30,18 +30,18 @@ ingress:
   enabled: true
   className: ""
   namespace: isa0-dev
-  host: memory-store.cfk.devfg.rbc.com
-  secretName: memory-store-cert-tls
+  host: mem0.cfk.devfg.rbc.com
+  secretName: mem0-cert-tls
   annotations:
     cert-manager.io.issuer: chorus
     nginx.ingress.kubernetes.io/rewrite-target: /
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
   tls:
-    - secretName: memory-store-cert-tls
+    - secretName: mem0-cert-tls
       hosts:
-        - memory-store.cfk.devfg.rbc.com
+        - mem0.cfk.devfg.rbc.com
   hosts:
-    - host: memory-store.cfk.devfg.rbc.com
+    - host: mem0.cfk.devfg.rbc.com
       paths:
         - path: /
           pathType: Prefix
@@ -64,12 +64,12 @@ configuration:
   COHERE_MODEL: "embed-english-v3.0"
   
   # Qdrant Configuration (internal service)
-  QDRANT_HOST: "memory-store-qdrant"
+  QDRANT_HOST: "mem0-qdrant"
   QDRANT_PORT: "'6333'"
   QDRANT_COLLECTION_NAME: "agent_memories_dev"
   
   # Memgraph Configuration (optional)
-  MEMGRAPH_HOST: "memory-store-memgraph"
+  MEMGRAPH_HOST: "mem0-memgraph"
   MEMGRAPH_PORT: "'7687'"
   
   # Mem0 Configuration

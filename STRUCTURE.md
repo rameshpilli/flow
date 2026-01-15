@@ -1,11 +1,11 @@
-# Memory Store - Project Structure
+# Mem0 - Project Structure
 
 Clean, organized folder structure following Python packaging standards.
 
 ## Directory Layout
 
 ```
-memory-store/
+mem0/
 │
 ├── 📦 app/                       # Source code package (6 files)
 │   ├── __init__.py               # Package initialization & exports
@@ -41,7 +41,7 @@ memory-store/
 │   │   └── prod/values.yaml      # PROD environment
 │   └── templates/                # K8s manifest templates
 │       ├── _helpers.tpl          # Template helpers
-│       ├── deployment.yaml       # Memory Store deployment
+│       ├── deployment.yaml       # Mem0 deployment
 │       ├── service.yaml          # Service definition
 │       ├── configmap.yaml        # Configuration
 │       ├── ingress.yaml          # External access
@@ -144,7 +144,7 @@ make helm-install ENVIRONMENT=dev
 make helm-upgrade ENVIRONMENT=dev
 
 # Or direct Helm
-helm install memory-store ./helm/ \
+helm install mem0 ./helm/ \
   --values ./helm/environments/dev/values.yaml \
   --namespace isa0-dev
 ```
@@ -177,7 +177,7 @@ from app.service import MemoryStoreService
 ### CLI Usage
 ```bash
 # Installed CLI command
-memory-store --help
+mem0 --help
 
 # Or via Python module
 python -m app.cli --help

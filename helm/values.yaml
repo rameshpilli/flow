@@ -7,7 +7,7 @@ rbc:
 # Image configuration
 # The 'artifactoryRepo' varies by environment (see helm/environments/<env>/values.yaml)
 image:
-  name: isa0-memory-store
+  name: isa0-mem0
   pullPolicy: IfNotPresent
   artifactoryRepo: docker-isa0-dev  # Default to dev, override per environment
 
@@ -137,12 +137,12 @@ configuration:
   # LLM_GATEWAY_API_KEY and OAuth credentials managed via Vault
   
   # Qdrant Configuration (internal service)
-  QDRANT_HOST: "memory-store-qdrant"
+  QDRANT_HOST: "mem0-qdrant"
   QDRANT_PORT: "'6333'"
   QDRANT_COLLECTION_NAME: "agent_memories"
   
   # Memgraph Configuration (optional, internal service)
-  MEMGRAPH_HOST: "memory-store-memgraph"
+  MEMGRAPH_HOST: "mem0-memgraph"
   MEMGRAPH_PORT: "'7687'"
   
   # Mem0 Configuration

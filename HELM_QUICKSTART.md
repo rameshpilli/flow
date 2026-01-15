@@ -1,6 +1,6 @@
 # Helm/Helios Quick Reference
 
-Quick reference for deploying Memory Store to corporate Kubernetes using Helm and Helios.
+Quick reference for deploying Mem0 to corporate Kubernetes using Helm and Helios.
 
 ## 📋 Prerequisites Checklist
 
@@ -78,19 +78,19 @@ helios/
 ## 🎯 Environment-Specific Settings
 
 ### DEV
-- **URL**: https://memory-store.cfk.devfg.rbc.com
+- **URL**: https://mem0.cfk.devfg.rbc.com
 - **Namespace**: isa0-dev
 - **Replicas**: 1-3 (auto-scaling)
 - **Memgraph**: Disabled by default
 
 ### QAT
-- **URL**: https://memory-store.cfkqa.saifg.rbc.com
+- **URL**: https://mem0.cfkqa.saifg.rbc.com
 - **Namespace**: isa0-qat
 - **Replicas**: 2-5 (auto-scaling)
 - **Memgraph**: Enabled for testing
 
 ### PROD
-- **URL**: https://memory-store.cfkprod.fg.rbc.com
+- **URL**: https://mem0.cfkprod.fg.rbc.com
 - **Namespace**: isa0-prod
 - **Replicas**: 3-10 (auto-scaling)
 - **Memgraph**: Enabled
@@ -229,7 +229,7 @@ kubectl get pod -l app.kubernetes.io/name=memory-store-memgraph -n isa0-dev
 ### Test Connectivity
 ```bash
 # Health check
-curl https://memory-store.cfk.devfg.rbc.com/health
+curl https://mem0.cfk.devfg.rbc.com/health
 
 # Or via port-forward
 kubectl port-forward svc/memory-store 8000:80 -n isa0-dev

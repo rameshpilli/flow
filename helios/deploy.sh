@@ -10,7 +10,7 @@ echo "Using CF release bundle version: ${WF_VERSION}"
 echo "Image: ${CUSTOM_APP_IMAGE_NAME}:${CUSTOM_APP_IMAGE_TAG}"
 echo "=============================================================="
 
-readonly CHART_NAME="memory-store"
+readonly CHART_NAME="mem0"
 
 echo ""
 echo "ENVIRONMENT: $ENVIRONMENT"
@@ -158,7 +158,7 @@ fi
 
 echo ""
 echo "Checking Qdrant deployment..."
-QDRANT_POD=$(kubectl get pods -l app.kubernetes.io/name=memory-store-qdrant -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+QDRANT_POD=$(kubectl get pods -l app.kubernetes.io/name=mem0-qdrant -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 if [[ -n "$QDRANT_POD" ]]; then
   echo "✓ Qdrant pod found: $QDRANT_POD"
   kubectl get pod $QDRANT_POD
@@ -168,7 +168,7 @@ fi
 
 echo ""
 echo "Checking Memgraph deployment (if enabled)..."
-MEMGRAPH_POD=$(kubectl get pods -l app.kubernetes.io/name=memory-store-memgraph -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+MEMGRAPH_POD=$(kubectl get pods -l app.kubernetes.io/name=mem0-memgraph -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 if [[ -n "$MEMGRAPH_POD" ]]; then
   echo "✓ Memgraph pod found: $MEMGRAPH_POD (GraphRAG enabled)"
   kubectl get pod $MEMGRAPH_POD

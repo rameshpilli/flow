@@ -8,7 +8,7 @@ Usage:
     
     # Initialize
     memory = MemoryStoreClient(
-        base_url="http://memory-store-service:8000",
+        base_url="http://mem0-service:8000",
         agent_id="my_agent"
     )
     
@@ -385,7 +385,7 @@ def create_memory_client(
     
     Example:
         memory = create_memory_client(
-            base_url="http://memory-store-service:8000",
+            base_url="http://mem0-service:8000",
             agent_id="finance_agent"
         )
     """

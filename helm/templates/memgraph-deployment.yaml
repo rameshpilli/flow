@@ -3,9 +3,9 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "memory-store.fullname" . }}-memgraph-data-pvc
+  name: {{ include "mem0.fullname" . }}-memgraph-data-pvc
   labels:
-    {{- include "memory-store.memgraph.labels" . | nindent 4 }}
+    {{- include "mem0.memgraph.labels" . | nindent 4 }}
 spec:
   accessModes:
     - ReadWriteOnce
@@ -19,9 +19,9 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "memory-store.fullname" . }}-memgraph-logs-pvc
+  name: {{ include "mem0.fullname" . }}-memgraph-logs-pvc
   labels:
-    {{- include "memory-store.memgraph.labels" . | nindent 4 }}
+    {{- include "mem0.memgraph.labels" . | nindent 4 }}
 spec:
   accessModes:
     - ReadWriteOnce
@@ -35,18 +35,18 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "memory-store.fullname" . }}-memgraph
+  name: {{ include "mem0.fullname" . }}-memgraph
   labels:
-    {{- include "memory-store.memgraph.labels" . | nindent 4 }}
+    {{- include "mem0.memgraph.labels" . | nindent 4 }}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "memory-store.memgraph.selectorLabels" . | nindent 6 }}
+      {{- include "mem0.memgraph.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "memory-store.memgraph.selectorLabels" . | nindent 8 }}
+        {{- include "mem0.memgraph.selectorLabels" . | nindent 8 }}
         cf.rbccm.com/logging-enabled: "true"
     spec:
       containers:
@@ -80,14 +80,14 @@ spec:
         - name: memgraph-data
           {{- if .Values.memgraph.persistence.enabled }}
           persistentVolumeClaim:
-            claimName: {{ include "memory-store.fullname" . }}-memgraph-data-pvc
+            claimName: {{ include "mem0.fullname" . }}-memgraph-data-pvc
           {{- else }}
           emptyDir: {}
           {{- end }}
         - name: memgraph-logs
           {{- if .Values.memgraph.persistence.enabled }}
           persistentVolumeClaim:
-            claimName: {{ include "memory-store.fullname" . }}-memgraph-logs-pvc
+            claimName: {{ include "mem0.fullname" . }}-memgraph-logs-pvc
           {{- else }}
           emptyDir: {}
           {{- end }}
@@ -95,9 +95,9 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "memory-store.fullname" . }}-memgraph
+  name: {{ include "mem0.fullname" . }}-memgraph
   labels:
-    {{- include "memory-store.memgraph.labels" . | nindent 4 }}
+    {{- include "mem0.memgraph.labels" . | nindent 4 }}
 spec:
   type: ClusterIP
   ports:
@@ -110,5 +110,5 @@ spec:
       protocol: TCP
       name: http
   selector:
-    {{- include "memory-store.memgraph.selectorLabels" . | nindent 4 }}
+    {{- include "mem0.memgraph.selectorLabels" . | nindent 4 }}
 {{- end }}

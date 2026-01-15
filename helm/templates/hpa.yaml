@@ -2,14 +2,14 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "memory-store.fullname" . }}
+  name: {{ include "mem0.fullname" . }}
   labels:
-    {{- include "memory-store.labels" . | nindent 4 }}
+    {{- include "mem0.labels" . | nindent 4 }}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "memory-store.fullname" . }}
+    name: {{ include "mem0.fullname" . }}
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.maxReplicas }}
   metrics:

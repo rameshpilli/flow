@@ -1,10 +1,10 @@
-# Memory Store - Production AI Agent Memory Service
+# Mem0 - Production AI Agent Memory Service
 
 Production-ready memory management service for AI agents, powered by mem0, Qdrant, and Memgraph.
 
 ## 🎯 Overview
 
-Memory Store provides a centralized, scalable memory service for AI agents with:
+Mem0 provides a centralized, scalable memory service for AI agents with:
 
 - **Multi-Agent Isolation**: Each agent gets its own memory space
 - **Semantic Search**: Find relevant memories using vector similarity
@@ -26,11 +26,11 @@ Memory Store provides a centralized, scalable memory service for AI agents with:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│              Memory Store Service                        │
+│              Mem0 Service                        │
 ├─────────────────────────────────────────────────────────┤
 │                                                           │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ Memory Store │  │   Qdrant     │  │  Memgraph    │  │
+│  │ Mem0 │  │   Qdrant     │  │  Memgraph    │  │
 │  │   (FastAPI)  │──│ (Vector DB)  │  │ (Graph DB)   │  │
 │  │              │  │              │  │  (Optional)   │  │
 │  └──────┬───────┘  └──────────────┘  └──────────────┘  │
@@ -101,7 +101,7 @@ from app import MemoryStoreClient
 
 # Create client
 client = MemoryStoreClient(
-    base_url="https://memory-store.cfk.devfg.rbc.com",  # Corporate URL
+    base_url="https://mem0.cfk.devfg.rbc.com",  # Corporate URL
     agent_id="trading-agent-001"
 )
 
@@ -152,9 +152,9 @@ The `helios/` directory contains corporate deployment configuration:
 
 | Environment | URL | Namespace | Pods | Storage |
 |-------------|-----|-----------|------|---------|
-| DEV | memory-store.cfk.devfg.rbc.com | isa0-dev | 1-3 | 5Gi |
-| QAT | memory-store.cfkqa.saifg.rbc.com | isa0-qat | 2-5 | 10Gi |
-| PROD | memory-store.cfkprod.fg.rbc.com | isa0-prod | 3-10 | 50Gi |
+| DEV | mem0.cfk.devfg.rbc.com | isa0-dev | 1-3 | 5Gi |
+| QAT | mem0.cfkqa.saifg.rbc.com | isa0-qat | 2-5 | 10Gi |
+| PROD | mem0.cfkprod.fg.rbc.com | isa0-prod | 3-10 | 50Gi |
 
 ## 🐳 Docker
 
@@ -188,7 +188,7 @@ make helm-install ENVIRONMENT=dev
 make helm-upgrade ENVIRONMENT=dev
 
 # Or use Helm directly
-helm install memory-store ./helm/ \
+helm install mem0 ./helm/ \
   --values ./helm/environments/dev/values.yaml \
   --namespace isa0-dev \
   --create-namespace
@@ -224,7 +224,7 @@ COHERE_MODEL=embed-english-v3.0
 
 **Qdrant (Vector DB):**
 ```bash
-QDRANT_HOST=memory-store-qdrant
+QDRANT_HOST=mem0-qdrant
 QDRANT_PORT=6333
 QDRANT_COLLECTION_NAME=agent_memories
 ```
@@ -233,7 +233,7 @@ QDRANT_COLLECTION_NAME=agent_memories
 ```bash
 MEM0_GRAPH_STORE_ENABLED=true
 MEM0_GRAPH_STORE_PROVIDER=memgraph
-MEMGRAPH_HOST=memory-store-memgraph
+MEMGRAPH_HOST=mem0-memgraph
 MEMGRAPH_PORT=7687
 ```
 
@@ -254,7 +254,7 @@ appcodes/ISA0/<ENV>/MEMORY-STORE/
 
 ### Health Check
 ```bash
-curl https://memory-store.cfk.devfg.rbc.com/health
+curl https://mem0.cfk.devfg.rbc.com/health
 ```
 
 Expected response:
@@ -273,16 +273,16 @@ Expected response:
 ### Kubernetes
 ```bash
 # Check pods
-kubectl get pods -l app.kubernetes.io/name=memory-store
+kubectl get pods -l app.kubernetes.io/name=mem0
 
 # Check HPA
-kubectl get hpa memory-store
+kubectl get hpa mem0
 
 # View logs
-kubectl logs -f deployment/memory-store
+kubectl logs -f deployment/mem0
 
 # Port forward for local access
-kubectl port-forward svc/memory-store 8000:80
+kubectl port-forward svc/mem0 8000:80
 ```
 
 ## 🧪 Testing
@@ -304,7 +304,7 @@ make format
 ## 📁 Project Structure
 
 ```
-memory-store/
+mem0/
 ├── app/                  # Source code package
 │   ├── api.py            # FastAPI application
 │   ├── service.py        # Core memory logic
@@ -341,7 +341,7 @@ class MemoryAugmentedAgent(Agent):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.memory = MemoryStoreClient(
-            base_url="https://memory-store.cfkprod.fg.rbc.com",
+            base_url="https://mem0.cfkprod.fg.rbc.com",
             agent_id=self.agent_id
         )
     
@@ -385,10 +385,10 @@ kubectl get secret artifactory-docker-isa0-dev-secret -o yaml
 **Qdrant Connection Issues:**
 ```bash
 # Check Qdrant pod
-kubectl get pod -l app.kubernetes.io/name=memory-store-qdrant
+kubectl get pod -l app.kubernetes.io/name=mem0-qdrant
 
 # Test connectivity
-kubectl exec -it <memory-store-pod> -- curl http://memory-store-qdrant:6333/
+kubectl exec -it <mem0-pod> -- curl http://mem0-qdrant:6333/
 ```
 
 **Health Check Failures:**
@@ -397,7 +397,7 @@ kubectl exec -it <memory-store-pod> -- curl http://memory-store-qdrant:6333/
 kubectl logs <pod-name>
 
 # Check configuration
-kubectl get configmap memory-store-cfgmap -o yaml
+kubectl get configmap mem0-cfgmap -o yaml
 ```
 
 **See: [docs/CORPORATE_DEPLOYMENT.md#troubleshooting](docs/CORPORATE_DEPLOYMENT.md#troubleshooting)** for detailed debugging

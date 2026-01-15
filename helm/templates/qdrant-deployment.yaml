@@ -3,9 +3,9 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "memory-store.fullname" . }}-qdrant-pvc
+  name: {{ include "mem0.fullname" . }}-qdrant-pvc
   labels:
-    {{- include "memory-store.qdrant.labels" . | nindent 4 }}
+    {{- include "mem0.qdrant.labels" . | nindent 4 }}
 spec:
   accessModes:
     - ReadWriteOnce
@@ -19,18 +19,18 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "memory-store.fullname" . }}-qdrant
+  name: {{ include "mem0.fullname" . }}-qdrant
   labels:
-    {{- include "memory-store.qdrant.labels" . | nindent 4 }}
+    {{- include "mem0.qdrant.labels" . | nindent 4 }}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "memory-store.qdrant.selectorLabels" . | nindent 6 }}
+      {{- include "mem0.qdrant.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "memory-store.qdrant.selectorLabels" . | nindent 8 }}
+        {{- include "mem0.qdrant.selectorLabels" . | nindent 8 }}
         cf.rbccm.com/logging-enabled: "true"
     spec:
       containers:
@@ -64,7 +64,7 @@ spec:
         - name: qdrant-storage
           {{- if .Values.qdrant.persistence.enabled }}
           persistentVolumeClaim:
-            claimName: {{ include "memory-store.fullname" . }}-qdrant-pvc
+            claimName: {{ include "mem0.fullname" . }}-qdrant-pvc
           {{- else }}
           emptyDir: {}
           {{- end }}
@@ -72,9 +72,9 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "memory-store.fullname" . }}-qdrant
+  name: {{ include "mem0.fullname" . }}-qdrant
   labels:
-    {{- include "memory-store.qdrant.labels" . | nindent 4 }}
+    {{- include "mem0.qdrant.labels" . | nindent 4 }}
 spec:
   type: ClusterIP
   ports:
@@ -87,5 +87,5 @@ spec:
       protocol: TCP
       name: grpc
   selector:
-    {{- include "memory-store.qdrant.selectorLabels" . | nindent 4 }}
+    {{- include "mem0.qdrant.selectorLabels" . | nindent 4 }}
 {{- end }}

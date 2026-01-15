@@ -12,12 +12,12 @@ PYTHON := python3
 PIP := pip
 DOCKER := docker
 KUBECTL := kubectl
-IMAGE_NAME := memory-store
+IMAGE_NAME := mem0
 IMAGE_TAG := latest
 REGISTRY := your-registry
-NAMESPACE := memory-store
+NAMESPACE := mem0
 HELM_CHART := ./helm
-HELM_RELEASE := memory-store
+HELM_RELEASE := mem0
 ENVIRONMENT := dev
 
 help: ## Show this help message
@@ -36,10 +36,10 @@ install-dev: ## Install development dependencies
 	$(PIP) install -e ".[dev,monitoring]"
 
 dev: ## Run service in development mode with auto-reload
-	memory-store --reload --log-level DEBUG
+	mem0 --reload --log-level DEBUG
 
 run: ## Run service in production mode
-	memory-store
+	mem0
 
 # ───────────────────────────────────────────────────────────────────────────────
 # Testing & Quality
@@ -76,7 +76,7 @@ docker-compose-down: ## Stop services with docker-compose
 	docker-compose down
 
 docker-compose-logs: ## View docker-compose logs
-	docker-compose logs -f memory-store
+	docker-compose logs -f mem0
 
 docker-tag: ## Tag image for registry
 	$(DOCKER) tag $(IMAGE_NAME):$(IMAGE_TAG) $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
@@ -92,16 +92,16 @@ k8s-status: ## Check deployment status
 	$(KUBECTL) get all -n $(NAMESPACE)
 
 k8s-logs: ## View logs from Kubernetes pods
-	$(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/name=memory-store --tail=100 -f
+	$(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/name=mem0 --tail=100 -f
 
 k8s-describe: ## Describe Kubernetes deployment
-	$(KUBECTL) describe deployment -n $(NAMESPACE) memory-store
+	$(KUBECTL) describe deployment -n $(NAMESPACE) mem0
 
 k8s-port-forward: ## Port-forward to local machine
-	$(KUBECTL) port-forward -n $(NAMESPACE) svc/memory-store 8000:80
+	$(KUBECTL) port-forward -n $(NAMESPACE) svc/mem0 8000:80
 
 k8s-shell: ## Get shell in pod
-	$(KUBECTL) exec -it -n $(NAMESPACE) deployment/memory-store -- /bin/bash
+	$(KUBECTL) exec -it -n $(NAMESPACE) deployment/mem0 -- /bin/bash
 
 # ───────────────────────────────────────────────────────────────────────────────
 # Utilities

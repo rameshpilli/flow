@@ -250,7 +250,7 @@ async def main():
     print(f"\nConnecting to: {os.getenv('MEMORY_STORE_URL', 'http://localhost:8000')}")
     print("\nNote: Make sure Memory Store is running!")
     print("  Local: docker-compose up -d")
-    print("  K8s: kubectl port-forward -n memory-store svc/memory-store-service 8000:8000")
+    print("  K8s: kubectl port-forward -n memory-store svc/mem0-service 8000:8000")
     
     try:
         await example_1_basic_operations()

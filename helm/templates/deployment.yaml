@@ -1,16 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "memory-store.fullname" . }}
+  name: {{ include "mem0.fullname" . }}
   labels:
-    {{- include "memory-store.labels" . | nindent 4 }}
+    {{- include "mem0.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   selector:
     matchLabels:
-      {{- include "memory-store.selectorLabels" . | nindent 6 }}
+      {{- include "mem0.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       {{- with .Values.podAnnotations }}
@@ -18,14 +18,14 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
-        {{- include "memory-store.selectorLabels" . | nindent 8 }}
+        {{- include "mem0.selectorLabels" . | nindent 8 }}
         cf.rbccm.com/logging-enabled: "true"
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "memory-store.serviceAccountName" . }}
+      serviceAccountName: {{ include "mem0.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       
@@ -38,7 +38,7 @@ spec:
           args:
             - |
               echo "Waiting for Qdrant to be ready..."
-              until nc -z {{ include "memory-store.fullname" . }}-qdrant {{ .Values.qdrant.service.port }}; do
+              until nc -z {{ include "mem0.fullname" . }}-qdrant {{ .Values.qdrant.service.port }}; do
                 echo "Qdrant not ready yet, waiting..."
                 sleep 5
               done
@@ -50,7 +50,7 @@ spec:
           args:
             - |
               echo "Waiting for Memgraph to be ready..."
-              until nc -z {{ include "memory-store.fullname" . }}-memgraph {{ .Values.memgraph.service.boltPort }}; do
+              until nc -z {{ include "mem0.fullname" . }}-memgraph {{ .Values.memgraph.service.boltPort }}; do
                 echo "Memgraph not ready yet, waiting..."
                 sleep 5
               done

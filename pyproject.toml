@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "memory-store"
+name = "mem0"
 version = "0.1.0"
 description = "Mem0-based memory store service with multi-agent support and Cohere Compass vector store"
 readme = "README.md"
@@ -59,7 +59,7 @@ all = [
 ]
 
 [project.scripts]
-memory-store = "app.cli:main"
+mem0 = "app.cli:main"
 
 # ============================================================
 # BUILD
