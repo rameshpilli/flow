@@ -55,11 +55,12 @@ import app.tools.databricks_tools
 # Log registered tools
 from app.utils.startup_diagnostics import log_tool_registration
 tool_names = [
-    "databricks_list_tables",
-    "databricks_get_schema",
-    "databricks_execute_query",
-    "databricks_clear_cache",
-    "databricks_cache_stats",
+    "databricks_list_tables",      # Wraps: sql_db_list_tables
+    "databricks_get_schema",        # Wraps: sql_db_schema
+    "databricks_execute_query",     # Wraps: sql_db_query (with validation)
+    "databricks_query_checker",     # Wraps: sql_db_query_checker
+    "databricks_clear_cache",       # Custom: Cache management
+    "databricks_cache_stats",       # Custom: Cache stats
 ]
 log_tool_registration(tool_names)
 

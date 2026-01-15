@@ -1,25 +1,29 @@
 # Databricks SQL MCP Server
 
-Natural language SQL querying for Databricks via Model Context Protocol (MCP).
+MCP server wrapping **LangChain's SQLDatabaseToolkit** for natural language SQL querying of Databricks SQL warehouses. Exposes battle-tested LangChain tools via MCP's HTTP transport.
 
 ## Features
 
-- 🔒 **Read-only** - SELECT queries only, no data modification
-- ⚡ **Redis caching** - Built-in with configurable TTLs
+- 🔗 **LangChain Integration** - Wraps LangChain's battle-tested SQLDatabaseToolkit
+- 🔒 **Read-only** - SELECT queries only (validated before LangChain)
+- ⚡ **Redis caching** - Layer on top of LangChain tools
 - 🔑 **JWT auth** - Optional authentication support  
 - ☸️ **K8s ready** - Complete Helm charts + Helios deployment
 - 🏥 **Health checks** - Liveness and readiness probes
 - 📊 **Monitoring** - Cache stats and diagnostics
 
-## MCP Tools
+## MCP Tools (Wrapping LangChain)
 
-| Tool | Description |
-|------|-------------|
-| `databricks_list_tables` | List available tables in catalog/schema |
-| `databricks_get_schema` | Get table column names and types |
-| `databricks_execute_query` | Execute SELECT queries (read-only) |
-| `databricks_clear_cache` | Clear cached data |
-| `databricks_cache_stats` | View cache performance metrics |
+| Tool | LangChain Tool | Description |
+|------|----------------|-------------|
+| `databricks_list_tables` | `sql_db_list_tables` | List available tables via LangChain |
+| `databricks_get_schema` | `sql_db_schema` | Get table schemas via LangChain |
+| `databricks_execute_query` | `sql_db_query` | Execute SELECT queries via LangChain (with validation) |
+| `databricks_query_checker` | `sql_db_query_checker` | Validate queries using LangChain |
+| `databricks_clear_cache` | N/A (custom) | Clear Redis cache layer |
+| `databricks_cache_stats` | N/A (custom) | View cache performance metrics |
+
+**Architecture**: MCP tools → Cache layer → LangChain SQLDatabaseToolkit → Databricks SQL
 
 ## Quick Start
 
@@ -142,17 +146,23 @@ databricks_execute_query(
 └────┬─────┘                                    
      │ HTTP/MCP                                 
      ▼                                          
-┌─────────────────────┐                         
-│  MCP Server + Redis │                         
-│  ┌────────────────┐ │                         
-│  │ FastMCP Tools  │ │                         
-│  └────────┬───────┘ │                         
-└───────────┼─────────┘                         
-            │ SQL                               
-            ▼                                   
-┌─────────────────────┐                         
-│  Databricks SQL     │                         
-└─────────────────────┘                         
+┌─────────────────────────────────┐                         
+│  MCP Server + Redis Cache       │                         
+│  ┌────────────────────────────┐ │                         
+│  │ MCP Tools (FastMCP)        │ │                         
+│  │   │                        │ │
+│  │   ▼                        │ │                         
+│  │ LangChain SQLDatabaseToolkit│ │
+│  │ (battle-tested SQL tools)  │ │                         
+│  └────────────┬───────────────┘ │                         
+└───────────────┼─────────────────┘                         
+                │ SQL                               
+                ▼                                   
+┌───────────────────────────────┐                         
+│  Databricks SQL Warehouse     │                         
+└───────────────────────────────┘                         
+
+Flow: LLM → MCP → Cache Check → LangChain Tools → Databricks
 ```
 
 ## Project Structure
