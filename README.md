@@ -304,14 +304,15 @@ make format
 ## 📁 Project Structure
 
 ```
-memory_store/
-├── memory_store/          # Source code package
+memory-store/
+├── app/                  # Source code package
 │   ├── api.py            # FastAPI application
 │   ├── service.py        # Core memory logic
 │   ├── config.py         # Configuration
 │   ├── client.py         # Python client
 │   └── ...
-├── helm/                  # Helm chart (Corporate K8s)
+├── docs/                 # Documentation (11 guides)
+├── helm/                 # Helm chart (Corporate K8s)
 │   ├── Chart.yaml
 │   ├── values.yaml
 │   ├── environments/     # DEV/QAT/PROD configs
@@ -319,12 +320,11 @@ memory_store/
 ├── helios/               # Helios deployment (Corporate)
 │   ├── env-config.yml    # Environment targets
 │   └── deploy.sh         # Deployment script
-├── deployments/          # Docker configurations
-│   ├── Dockerfile.corporate  # Corporate Dockerfile (RBC)
-│   └── docker-compose.yml    # Local development
-├── docs/                 # Documentation
 ├── tests/                # Test suite
-└── examples/             # Code examples
+├── examples/             # Code examples
+├── Dockerfile            # Corporate Dockerfile (RBC)
+├── docker-compose.yml    # Local development stack
+└── .env.example          # Environment template
 ```
 
 **See: [STRUCTURE.md](STRUCTURE.md)** for detailed explanation
@@ -335,7 +335,7 @@ memory_store/
 
 ```python
 from agentorchestrator import Agent
-from memory_store import MemoryStoreClient
+from app import MemoryStoreClient
 
 class MemoryAugmentedAgent(Agent):
     def __init__(self, **kwargs):

@@ -65,10 +65,10 @@ memory-store = "app.cli:main"
 # BUILD
 # ============================================================
 [tool.hatch.build.targets.wheel]
-packages = ["memory_store"]
+packages = ["app"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/memory_store", "/tests"]
+include = ["/app", "/tests"]
 
 # ============================================================
 # RUFF - Linting & Formatting
@@ -90,7 +90,7 @@ ignore = [
 "tests/*" = ["S101"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["memory_store"]
+known-first-party = ["app"]
 
 # ============================================================
 # PYTEST
@@ -111,7 +111,7 @@ filterwarnings = ["ignore::DeprecationWarning"]
 # COVERAGE
 # ============================================================
 [tool.coverage.run]
-source = ["memory_store"]
+source = ["app"]
 branch = true
 omit = ["*/tests/*", "*/__init__.py"]
 

@@ -5,23 +5,23 @@ Clean, organized folder structure following Python packaging standards.
 ## Directory Layout
 
 ```
-memory_store/
+memory-store/
 │
-├── 📦 app/                       # Source code package
+├── 📦 app/                       # Source code package (6 files)
 │   ├── __init__.py               # Package initialization & exports
 │   ├── api.py                    # FastAPI REST API
 │   ├── service.py                # Core mem0 business logic
 │   ├── config.py                 # Configuration management
 │   ├── client.py                 # Python client library
-│   ├── cli.py                    # Command-line interface
-│   └── llm_adapter.py            # LLM Gateway integration
+│   └── cli.py                    # Command-line interface
 │
-├── 📚 docs/                      # Documentation
+├── 📚 docs/                      # Documentation (11 files)
 │   ├── README.md                 # Documentation index
 │   ├── QUICKSTART.md             # 5-minute setup guide
-│   ├── USER_GUIDE.md             # Connection & troubleshooting
+│   ├── USER_GUIDE.md             # API usage & client examples
 │   ├── INTEGRATION.md            # AgentOrchestrator integration
-│   ├── DEPLOYMENT.md             # Complete deployment guide
+│   ├── CORPORATE_DEPLOYMENT.md   # Helm + Helios deployment ⭐
+│   ├── DEPLOYMENT.md             # Kubernetes deployment (standard)
 │   ├── DEPLOYMENT_ARCHITECTURE.md # Pod/container layout
 │   ├── ARCHITECTURE.md           # System design & data flow
 │   ├── GRAPHRAG_GUIDE.md         # Memgraph GraphRAG setup
@@ -30,7 +30,6 @@ memory_store/
 │
 ├── 🐳 Dockerfile                 # Corporate container image (RBC)
 ├── 🐳 docker-compose.yml         # Local development stack
-├── 🐳 .dockerignore              # Docker build exclusions
 │
 ├── ⎈ helm/                       # Helm chart (Corporate K8s)
 │   ├── Chart.yaml                # Chart metadata
@@ -56,21 +55,17 @@ memory_store/
 │   ├── env-config.yml            # Environment targets
 │   └── deploy.sh                 # Deployment script
 │
-├── 🧪 tests/                     # Test suite
-│   ├── __init__.py
-│   ├── conftest.py               # Pytest fixtures
-│   ├── test_config.py            # Configuration tests
-│   └── test_service.py           # Service logic tests
-│
 ├── 📝 examples/                  # Code examples
 │   ├── README.md                 # Examples guide
 │   └── basic_usage.py            # Working examples
 │
 ├── 📄 Root Files
-│   ├── README.md                 # Main project readme
+│   ├── README.md                 # Main project readme ⭐
 │   ├── pyproject.toml            # Python project config
 │   ├── Makefile                  # Development commands
-│   ├── env.example               # Environment template
+│   ├── HELM_QUICKSTART.md        # Quick Helm reference
+│   ├── .env.example              # Environment template
+│   ├── .dockerignore             # Docker build exclusions
 │   └── .gitignore                # Git exclusions
 │
 └── STRUCTURE.md                  # This file
@@ -78,28 +73,27 @@ memory_store/
 
 ## File Count
 
-- **Source Code**: 7 files
-- **Documentation**: 11 files (10 guides + 1 index)
-- **Deployment**: 3 files (Dockerfile, compose, ignore)
-- **Helm Chart**: 16 files (chart, values, templates)
-- **Helios**: 2 files (config, deploy script)
-- **Tests**: 4 files
-- **Examples**: 2 files
-- **Config**: 5 files (pyproject, Makefile, env, structure, quickstart)
+- **Source Code**: 6 files (app/)
+- **Documentation**: 11 files (docs/)
+- **Deployment**: 3 files (Dockerfile, docker-compose.yml, .dockerignore)
+- **Helm Chart**: 16 files (helm/)
+- **Helios**: 2 files (helios/)
+- **Examples**: 2 files (examples/)
+- **Config**: 6 files (pyproject, Makefile, .env.example, .gitignore, HELM_QUICKSTART, STRUCTURE)
 
-**Total**: 50 files across 8 directories
+**Total**: ~46 files across 6 directories
 
 ## Key Principles
 
 ### 1. **Separation of Concerns**
-- Source code in `memory_store/`
+- Source code in `app/`
 - Documentation in `docs/`
-- Deployment configs in `deployments/`
-- Tests in `tests/`
+- Deployment at root level (Dockerfile, docker-compose.yml)
+- Examples in `examples/`
 
 ### 2. **Standard Python Package**
 - Follows PEP 518 (pyproject.toml)
-- Importable as: `from memory_store import MemoryStoreClient`
+- Importable as: `from app import MemoryStoreClient`
 - Installable via: `pip install -e .`
 
 ### 3. **Clear Entry Points**
@@ -107,10 +101,10 @@ memory_store/
 - Documentation index at `docs/README.md`
 - Examples at `examples/README.md`
 
-### 4. **Self-Contained Deployments**
-- Docker configs in `deployments/`
-- Kubernetes manifests in `k8s/`
-- Clear separation from source code
+### 4. **Production Ready**
+- Corporate Dockerfile at root
+- Helm chart for Kubernetes
+- Helios deployment automation
 
 ## Common Commands
 
@@ -120,7 +114,7 @@ memory_store/
 pip install -e .
 
 # Run locally
-python -m memory_store.cli --reload
+python -m app.cli --reload
 
 # Or with Makefile
 make dev
@@ -132,10 +126,10 @@ make dev
 make docker-build
 
 # Run with compose (local development)
-docker-compose -f deployments/docker-compose.yml up -d
-
-# Or with Makefile
 make docker-compose-up
+
+# View logs
+make docker-compose-logs
 ```
 
 ### Kubernetes (Helm - Corporate)
@@ -157,11 +151,17 @@ helm install memory-store ./helm/ \
 
 ### Testing
 ```bash
-# Run tests
-pytest tests/
+# Install dev dependencies
+pip install -e ".[dev]"
 
-# Or with Makefile
-make test
+# Run tests (when available)
+pytest
+
+# Lint code
+make lint
+
+# Format code
+make format
 ```
 
 ## Import Structure
@@ -169,9 +169,9 @@ make test
 ### From Source
 ```python
 # Import from package
-from memory_store import MemoryStoreClient
-from memory_store.config import get_config
-from memory_store.service import MemoryStoreService
+from app import MemoryStoreClient
+from app.config import get_config
+from app.service import MemoryStoreService
 ```
 
 ### CLI Usage
@@ -180,7 +180,7 @@ from memory_store.service import MemoryStoreService
 memory-store --help
 
 # Or via Python module
-python -m memory_store.cli --help
+python -m app.cli --help
 ```
 
 ## Documentation Organization
@@ -191,8 +191,8 @@ python -m memory_store.cli --help
 3. **Integration**: `docs/INTEGRATION.md`
 
 ### For Operators
-1. **Understanding Architecture**: `docs/DEPLOYMENT_ARCHITECTURE.md`
-2. **Deploying**: `docs/DEPLOYMENT.md`
+1. **Corporate Deployment**: `docs/CORPORATE_DEPLOYMENT.md` ⭐
+2. **Understanding Architecture**: `docs/DEPLOYMENT_ARCHITECTURE.md`
 3. **Advanced Features**: `docs/GRAPHRAG_GUIDE.md`
 
 ### For Developers
@@ -227,79 +227,40 @@ python -m memory_store.cli --help
 - Linters work correctly
 - Type checkers happy
 
-## Comparison
-
-### Before (Flat Structure - Original)
-```
-memory_store/
-├── __init__.py
-├── api.py
-├── service.py
-├── config.py
-├── client.py
-├── README.md
-├── QUICKSTART.md
-├── USER_GUIDE.md
-├── INTEGRATION.md
-├── DEPLOYMENT.md
-├── ARCHITECTURE.md
-├── Dockerfile
-├── docker-compose.yml
-├── ... (38 files at root!)
-└── Overwhelming! 😵
-```
-
-### After (Organized Structure - Current)
-```
-memory_store/
-├── app/                # Source code package
-├── docs/               # Documentation (11 files)
-├── helm/               # Helm chart (corporate K8s)
-├── helios/             # Helios deployment (RBC)
-├── tests/              # Tests
-├── examples/           # Examples
-├── Dockerfile          # Corporate Dockerfile
-├── docker-compose.yml  # Local development
-├── .dockerignore       # Docker ignore
-├── README.md           # Main readme
-├── pyproject.toml      # Project config
-├── Makefile            # Build commands
-└── Clean & Professional! ✨
-```
-
 ## Navigation Tips
 
 ### Finding Things
-- **Need to deploy?** → Check `deployments/` and `k8s/`
+- **Need to deploy?** → Check `Dockerfile`, `helm/`, and `helios/`
 - **Need docs?** → Check `docs/` folder
-- **Need code?** → Check `memory_store/` package
+- **Need code?** → Check `app/` package
 - **Need examples?** → Check `examples/` folder
 
 ### Reading Documentation
 1. Start with root `README.md`
 2. Quick setup: `docs/QUICKSTART.md`
-3. Full docs index: `docs/README.md`
-4. Specific topics: Browse `docs/` folder
+3. Corporate deployment: `docs/CORPORATE_DEPLOYMENT.md`
+4. Full docs index: `docs/README.md`
+5. Specific topics: Browse `docs/` folder
 
 ### Working with Code
-1. Source: `memory_store/` package
-2. Tests: `tests/` folder
-3. Config: `pyproject.toml`
-4. Build: `Makefile`
+1. Source: `app/` package
+2. Config: `pyproject.toml`
+3. Build: `Makefile`
+4. Examples: `examples/` folder
 
 ## Maintainers
 
 When adding new content:
-- **New source file** → Add to `memory_store/`
+- **New source file** → Add to `app/`
 - **New documentation** → Add to `docs/`
-- **New deployment** → Add to `deployments/` or `k8s/`
-- **New test** → Add to `tests/`
+- **New deployment** → Update `helm/` or `helios/`
 - **New example** → Add to `examples/`
+- **New test** → Create `tests/` folder and use pytest
 
 Update this file when structure changes!
 
 ---
 
-**Last Updated**: 2026-01-14  
+**Last Updated**: 2026-01-15  
 **Version**: 0.1.0  
 **Structure**: Standard Python Package Layout

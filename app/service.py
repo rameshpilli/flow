@@ -10,7 +10,6 @@ from typing import Any
 from mem0 import Memory
 
 from app.config import MemoryStoreConfig, get_config
-from app.llm_adapter import create_llm_adapter_from_config
 
 logger = logging.getLogger(__name__)
 
