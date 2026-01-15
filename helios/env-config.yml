@@ -1,0 +1,45 @@
+# Environment configuration for Helios deployment
+# Read more: https://rbcgithub.fg.rbc.com/pages/rbc-to/a0d0-helios-docs/docs/Deploy-Your-Application/Deployment-Concepts/Env-Config
+compute-fabric:
+  environments:
+    # dev, qat, uat, and prod are the standard environments
+    - name: dev
+      ucp:
+        cluster:   ucpdev01.fg.rbc.com
+        namespace: isa0-dev  # Update with your namespace
+        k8s:
+          processing:
+            helm:
+              command: |
+                helm template ./helm/  \
+                  --values ./helm/environments/dev/values.yaml \
+                  --set ghActionInput.imageTag="${CUSTOM_APP_IMAGE_TAG}" \
+                  --set ghActionInput.imageName="${CUSTOM_APP_IMAGE_NAME}"
+    - name: qat
+      ucp:
+        cluster:   ucpqa01.saifg.rbc.com
+        namespace: isa0-qat  # Update with your namespace
+        k8s:
+          processing:
+            helm:
+              command: |
+                helm template ./helm/  \
+                  --values ./helm/environments/qat/values.yaml \
+                  --set ghActionInput.imageTag="${CUSTOM_APP_IMAGE_TAG}" \
+                  --set ghActionInput.imageName="${CUSTOM_APP_IMAGE_NAME}"
+    - name: uat
+      ucp:
+        cluster:   ucpqa01.saifg.rbc.com
+        namespace: isa0-uat  # Update with your namespace
+    - name: prod
+      ucp:
+        cluster:   ucpprod04.fg.rbc.com
+        namespace: isa0-prod  # Update with your namespace
+        k8s:
+          processing:
+            helm:
+              command: |
+                helm template ./helm/  \
+                  --values ./helm/environments/prod/values.yaml \
+                  --set ghActionInput.imageTag="${CUSTOM_APP_IMAGE_TAG}" \
+                  --set ghActionInput.imageName="${CUSTOM_APP_IMAGE_NAME}"

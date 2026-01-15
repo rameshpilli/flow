@@ -1,0 +1,53 @@
+# Helios Project Configuration
+name: dbx-sql-mcp
+description: Databricks SQL MCP Server - Natural language querying for Databricks SQL warehouses
+
+# GitHub repository information
+repository:
+  url: https://rbcgithub.fg.rbc.com/your-org/dbx-sql-mcp  # Update with actual repo URL
+
+# Build configuration
+build:
+  dockerfile: Dockerfile
+  context: .
+  
+# Deployment configuration
+deployment:
+  platform: compute-fabric
+  config: helios/env-config.yml
+  script: helios/deploy.sh
+
+# Artifacts
+artifacts:
+  helm:
+    - helm/
+  generic:
+    - artifacts/  # Optional artifacts directory
+
+# Service accounts (update with actual accounts)
+service_accounts:
+  dev: dbx-sa-dev
+  qat: dbx-sa-qat
+  prod: dbx-sa-prod
+
+# Notifications (optional)
+notifications:
+  slack:
+    enabled: false
+    channel: "#deployments"
+
+# Dependencies (optional)
+dependencies:
+  - redis
+  - databricks-sql-warehouse
+
+# Metadata
+metadata:
+  team: Platform Engineering
+  owner: your-team@rbc.com
+  oncall: your-oncall-rotation
+  tags:
+    - mcp
+    - databricks
+    - sql
+    - ai-integration
