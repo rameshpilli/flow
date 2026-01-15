@@ -7,6 +7,7 @@
 !/.gitignore
 !/.github
 !/README.md
+!/README_COHERE_TEST.md
 !/STRUCTURE.md
 !/HELM_QUICKSTART.md
 !/Makefile
@@ -16,6 +17,7 @@
 !/helm
 !/helios
 !/examples
+!/tests
 
 # Python
 app/__pycache__/
