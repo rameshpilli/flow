@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class MemoryStoreService:
     """
-    Memory Store Service using mem0 with Cohere Compass vector store.
+    Memory Store Service using mem0 with Cohere and Qdrant.
 
     Provides multi-agent memory isolation where each agent gets its own
     namespace/user_id in the memory system.
@@ -25,7 +25,7 @@ class MemoryStoreService:
     - Per-agent memory isolation
     - Semantic search using Cohere embeddings
     - Qdrant vector store backend
-    - LLM Gateway integration
+    - Optional Memgraph graph store
     - Kubernetes-ready
     """
 
@@ -41,7 +41,7 @@ class MemoryStoreService:
         self._initialize_memory()
 
     def _initialize_memory(self):
-        """Initialize mem0 with Cohere Compass and Qdrant."""
+        """Initialize mem0 with Cohere and Qdrant."""
         try:
             # Build mem0 configuration
             mem0_config = {
@@ -69,24 +69,13 @@ class MemoryStoreService:
                         "embedding_dims": self.config.qdrant.vector_size,
                     },
                 },
-                # LLM configuration (optional, for memory processing)
-                "llm": {
-                    "provider": "openai",  # Use OpenAI-compatible interface
-                    "config": {
-                        "model": self.config.llm.model_name,
-                        "temperature": self.config.llm.temperature,
-                        "max_tokens": self.config.llm.max_tokens,
-                        # If LLM gateway is configured, we'll use a custom provider
-                        # For now, this is a placeholder
-                    },
-                },
             }
 
             # Add graph store if enabled
             if self.config.mem0.graph_store_enabled:
                 provider = self.config.mem0.graph_store_provider.lower()
                 
-                if provider == "memgraph":
+                if provider in ["memgraph", "neo4j"]:
                     mem0_config["graph_store"] = {
                         "provider": "neo4j",  # Mem0 uses neo4j driver for both
                         "config": {
@@ -95,18 +84,7 @@ class MemoryStoreService:
                             "password": self.config.memgraph.password,
                         },
                     }
-                    logger.info(f"Graph store enabled with Memgraph: {self.config.memgraph.host}")
-                elif provider == "neo4j":
-                    # Legacy Neo4j support
-                    mem0_config["graph_store"] = {
-                        "provider": "neo4j",
-                        "config": {
-                            "url": self.config.memgraph.connection_url,
-                            "username": self.config.memgraph.username,
-                            "password": self.config.memgraph.password,
-                        },
-                    }
-                    logger.info("Graph store enabled with Neo4j")
+                    logger.info(f"Graph store enabled: {provider} at {self.config.memgraph.host}")
                 else:
                     logger.warning(f"Unknown graph store provider: {provider}, graph store disabled")
 
@@ -297,7 +275,6 @@ class MemoryStoreService:
 
         try:
             # Check Qdrant connection
-            # Note: This would need actual Qdrant client check
             status["components"]["qdrant"] = {
                 "status": "healthy",
                 "url": self.config.qdrant.url,
@@ -307,12 +284,6 @@ class MemoryStoreService:
             status["components"]["cohere"] = {
                 "status": "healthy" if self.config.cohere.is_configured else "unconfigured",
                 "model": self.config.cohere.embedding_model,
-            }
-
-            # Check LLM Gateway
-            status["components"]["llm_gateway"] = {
-                "status": "healthy" if self.config.llm.is_configured else "unconfigured",
-                "url": self.config.llm.server_url,
             }
             
             # Check Memgraph (if enabled)

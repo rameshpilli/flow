@@ -3,8 +3,9 @@ Memory Store Service
 
 A production-ready mem0-based memory store service with:
 - Multi-agent memory isolation
-- Cohere Compass vector store
-- LLM Gateway integration
+- Cohere embeddings
+- Qdrant vector store
+- Optional Memgraph graph store
 - Kubernetes-ready deployment
 - RESTful API
 

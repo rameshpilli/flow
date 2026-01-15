@@ -1,4 +1,17 @@
-# Ignore everything in parent directory except ChainServer
+# Ignore everything in parent directory except our project files
 /*
-!/ChainServer
-!.gitignore
+!/Dockerfile
+!/docker-compose.yml
+!/.env.example
+!/.dockerignore
+!/.gitignore
+!/README.md
+!/STRUCTURE.md
+!/HELM_QUICKSTART.md
+!/Makefile
+!/pyproject.toml
+!/app
+!/docs
+!/helm
+!/helios
+!/examples

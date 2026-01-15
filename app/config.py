@@ -31,46 +31,14 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class LLMGatewayConfig(BaseSettings):
-    """LLM Gateway configuration for embedding generation."""
-
-    model_config = SettingsConfigDict(env_prefix="LLM_", case_sensitive=False)
-
-    server_url: str = Field(default="", description="LLM API endpoint")
-    model_name: str = Field(default="gpt-4", description="Model to use")
-    temperature: float = Field(default=0.0, description="Generation temperature")
-    max_tokens: int = Field(default=4096, description="Max tokens")
-    timeout: float = Field(default=60.0, description="Request timeout")
-
-    # OAuth authentication
-    oauth_endpoint: str | None = Field(default=None, description="OAuth token endpoint")
-    client_id: str | None = Field(default=None, description="OAuth client ID")
-    client_secret: str | None = Field(default=None, description="OAuth client secret")
-
-    # API Key authentication (alternative)
-    api_key: str | None = Field(default=None, description="API key")
-
-    @property
-    def is_configured(self) -> bool:
-        """Check if LLM is properly configured."""
-        has_server = bool(self.server_url)
-        has_auth = bool(self.api_key) or all(
-            [self.oauth_endpoint, self.client_id, self.client_secret]
-        )
-        return has_server and has_auth
-
-
 class CohereConfig(BaseSettings):
-    """Cohere Compass configuration."""
+    """Cohere configuration for embeddings."""
 
     model_config = SettingsConfigDict(env_prefix="COHERE_", case_sensitive=False)
 
     api_key: str = Field(default="", description="Cohere API key")
     embedding_model: str = Field(
         default="embed-english-v3.0", description="Cohere embedding model"
-    )
-    search_model: str = Field(
-        default="rerank-english-v3.0", description="Cohere rerank model"
     )
 
     @property
@@ -80,7 +48,7 @@ class CohereConfig(BaseSettings):
 
 
 class QdrantConfig(BaseSettings):
-    """Qdrant vector store configuration for Cohere Compass."""
+    """Qdrant vector store configuration."""
 
     model_config = SettingsConfigDict(env_prefix="QDRANT_", case_sensitive=False)
 
@@ -105,7 +73,7 @@ class QdrantConfig(BaseSettings):
 
 
 class MemgraphConfig(BaseSettings):
-    """Memgraph graph store configuration."""
+    """Memgraph graph store configuration (optional)."""
 
     model_config = SettingsConfigDict(env_prefix="MEMGRAPH_", case_sensitive=False)
 
@@ -155,14 +123,6 @@ class Mem0Config(BaseSettings):
     search_limit: int = Field(default=10, description="Default search limit")
     search_threshold: float = Field(default=0.7, description="Search similarity threshold")
 
-    # Memory management
-    auto_prune_enabled: bool = Field(
-        default=False, description="Enable automatic memory pruning"
-    )
-    prune_threshold_days: int = Field(
-        default=90, description="Days before pruning old memories"
-    )
-
 
 class ServiceConfig(BaseSettings):
     """Service configuration."""
@@ -194,7 +154,6 @@ class MemoryStoreConfig(BaseSettings):
     model_config = SettingsConfigDict(case_sensitive=False)
 
     # Sub-configurations
-    llm: LLMGatewayConfig = Field(default_factory=LLMGatewayConfig)
     cohere: CohereConfig = Field(default_factory=CohereConfig)
     qdrant: QdrantConfig = Field(default_factory=QdrantConfig)
     memgraph: MemgraphConfig = Field(default_factory=MemgraphConfig)
@@ -205,7 +164,6 @@ class MemoryStoreConfig(BaseSettings):
         """Initialize with nested configs from environment."""
         super().__init__(**kwargs)
         # Load nested configs from environment
-        self.llm = LLMGatewayConfig()
         self.cohere = CohereConfig()
         self.qdrant = QdrantConfig()
         self.memgraph = MemgraphConfig()
@@ -227,24 +185,13 @@ class MemoryStoreConfig(BaseSettings):
         if not self.qdrant.is_configured:
             errors.append("Qdrant URL is required (QDRANT_URL)")
 
-        if not self.llm.is_configured:
-            logger.warning(
-                "LLM Gateway not configured - will use Cohere embeddings directly"
-            )
-
         return len(errors) == 0, errors
 
     def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary (for debugging, excludes secrets)."""
         return {
-            "llm": {
-                "server_url": self.llm.server_url,
-                "model_name": self.llm.model_name,
-                "is_configured": self.llm.is_configured,
-            },
             "cohere": {
                 "embedding_model": self.cohere.embedding_model,
-                "search_model": self.cohere.search_model,
                 "is_configured": self.cohere.is_configured,
             },
             "qdrant": {
@@ -317,7 +264,6 @@ def set_config(config: MemoryStoreConfig) -> None:
 
 __all__ = [
     "MemoryStoreConfig",
-    "LLMGatewayConfig",
     "CohereConfig",
     "QdrantConfig",
     "MemgraphConfig",
