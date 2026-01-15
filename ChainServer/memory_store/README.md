@@ -1,497 +1,442 @@
-# Memory Store Service
+# Memory Store - Production AI Agent Memory Service
 
-A production-ready, Kubernetes-native memory management service built on [mem0](https://mem0.ai/) with Cohere Compass vector store. Designed for multi-agent systems where each agent maintains isolated memory spaces.
+Production-ready memory management service for AI agents, powered by mem0, Qdrant, and Memgraph.
 
-## Features
+## 🎯 Overview
 
-- **Multi-Agent Memory Isolation**: Each agent gets its own namespace with complete isolation
-- **Semantic Search**: Powered by Cohere's embed-v3 embeddings for intelligent memory retrieval
-- **Qdrant Vector Store**: High-performance vector database for scalable memory storage
-- **LLM Gateway Integration**: Connects to your existing LLM infrastructure
-- **Kubernetes-Ready**: Production-grade deployment configurations with health checks, autoscaling, and monitoring
-- **RESTful API**: Clean, documented API for memory operations
-- **Docker Support**: Both standalone and compose configurations
+Memory Store provides a centralized, scalable memory service for AI agents with:
 
-## Architecture
+- **Multi-Agent Isolation**: Each agent gets its own memory space
+- **Semantic Search**: Find relevant memories using vector similarity
+- **Graph Memory** (Optional): Knowledge graphs for complex reasoning with Memgraph
+- **Production Ready**: Kubernetes-native with Helm + Helios deployment
+- **Corporate Integration**: Built for RBC corporate environment
+
+## ✨ Key Features
+
+- 🧠 **Persistent Agent Memory** - Long-term memory across sessions
+- 🔍 **Semantic Search** - Context-aware memory retrieval
+- 🌐 **Multi-Agent Support** - Isolated memory spaces per agent
+- 📊 **Vector + Graph Storage** - Qdrant + Memgraph
+- 🚀 **Auto-Scaling** - HPA for production workloads
+- 🔐 **Secure** - Vault integration for secrets
+- 📈 **Observable** - Health checks, logging, metrics
+
+## 🏗️ Architecture
 
 ```
-┌─────────────────┐
-│   Agent 1       │
-│   (agent_id_1)  │
-└────────┬────────┘
-         │
-         ├─────────────┐
-         │             │
-┌────────▼─────────────▼────────┐
-│   Memory Store API Service    │
-│   (FastAPI + mem0)            │
-└────────┬──────────────────────┘
-         │
-         ├──────────┬──────────┐
-         │          │          │
-    ┌────▼───┐  ┌──▼───┐  ┌──▼───────┐
-    │ Cohere │  │Qdrant│  │   LLM    │
-    │Embedder│  │Vector│  │ Gateway  │
-    │        │  │ DB   │  │(Optional)│
-    └────────┘  └──────┘  └──────────┘
+┌─────────────────────────────────────────────────────────┐
+│              Memory Store Service                        │
+├─────────────────────────────────────────────────────────┤
+│                                                           │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
+│  │ Memory Store │  │   Qdrant     │  │  Memgraph    │  │
+│  │   (FastAPI)  │──│ (Vector DB)  │  │ (Graph DB)   │  │
+│  │              │  │              │  │  (Optional)   │  │
+│  └──────┬───────┘  └──────────────┘  └──────────────┘  │
+│         │                                                │
+│         ├─► LLM Gateway (Corporate)                     │
+│         └─► Cohere (Embeddings)                         │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## Important: Qdrant is Included!
+## 🚀 Quick Start
 
-**You don't need to deploy Qdrant separately.** When you deploy Memory Store, Qdrant is automatically included:
+### For Corporate Deployment (Helm + Helios)
 
-- ✅ Docker Compose: Qdrant starts automatically (see `docker-compose.yml`)
-- ✅ Kubernetes: Qdrant deploys in the same namespace (see `k8s/qdrant-deployment.yaml`)
+**See: [docs/CORPORATE_DEPLOYMENT.md](docs/CORPORATE_DEPLOYMENT.md)** for complete guide
 
-Your agents only connect to the Memory Store API. The service handles all communication with Qdrant internally.
+```bash
+# 1. Build corporate Docker image
+make docker-build-corporate
+
+# 2. Template Helm chart for DEV
+make helm-template-dev
+
+# 3. Deploy via Helios
+# (Follow helios/deploy.sh instructions)
+```
+
+### For Local Development
+
+```bash
+# 1. Copy environment file
+cp env.example .env
+
+# 2. Edit .env with your credentials
+vim .env
+
+# 3. Start with Docker Compose
+make docker-compose-up
+
+# 4. Verify
+curl http://localhost:8000/health
+```
 
 ## 📚 Documentation
 
-| Document | Description |
-|----------|-------------|
-| **[docs/QUICKSTART.md](docs/QUICKSTART.md)** | Get started in 5 minutes |
-| **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)** | How to connect from your agents |
-| **[docs/INTEGRATION.md](docs/INTEGRATION.md)** | AgentOrchestrator integration guide |
-| **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** | Complete deployment guide |
-| **[docs/DEPLOYMENT_ARCHITECTURE.md](docs/DEPLOYMENT_ARCHITECTURE.md)** | Pod/container layout explained |
-| **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** | Architecture and design details |
-| **[docs/GRAPHRAG_GUIDE.md](docs/GRAPHRAG_GUIDE.md)** | GraphRAG setup (optional) |
-| **[docs/FEATURES.md](docs/FEATURES.md)** | Complete feature list |
-| **[docs/PROJECT_SUMMARY.md](docs/PROJECT_SUMMARY.md)** | Technical overview |
-| **[examples/](examples/)** | Code examples |
+### Getting Started
+- **[Quick Start (5 min)](docs/QUICKSTART.md)** - Get running locally
+- **[User Guide](docs/USER_GUIDE.md)** - Connect agents and use the API
+- **[Integration Guide](docs/INTEGRATION.md)** - Integrate with AgentOrchestrator
 
-## Quick Start
+### Corporate Deployment
+- **[Corporate Deployment](docs/CORPORATE_DEPLOYMENT.md)** - Helm + Helios deployment (⭐ Start here for corp env)
+- **[Deployment Architecture](docs/DEPLOYMENT_ARCHITECTURE.md)** - Pod/container layout
+- **[Standard Deployment](docs/DEPLOYMENT.md)** - Kubernetes deployment (non-corporate)
 
-### Local Development with Docker Compose
+### Technical Details
+- **[Architecture](docs/ARCHITECTURE.md)** - System design and data flow
+- **[Features](docs/FEATURES.md)** - Complete feature list
+- **[GraphRAG Guide](docs/GRAPHRAG_GUIDE.md)** - Graph memory setup
+- **[Project Summary](docs/PROJECT_SUMMARY.md)** - Technical overview
 
-1. **Copy environment variables**:
-   ```bash
-   cp env.example .env
-   ```
+### Structure
+- **[Project Structure](STRUCTURE.md)** - Folder organization explained
 
-2. **Edit `.env` and set required values**:
-   ```bash
-   COHERE_API_KEY=your_cohere_api_key_here
-   ```
-
-3. **Start the services**:
-   ```bash
-   docker-compose -f deployments/docker-compose.yml up -d
-   ```
-
-4. **Access the API**:
-   - API: http://localhost:8000
-   - Docs: http://localhost:8000/docs
-   - Health: http://localhost:8000/health
-   - Qdrant UI: http://localhost:6333/dashboard
-
-### Local Development without Docker
-
-1. **Install dependencies**:
-   ```bash
-   pip install -e .
-   ```
-
-2. **Start Qdrant** (in a separate terminal):
-   ```bash
-   docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant:latest
-   ```
-
-3. **Set environment variables**:
-   ```bash
-   export COHERE_API_KEY=your_key
-   export QDRANT_URL=http://localhost:6333
-   ```
-
-4. **Run the service**:
-   ```bash
-   memory-store
-   # or for development with auto-reload:
-   memory-store --reload --log-level DEBUG
-   ```
-
-## API Usage
-
-### Add a Memory
-
-```bash
-curl -X POST http://localhost:8000/memories \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agent_id": "agent_001",
-    "messages": "The user prefers dark mode and likes Python programming.",
-    "metadata": {
-      "category": "preferences",
-      "timestamp": "2026-01-14T10:00:00Z"
-    }
-  }'
-```
-
-### Search Memories
-
-```bash
-curl -X POST http://localhost:8000/memories/search \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agent_id": "agent_001",
-    "query": "What programming language does the user like?",
-    "limit": 5
-  }'
-```
-
-### Get All Memories for an Agent
-
-```bash
-curl -X POST http://localhost:8000/memories/search \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agent_id": "agent_001",
-    "limit": 10
-  }'
-```
-
-### Update a Memory
-
-```bash
-curl -X PUT http://localhost:8000/memories \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agent_id": "agent_001",
-    "memory_id": "mem_xyz",
-    "data": "The user prefers dark mode and loves Python and Go programming."
-  }'
-```
-
-### Delete a Memory
-
-```bash
-curl -X DELETE http://localhost:8000/memories \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agent_id": "agent_001",
-    "memory_id": "mem_xyz"
-  }'
-```
-
-### Delete All Memories for an Agent
-
-```bash
-curl -X DELETE http://localhost:8000/memories/all \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agent_id": "agent_001"
-  }'
-```
-
-## Kubernetes Deployment
-
-### Prerequisites
-
-- Kubernetes cluster (1.24+)
-- kubectl configured
-- Cohere API key
-- (Optional) Cert-manager for TLS
-- (Optional) NGINX Ingress Controller or AWS ALB
-
-### Quick Deploy
-
-1. **Create namespace**:
-   ```bash
-   kubectl apply -f k8s/namespace.yaml
-   ```
-
-2. **Create secrets**:
-   ```bash
-   kubectl create secret generic memory-store-secrets \
-     --namespace=memory-store \
-     --from-literal=COHERE_API_KEY='your_cohere_api_key' \
-     --from-literal=LLM_CLIENT_SECRET='your_llm_secret'
-   ```
-
-3. **Deploy with Kustomize**:
-   ```bash
-   # Edit k8s/kustomization.yaml to set your image registry
-   kubectl apply -k k8s/
-   ```
-
-   Or manually:
-   ```bash
-   kubectl apply -f k8s/configmap.yaml
-   kubectl apply -f k8s/qdrant-deployment.yaml
-   kubectl apply -f k8s/deployment.yaml
-   kubectl apply -f k8s/ingress.yaml  # if using ingress
-   ```
-
-4. **Verify deployment**:
-   ```bash
-   kubectl get pods -n memory-store
-   kubectl logs -n memory-store -l app=memory-store
-   ```
-
-5. **Port-forward to test** (optional):
-   ```bash
-   kubectl port-forward -n memory-store svc/memory-store-service 8000:8000
-   ```
-
-### Production Considerations
-
-#### Scaling
-
-The deployment includes a HorizontalPodAutoscaler (HPA) that scales between 3-10 replicas based on CPU and memory usage:
-
-```bash
-kubectl get hpa -n memory-store
-```
-
-#### Monitoring
-
-Add Prometheus monitoring:
-
-```yaml
-# In deployment.yaml, add annotations:
-metadata:
-  annotations:
-    prometheus.io/scrape: "true"
-    prometheus.io/port: "8000"
-    prometheus.io/path: "/metrics"
-```
-
-#### Persistence
-
-Qdrant uses a PersistentVolumeClaim. Configure storage class:
-
-```yaml
-# In k8s/qdrant-deployment.yaml
-spec:
-  storageClassName: fast-ssd  # your storage class
-  resources:
-    requests:
-      storage: 100Gi  # adjust as needed
-```
-
-#### High Availability
-
-For production:
-- Run multiple Qdrant replicas (requires Qdrant clustering)
-- Use external managed vector store (e.g., Qdrant Cloud)
-- Deploy across multiple availability zones
-- Configure pod disruption budgets
-
-## Configuration
-
-### Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `COHERE_API_KEY` | Yes | - | Cohere API key for embeddings |
-| `QDRANT_URL` | Yes | `http://localhost:6333` | Qdrant server URL |
-| `QDRANT_COLLECTION_NAME` | No | `memory_store` | Collection name |
-| `QDRANT_VECTOR_SIZE` | No | `1024` | Vector dimension (Cohere v3) |
-| `LLM_SERVER_URL` | No | - | Your LLM Gateway endpoint |
-| `LLM_OAUTH_ENDPOINT` | No | - | OAuth token endpoint |
-| `LLM_CLIENT_ID` | No | - | OAuth client ID |
-| `LLM_CLIENT_SECRET` | No | - | OAuth client secret |
-| `SERVICE_HOST` | No | `0.0.0.0` | Service bind host |
-| `SERVICE_PORT` | No | `8000` | Service port |
-| `SERVICE_WORKERS` | No | `4` | Number of workers |
-| `SERVICE_LOG_LEVEL` | No | `INFO` | Log level |
-
-See `env.example` for complete configuration options.
-
-## Integration with Your Agents
-
-### Python Client
-
-The client is included in the package (`memory_store/client.py`):
-
-```python
-from memory_store.client import MemoryStoreClient
-
-# Initialize
-memory = MemoryStoreClient(
-    base_url="http://memory-store-service:8000",
-    agent_id="finance_agent"
-)
-
-# Add memory
-await memory.add_memory(
-    "User asked about Q4 earnings for AAPL",
-    metadata={"topic": "finance", "ticker": "AAPL"}
-)
-
-# Search memory
-results = await memory.search_memories("What did user ask about Apple?")
-
-# Close when done
-await memory.close()
-```
-
-### Connection URLs
-
-| Environment | URL |
-|-------------|-----|
-| **Local (Docker Compose)** | `http://localhost:8000` |
-| **K8s (same namespace)** | `http://memory-store-service:8000` |
-| **K8s (different namespace)** | `http://memory-store-service.memory-store.svc.cluster.local:8000` |
-| **Production (Ingress)** | `https://memory-store.yourdomain.com` |
-
-**See [USER_GUIDE.md](USER_GUIDE.md)** for complete connection details and troubleshooting.
-
-### Integration with AgentOrchestrator
+## 💻 Python Client
 
 ```python
 from memory_store import MemoryStoreClient
-from agentorchestrator import Agent, ChainForge
 
-class MemoryAwareAgent(Agent):
-    def __init__(self, agent_id: str, memory_store_url: str):
-        super().__init__()
-        self.agent_id = agent_id
-        self.memory = MemoryStoreClient(memory_store_url, agent_id)
+# Create client
+client = MemoryStoreClient(
+    base_url="https://memory-store.cfk.devfg.rbc.com",  # Corporate URL
+    agent_id="trading-agent-001"
+)
+
+# Add memory
+client.add("Execute buy order for 1000 shares of AAPL at $150")
+
+# Search memories
+results = client.search("What trades did I execute?")
+for memory in results:
+    print(memory["memory"])
+
+# Get all memories
+memories = client.get_all()
+```
+
+**See: [docs/USER_GUIDE.md](docs/USER_GUIDE.md)** for complete client documentation
+
+## 🏢 Corporate Deployment
+
+### Helm Chart
+
+```bash
+# Lint chart
+make helm-lint
+
+# Template for specific environment
+make helm-template-dev    # DEV environment
+make helm-template-qat    # QAT environment
+make helm-template-prod   # PROD environment
+
+# Install
+make helm-install ENVIRONMENT=dev
+
+# Upgrade
+make helm-upgrade ENVIRONMENT=dev
+```
+
+### Helios Deployment
+
+The `helios/` directory contains corporate deployment configuration:
+
+- **`env-config.yml`** - Environment targets (dev/qat/prod)
+- **`deploy.sh`** - Deployment script with Vault integration
+
+**See: [docs/CORPORATE_DEPLOYMENT.md](docs/CORPORATE_DEPLOYMENT.md)** for step-by-step guide
+
+### Environments
+
+| Environment | URL | Namespace | Pods | Storage |
+|-------------|-----|-----------|------|---------|
+| DEV | memory-store.cfk.devfg.rbc.com | isa0-dev | 1-3 | 5Gi |
+| QAT | memory-store.cfkqa.saifg.rbc.com | isa0-qat | 2-5 | 10Gi |
+| PROD | memory-store.cfkprod.fg.rbc.com | isa0-prod | 3-10 | 50Gi |
+
+## 🐳 Docker
+
+### Standard Dockerfile
+```bash
+# Build
+make docker-build
+
+# Run with compose
+make docker-compose-up
+```
+
+### Corporate Dockerfile
+```bash
+# Build with corporate base image
+make docker-build-corporate
+
+# Uses RBC Artifactory registry:
+# - innersource-docker.artifactory.fg.rbc.com
+# - artifactory.fg.rbc.com for Python packages
+```
+
+## ☸️ Kubernetes (Corporate - Helm)
+
+### Helm Deployment
+```bash
+# Lint chart
+make helm-lint
+
+# Template for DEV
+make helm-template-dev
+
+# Install to DEV
+make helm-install ENVIRONMENT=dev
+
+# Upgrade DEV
+make helm-upgrade ENVIRONMENT=dev
+
+# Or use Helm directly
+helm install memory-store ./helm/ \
+  --values ./helm/environments/dev/values.yaml \
+  --namespace isa0-dev \
+  --create-namespace
+```
+
+**See: [docs/CORPORATE_DEPLOYMENT.md](docs/CORPORATE_DEPLOYMENT.md)** for complete deployment guide
+
+## 🔧 Configuration
+
+### Environment Variables
+
+**Core Settings:**
+```bash
+SERVICE_HOST=0.0.0.0
+SERVICE_PORT=8000
+SERVICE_WORKERS=4
+SERVICE_LOG_LEVEL=INFO
+```
+
+**LLM Gateway (Corporate):**
+```bash
+LLM_GATEWAY_BASE_URL=https://llm-gateway.fg.rbc.com
+LLM_GATEWAY_AUTH_TYPE=oauth
+LLM_GATEWAY_CLIENT_ID=<from-vault>
+LLM_GATEWAY_CLIENT_SECRET=<from-vault>
+```
+
+**Cohere (Embeddings):**
+```bash
+COHERE_API_KEY=<from-vault>
+COHERE_MODEL=embed-english-v3.0
+```
+
+**Qdrant (Vector DB):**
+```bash
+QDRANT_HOST=memory-store-qdrant
+QDRANT_PORT=6333
+QDRANT_COLLECTION_NAME=agent_memories
+```
+
+**Memgraph (Optional Graph DB):**
+```bash
+MEM0_GRAPH_STORE_ENABLED=true
+MEM0_GRAPH_STORE_PROVIDER=memgraph
+MEMGRAPH_HOST=memory-store-memgraph
+MEMGRAPH_PORT=7687
+```
+
+### Vault Secrets (Corporate)
+
+Secrets are managed in Vault at:
+```
+appcodes/ISA0/<ENV>/MEMORY-STORE/
+├── COHERE_API_KEY
+├── LLM_GATEWAY_CLIENT_ID
+├── LLM_GATEWAY_CLIENT_SECRET
+└── LLM_GATEWAY_API_KEY
+```
+
+**See: [docs/CORPORATE_DEPLOYMENT.md#vault-secrets-management](docs/CORPORATE_DEPLOYMENT.md#vault-secrets-management)**
+
+## 📊 Monitoring
+
+### Health Check
+```bash
+curl https://memory-store.cfk.devfg.rbc.com/health
+```
+
+Expected response:
+```json
+{
+  "status": "healthy",
+  "version": "0.1.0",
+  "components": {
+    "qdrant": "connected",
+    "memgraph": "connected",
+    "llm_gateway": "connected"
+  }
+}
+```
+
+### Kubernetes
+```bash
+# Check pods
+kubectl get pods -l app.kubernetes.io/name=memory-store
+
+# Check HPA
+kubectl get hpa memory-store
+
+# View logs
+kubectl logs -f deployment/memory-store
+
+# Port forward for local access
+kubectl port-forward svc/memory-store 8000:80
+```
+
+## 🧪 Testing
+
+```bash
+# Run tests
+make test
+
+# Run with coverage
+make test-cov
+
+# Lint
+make lint
+
+# Format
+make format
+```
+
+## 📁 Project Structure
+
+```
+memory_store/
+├── memory_store/          # Source code package
+│   ├── api.py            # FastAPI application
+│   ├── service.py        # Core memory logic
+│   ├── config.py         # Configuration
+│   ├── client.py         # Python client
+│   └── ...
+├── helm/                  # Helm chart (Corporate K8s)
+│   ├── Chart.yaml
+│   ├── values.yaml
+│   ├── environments/     # DEV/QAT/PROD configs
+│   └── templates/        # K8s manifests
+├── helios/               # Helios deployment (Corporate)
+│   ├── env-config.yml    # Environment targets
+│   └── deploy.sh         # Deployment script
+├── deployments/          # Docker configurations
+│   ├── Dockerfile        # Standard Dockerfile
+│   ├── Dockerfile.corporate  # Corporate Dockerfile
+│   └── docker-compose.yml
+├── docs/                 # Documentation
+├── tests/                # Test suite
+└── examples/             # Code examples
+```
+
+**See: [STRUCTURE.md](STRUCTURE.md)** for detailed explanation
+
+## 🤝 Integration Examples
+
+### With AgentOrchestrator
+
+```python
+from agentorchestrator import Agent
+from memory_store import MemoryStoreClient
+
+class MemoryAugmentedAgent(Agent):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.memory = MemoryStoreClient(
+            base_url="https://memory-store.cfkprod.fg.rbc.com",
+            agent_id=self.agent_id
+        )
     
     async def execute(self, context):
-        # Retrieve relevant memories
-        memories = await self.memory.search_memories(
-            query=context.user_query,
-            limit=5
-        )
+        # Add to memory
+        self.memory.add(f"Processed: {context.input}")
         
-        # Add memories to context
-        context.memories = memories
+        # Search relevant memories
+        past_context = self.memory.search(context.input, limit=5)
         
-        # Process with memories
-        result = await self.process_with_memory(context)
-        
-        # Store new memory
-        await self.memory.add_memory(
-            f"User query: {context.user_query}. Result: {result}"
-        )
-        
+        # Use in execution
+        result = await self.process(context, past_context)
         return result
 ```
 
-See **[docs/INTEGRATION.md](docs/INTEGRATION.md)** for more integration patterns and examples.
+**See: [docs/INTEGRATION.md](docs/INTEGRATION.md)** for more patterns
 
-## Development
+## 🚦 API Endpoints
 
-### Running Tests
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/memories` | POST | Add memory |
+| `/memories` | GET | Get all memories |
+| `/memories/search` | POST | Search memories |
+| `/memories/{memory_id}` | PUT | Update memory |
+| `/memories/{memory_id}` | DELETE | Delete memory |
+| `/memories/history` | GET | Get memory history |
+| `/docs` | GET | API documentation |
 
+## 🔍 Troubleshooting
+
+### Common Issues
+
+**Image Pull Failures:**
 ```bash
-pytest tests/
+# Check Artifactory credentials
+kubectl get secret artifactory-docker-isa0-dev-secret -o yaml
 ```
 
-### Code Quality
-
+**Qdrant Connection Issues:**
 ```bash
-# Format code
-ruff format .
+# Check Qdrant pod
+kubectl get pod -l app.kubernetes.io/name=memory-store-qdrant
 
-# Lint
-ruff check .
+# Test connectivity
+kubectl exec -it <memory-store-pod> -- curl http://memory-store-qdrant:6333/
 ```
 
-### Building Docker Image
-
+**Health Check Failures:**
 ```bash
-docker build -t your-registry/memory-store:latest .
-docker push your-registry/memory-store:latest
+# View logs
+kubectl logs <pod-name>
+
+# Check configuration
+kubectl get configmap memory-store-cfgmap -o yaml
 ```
 
-## Troubleshooting
+**See: [docs/CORPORATE_DEPLOYMENT.md#troubleshooting](docs/CORPORATE_DEPLOYMENT.md#troubleshooting)** for detailed debugging
 
-### Qdrant Connection Issues
+## 📖 Additional Resources
 
-```bash
-# Check Qdrant is running
-curl http://localhost:6333/healthz
+- **[mem0.ai Documentation](https://docs.mem0.ai/)** - Memory framework
+- **[Qdrant Documentation](https://qdrant.tech/documentation/)** - Vector database
+- **[Memgraph Documentation](https://memgraph.com/docs)** - Graph database
+- **[Helios Documentation](https://rbcgithub.fg.rbc.com/pages/rbc-to/a0d0-helios-docs)** - RBC deployment platform
 
-# Check collections
-curl http://localhost:6333/collections
-```
+## 📝 License
 
-### Memory Service Not Starting
+Internal - RBC Use Only
 
-```bash
-# Check logs
-docker-compose logs memory-store
+## 👥 Support
 
-# Or in Kubernetes
-kubectl logs -n memory-store -l app=memory-store --tail=100
-```
+- **ChainServer Team** - For application issues
+- **RBC TO Helios** - For deployment issues
+- **Platform Team** - For infrastructure issues
 
-### Configuration Validation
+---
 
-```bash
-# Test configuration
-python -c "from memory_store.config import get_config; print(get_config().to_dict())"
-```
+**Quick Links:**
+- **Corporate Deployment**: [docs/CORPORATE_DEPLOYMENT.md](docs/CORPORATE_DEPLOYMENT.md) ⭐
+- **Get Started Locally**: [docs/QUICKSTART.md](docs/QUICKSTART.md)
+- **Integration Guide**: [docs/INTEGRATION.md](docs/INTEGRATION.md)
+- **API Documentation**: `/docs` endpoint
+- **Project Structure**: [STRUCTURE.md](STRUCTURE.md)
 
-## Architecture Decisions
+---
 
-### Why Cohere Compass?
-
-- State-of-the-art embedding quality
-- 1024-dimension vectors balance performance and accuracy
-- Built-in reranking capabilities
-- Production-ready at scale
-
-### Why Qdrant?
-
-- High-performance vector search
-- Native Kubernetes support
-- Excellent filtering capabilities
-- Active development and community
-
-### Why mem0?
-
-- Purpose-built for AI agent memory
-- Automatic memory updates and deduplication
-- Version history tracking
-- Growing ecosystem
-
-## Optional: GraphRAG with Memgraph
-
-Enable relationship-based memory for advanced use cases:
-
-```bash
-# Enable in .env
-MEM0_GRAPH_STORE_ENABLED=true
-
-# Start with Memgraph
-docker-compose -f deployments/docker-compose.yml --profile graph up -d
-```
-
-**Benefits:**
-- 🔗 Understand entity relationships
-- 🧠 Multi-hop reasoning across memories
-- 📊 Knowledge graph visualization
-- 🔍 Complex pattern matching
-
-See **[docs/GRAPHRAG_GUIDE.md](docs/GRAPHRAG_GUIDE.md)** for complete setup and use cases.
-
-## Roadmap
-
-- [x] GraphRAG support with Memgraph integration
-- [ ] Memory analytics dashboard
-- [ ] Memory pruning and archival strategies
-- [ ] Multi-modal memory support (images, audio)
-- [ ] Memory sharing between agents (with permissions)
-- [ ] Advanced memory consolidation and summarization
-
-## License
-
-MIT
-
-## Support
-
-For issues and questions:
-- Check the [API documentation](http://localhost:8000/docs)
-- Review Kubernetes logs: `kubectl logs -n memory-store -l app=memory-store`
-- Open an issue in the repository
-
-## Related Projects
-
-- [AgentOrchestrator](../agentorchestrator) - The orchestration framework this integrates with
-- [mem0](https://mem0.ai/) - Memory layer for AI agents
-- [Cohere](https://cohere.com/) - Embedding and reranking provider
-- [Qdrant](https://qdrant.tech/) - Vector database
+**Version**: 0.1.0  
+**Last Updated**: 2026-01-14  
+**Status**: Production Ready

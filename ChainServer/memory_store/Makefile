@@ -16,6 +16,9 @@ IMAGE_NAME := memory-store
 IMAGE_TAG := latest
 REGISTRY := your-registry
 NAMESPACE := memory-store
+HELM_CHART := ./helm
+HELM_RELEASE := memory-store
+ENVIRONMENT := dev
 
 help: ## Show this help message
 	@echo "Memory Store Service - Available targets:"
@@ -60,8 +63,11 @@ check: lint test ## Run all checks (lint + test)
 # Docker
 # ───────────────────────────────────────────────────────────────────────────────
 
-docker-build: ## Build Docker image
+docker-build: ## Build Docker image (standard)
 	$(DOCKER) build -f deployments/Dockerfile -t $(IMAGE_NAME):$(IMAGE_TAG) .
+
+docker-build-corporate: ## Build Docker image (corporate)
+	$(DOCKER) build -f deployments/Dockerfile.corporate -t $(IMAGE_NAME):$(IMAGE_TAG) .
 
 docker-run: ## Run Docker container locally
 	$(DOCKER) run -p 8000:8000 --env-file .env $(IMAGE_NAME):$(IMAGE_TAG)
@@ -82,37 +88,20 @@ docker-push: docker-tag ## Push image to registry
 	$(DOCKER) push $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
 
 # ───────────────────────────────────────────────────────────────────────────────
-# Kubernetes
+# Kubernetes (Generic Commands)
 # ───────────────────────────────────────────────────────────────────────────────
-
-k8s-namespace: ## Create Kubernetes namespace
-	$(KUBECTL) apply -f k8s/namespace.yaml
-
-k8s-secrets: ## Create Kubernetes secrets (interactive)
-	@echo "Creating secrets..."
-	@read -p "Enter Cohere API Key: " COHERE_KEY; \
-	$(KUBECTL) create secret generic memory-store-secrets \
-		--namespace=$(NAMESPACE) \
-		--from-literal=COHERE_API_KEY=$$COHERE_KEY \
-		--dry-run=client -o yaml | $(KUBECTL) apply -f -
-
-k8s-deploy: ## Deploy to Kubernetes
-	$(KUBECTL) apply -k k8s/
-
-k8s-delete: ## Delete from Kubernetes
-	$(KUBECTL) delete -k k8s/
 
 k8s-status: ## Check deployment status
 	$(KUBECTL) get all -n $(NAMESPACE)
 
 k8s-logs: ## View logs from Kubernetes pods
-	$(KUBECTL) logs -n $(NAMESPACE) -l app=memory-store --tail=100 -f
+	$(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/name=memory-store --tail=100 -f
 
 k8s-describe: ## Describe Kubernetes deployment
 	$(KUBECTL) describe deployment -n $(NAMESPACE) memory-store
 
 k8s-port-forward: ## Port-forward to local machine
-	$(KUBECTL) port-forward -n $(NAMESPACE) svc/memory-store-service 8000:8000
+	$(KUBECTL) port-forward -n $(NAMESPACE) svc/memory-store 8000:80
 
 k8s-shell: ## Get shell in pod
 	$(KUBECTL) exec -it -n $(NAMESPACE) deployment/memory-store -- /bin/bash
@@ -145,4 +134,58 @@ ci: lint test ## Run CI checks
 
 build-and-push: docker-build docker-push ## Build and push Docker image
 
-deploy-full: build-and-push k8s-deploy ## Full deployment (build, push, deploy)
+deploy-full: build-and-push helm-upgrade ## Full deployment (build, push, helm upgrade)
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Helm (Corporate Deployment)
+# ───────────────────────────────────────────────────────────────────────────────
+
+helm-lint: ## Lint Helm chart
+	helm lint $(HELM_CHART)
+
+helm-template: ## Template Helm chart for current environment
+	helm template $(HELM_RELEASE) $(HELM_CHART) \
+		--values $(HELM_CHART)/environments/$(ENVIRONMENT)/values.yaml \
+		--set ghActionInput.imageTag=$(IMAGE_TAG)
+
+helm-template-dev: ## Template Helm chart for DEV
+	$(MAKE) helm-template ENVIRONMENT=dev
+
+helm-template-qat: ## Template Helm chart for QAT
+	$(MAKE) helm-template ENVIRONMENT=qat
+
+helm-template-prod: ## Template Helm chart for PROD
+	$(MAKE) helm-template ENVIRONMENT=prod
+
+helm-install: ## Install Helm chart (DEV by default)
+	helm install $(HELM_RELEASE) $(HELM_CHART) \
+		--values $(HELM_CHART)/environments/$(ENVIRONMENT)/values.yaml \
+		--set ghActionInput.imageTag=$(IMAGE_TAG) \
+		--namespace $(NAMESPACE) \
+		--create-namespace
+
+helm-upgrade: ## Upgrade Helm release
+	helm upgrade $(HELM_RELEASE) $(HELM_CHART) \
+		--install \
+		--values $(HELM_CHART)/environments/$(ENVIRONMENT)/values.yaml \
+		--set ghActionInput.imageTag=$(IMAGE_TAG) \
+		--namespace $(NAMESPACE)
+
+helm-uninstall: ## Uninstall Helm release
+	helm uninstall $(HELM_RELEASE) --namespace $(NAMESPACE)
+
+helm-package: ## Package Helm chart
+	mkdir -p dist
+	helm package $(HELM_CHART) --destination ./dist
+
+helm-status: ## Show Helm release status
+	helm status $(HELM_RELEASE) --namespace $(NAMESPACE)
+
+helm-history: ## Show Helm release history
+	helm history $(HELM_RELEASE) --namespace $(NAMESPACE)
+
+helm-rollback: ## Rollback Helm release to previous version
+	helm rollback $(HELM_RELEASE) --namespace $(NAMESPACE)
+
+helm-test: ## Run Helm chart tests
+	helm test $(HELM_RELEASE) --namespace $(NAMESPACE)

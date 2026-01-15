@@ -1,0 +1,114 @@
+{{- if .Values.memgraph.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "memory-store.fullname" . }}-memgraph-data-pvc
+  labels:
+    {{- include "memory-store.memgraph.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.memgraph.persistence.storageClassName }}
+  storageClassName: {{ .Values.memgraph.persistence.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.memgraph.persistence.dataSize }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "memory-store.fullname" . }}-memgraph-logs-pvc
+  labels:
+    {{- include "memory-store.memgraph.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.memgraph.persistence.storageClassName }}
+  storageClassName: {{ .Values.memgraph.persistence.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.memgraph.persistence.logsSize }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "memory-store.fullname" . }}-memgraph
+  labels:
+    {{- include "memory-store.memgraph.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "memory-store.memgraph.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "memory-store.memgraph.selectorLabels" . | nindent 8 }}
+        cf.rbccm.com/logging-enabled: "true"
+    spec:
+      containers:
+        - name: memgraph
+          image: "{{ .Values.memgraph.image.repository }}:{{ .Values.memgraph.image.tag }}"
+          ports:
+            - name: bolt
+              containerPort: {{ .Values.memgraph.service.boltPort }}
+              protocol: TCP
+            - name: http
+              containerPort: {{ .Values.memgraph.service.httpPort }}
+              protocol: TCP
+          volumeMounts:
+            - name: memgraph-data
+              mountPath: /var/lib/memgraph
+            - name: memgraph-logs
+              mountPath: /var/log/memgraph
+          resources:
+            {{- toYaml .Values.memgraph.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: bolt
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: bolt
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: memgraph-data
+          {{- if .Values.memgraph.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "memory-store.fullname" . }}-memgraph-data-pvc
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: memgraph-logs
+          {{- if .Values.memgraph.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "memory-store.fullname" . }}-memgraph-logs-pvc
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "memory-store.fullname" . }}-memgraph
+  labels:
+    {{- include "memory-store.memgraph.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.memgraph.service.boltPort }}
+      targetPort: bolt
+      protocol: TCP
+      name: bolt
+    - port: {{ .Values.memgraph.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "memory-store.memgraph.selectorLabels" . | nindent 4 }}
+{{- end }}

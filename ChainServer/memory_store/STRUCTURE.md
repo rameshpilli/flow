@@ -29,19 +29,34 @@ memory_store/
 │   └── PROJECT_SUMMARY.md        # Technical overview
 │
 ├── 🐳 deployments/               # Docker & container configs
-│   ├── Dockerfile                # Production container image
+│   ├── Dockerfile                # Standard container image
+│   ├── Dockerfile.corporate      # Corporate container image (RBC)
 │   ├── docker-compose.yml        # Local development stack
 │   └── .dockerignore             # Docker build exclusions
 │
-├── ☸️  k8s/                      # Kubernetes manifests
-│   ├── namespace.yaml            # Namespace isolation
-│   ├── configmap.yaml            # Configuration
-│   ├── secret.yaml               # Secret management
-│   ├── deployment.yaml           # Memory Store deployment
-│   ├── qdrant-deployment.yaml    # Vector store
-│   ├── memgraph-deployment.yaml  # Graph store (optional)
-│   ├── ingress.yaml              # External access
-│   └── kustomization.yaml        # Kustomize overlay
+├── ⎈ helm/                       # Helm chart (Corporate K8s)
+│   ├── Chart.yaml                # Chart metadata
+│   ├── values.yaml               # Base configuration
+│   ├── .helmignore               # Helm ignore patterns
+│   ├── environments/
+│   │   ├── dev/values.yaml       # DEV environment
+│   │   ├── qat/values.yaml       # QAT environment
+│   │   └── prod/values.yaml      # PROD environment
+│   └── templates/                # K8s manifest templates
+│       ├── _helpers.tpl          # Template helpers
+│       ├── deployment.yaml       # Memory Store deployment
+│       ├── service.yaml          # Service definition
+│       ├── configmap.yaml        # Configuration
+│       ├── ingress.yaml          # External access
+│       ├── hpa.yaml              # Auto-scaling
+│       ├── serviceaccount.yaml   # Service account
+│       ├── qdrant-deployment.yaml    # Qdrant vector DB
+│       ├── memgraph-deployment.yaml  # Memgraph graph DB
+│       └── NOTES.txt             # Post-install notes
+│
+├── 🚀 helios/                    # Helios deployment (RBC)
+│   ├── env-config.yml            # Environment targets
+│   └── deploy.sh                 # Deployment script
 │
 ├── 🧪 tests/                     # Test suite
 │   ├── __init__.py
@@ -66,14 +81,15 @@ memory_store/
 ## File Count
 
 - **Source Code**: 7 files
-- **Documentation**: 10 files (9 guides + 1 index)
-- **Deployment**: 3 files
-- **Kubernetes**: 8 manifests
+- **Documentation**: 11 files (10 guides + 1 index)
+- **Deployment**: 4 files (2 Dockerfiles, compose, ignore)
+- **Helm Chart**: 16 files (chart, values, templates)
+- **Helios**: 2 files (config, deploy script)
 - **Tests**: 4 files
 - **Examples**: 2 files
-- **Config**: 4 files
+- **Config**: 5 files (pyproject, Makefile, env, structure, quickstart)
 
-**Total**: 38 files across 7 directories
+**Total**: 51 files across 8 directories
 
 ## Key Principles
 
@@ -114,8 +130,11 @@ make dev
 
 ### Docker
 ```bash
-# Build
+# Build (standard)
 docker build -f deployments/Dockerfile -t memory-store .
+
+# Build (corporate)
+make docker-build-corporate
 
 # Run with compose
 docker-compose -f deployments/docker-compose.yml up -d
@@ -124,13 +143,21 @@ docker-compose -f deployments/docker-compose.yml up -d
 make docker-compose-up
 ```
 
-### Kubernetes
+### Kubernetes (Helm - Corporate)
 ```bash
-# Deploy
-kubectl apply -k k8s/
+# Template chart
+make helm-template-dev
 
-# Or with Makefile
-make k8s-deploy
+# Deploy
+make helm-install ENVIRONMENT=dev
+
+# Upgrade
+make helm-upgrade ENVIRONMENT=dev
+
+# Or direct Helm
+helm install memory-store ./helm/ \
+  --values ./helm/environments/dev/values.yaml \
+  --namespace isa0-dev
 ```
 
 ### Testing
@@ -207,7 +234,7 @@ python -m memory_store.cli --help
 
 ## Comparison
 
-### Before (Flat Structure)
+### Before (Flat Structure - Original)
 ```
 memory_store/
 ├── __init__.py
@@ -227,18 +254,20 @@ memory_store/
 └── Overwhelming! 😵
 ```
 
-### After (Organized Structure)
+### After (Organized Structure - Current)
 ```
 memory_store/
-├── memory_store/       # Source code
-├── docs/               # Documentation
-├── deployments/        # Docker configs
-├── k8s/                # Kubernetes
+├── memory_store/       # Source code package
+├── docs/               # Documentation (11 files)
+├── deployments/        # Docker configs (standard + corporate)
+├── helm/               # Helm chart (corporate K8s)
+├── helios/             # Helios deployment (RBC)
 ├── tests/              # Tests
 ├── examples/           # Examples
 ├── README.md           # Main readme
-├── pyproject.toml      # Config
-└── Clean! ✨
+├── pyproject.toml      # Project config
+├── Makefile            # Build commands
+└── Clean & Professional! ✨
 ```
 
 ## Navigation Tips
