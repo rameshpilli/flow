@@ -1,13 +1,7 @@
 # app/tools/databricks_tools.py
-"""
-MCP tools wrapping LangChain's SQLDatabaseToolkit for Databricks SQL.
-
-This module exposes LangChain's battle-tested SQL tools via MCP's HTTP transport,
-providing natural language querying capabilities for Databricks SQL warehouses.
-"""
+"""MCP tools wrapping LangChain's SQLDatabaseToolkit for Databricks SQL."""
 import logging
 from typing import Optional
-from sqlalchemy import create_engine
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
 
@@ -20,30 +14,23 @@ from app.db.connector import db_connector
 logger = logging.getLogger("dbx_sql_mcp.tools")
 mcp = get_mcp_instance()
 
-# Initialize LangChain SQLDatabase wrapper
-def get_langchain_db():
-    """Get LangChain SQLDatabase instance wrapping Databricks connection"""
-    engine = db_connector.engine
-    return SQLDatabase(
-        engine=engine,
+# Initialize LangChain toolkit
+def _get_langchain_toolkit():
+    """Initialize LangChain SQL toolkit for Databricks"""
+    db = SQLDatabase(
+        engine=db_connector.engine,
         schema=config.DATABRICKS_SCHEMA,
-        include_tables=None,  # Include all tables
-        sample_rows_in_table_info=3,  # Sample rows for context
+        include_tables=None,
+        sample_rows_in_table_info=3,
         max_string_length=1000,
     )
-
-# Initialize LangChain SQLDatabaseToolkit
-def get_sql_toolkit():
-    """Get LangChain SQL toolkit with Databricks connection"""
-    db = get_langchain_db()
-    toolkit = SQLDatabaseToolkit(db=db, llm=None)  # No LLM needed for direct tool use
-    return toolkit
+    return SQLDatabaseToolkit(db=db, llm=None)
 
 # Get LangChain tools
-langchain_toolkit = get_sql_toolkit()
-langchain_tools = langchain_toolkit.get_tools()
+_toolkit = _get_langchain_toolkit()
+_langchain_tools = _toolkit.get_tools()
 
-logger.info(f"Loaded {len(langchain_tools)} LangChain SQL tools: {[tool.name for tool in langchain_tools]}")
+logger.info(f"✓ Loaded {len(_langchain_tools)} LangChain SQL tools")
 
 
 @mcp.tool()
@@ -72,13 +59,9 @@ def databricks_list_tables(catalog: Optional[str] = None, schema: Optional[str] 
             logger.info(f"Returning cached table list for {target_catalog}.{target_schema}")
             return cached_result
         
-        # Use LangChain's list tables tool
-        list_tables_tool = next((t for t in langchain_tools if t.name == "sql_db_list_tables"), None)
-        if not list_tables_tool:
-            return "Error: LangChain sql_db_list_tables tool not found"
-        
-        # Execute LangChain tool
-        result = list_tables_tool.run("")
+        # Execute via LangChain
+        tool = next((t for t in _langchain_tools if t.name == "sql_db_list_tables"), None)
+        result = tool.run("") if tool else "Error: Tool not found"
         
         if not result or result.strip() == "":
             result = f"No tables found in {target_catalog}.{target_schema}"
@@ -122,13 +105,9 @@ def databricks_get_schema(table_names: str, catalog: Optional[str] = None, schem
             logger.info(f"Returning cached schema for {table_names}")
             return cached_result
         
-        # Use LangChain's schema tool
-        schema_tool = next((t for t in langchain_tools if t.name == "sql_db_schema"), None)
-        if not schema_tool:
-            return "Error: LangChain sql_db_schema tool not found"
-        
-        # Execute LangChain tool
-        result = schema_tool.run(table_names)
+        # Execute via LangChain
+        tool = next((t for t in _langchain_tools if t.name == "sql_db_schema"), None)
+        result = tool.run(table_names) if tool else "Error: Tool not found"
         
         if not result or result.strip() == "":
             result = f"No schema found for tables: {table_names}"
@@ -179,15 +158,9 @@ def databricks_execute_query(query: str, use_cache: bool = True) -> str:
                 logger.info("Returning cached query result")
                 return cached_result
         
-        # Use LangChain's query execution tool
-        query_tool = next((t for t in langchain_tools if t.name == "sql_db_query"), None)
-        if not query_tool:
-            return "Error: LangChain sql_db_query tool not found"
-        
-        logger.info(f"Executing query via LangChain: {limited_query[:100]}...")
-        
         # Execute via LangChain
-        result = query_tool.run(limited_query)
+        tool = next((t for t in _langchain_tools if t.name == "sql_db_query"), None)
+        result = tool.run(limited_query) if tool else "Error: Tool not found"
         
         if not result or result.strip() == "":
             result = "Query executed successfully but returned no rows."
@@ -237,13 +210,12 @@ def databricks_query_checker(query: str) -> str:
         if not is_valid:
             return f"Validation failed: {error_msg}"
         
-        # Try LangChain's query checker if available
-        checker_tool = next((t for t in langchain_tools if "checker" in t.name.lower()), None)
-        if checker_tool:
-            result = checker_tool.run(query)
-            return f"Query validation passed.\nLangChain checker result: {result}"
-        else:
-            return f"Query validation passed. Ready to execute."
+        # Use LangChain checker if available
+        tool = next((t for t in _langchain_tools if "checker" in t.name.lower()), None)
+        if tool:
+            result = tool.run(query)
+            return f"✓ Query validation passed\n{result}"
+        return "✓ Query validation passed"
         
     except Exception as e:
         error_msg = f"Error checking query: {str(e)}"
@@ -315,12 +287,3 @@ def databricks_cache_stats() -> str:
         return f"Error: {error_msg}"
 
 
-# Log available LangChain tools
-logger.info("\n" + "="*80)
-logger.info("LANGCHAIN SQL TOOLKIT INTEGRATION")
-logger.info("="*80)
-logger.info(f"LangChain tools loaded: {len(langchain_tools)}")
-for tool in langchain_tools:
-    logger.info(f"  - {tool.name}: {tool.description[:60]}...")
-logger.info("MCP tools wrap LangChain's battle-tested SQL functionality")
-logger.info("="*80 + "\n")

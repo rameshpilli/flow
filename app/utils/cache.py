@@ -2,8 +2,7 @@
 import json
 import logging
 import hashlib
-from typing import Optional, Any, Callable
-from functools import wraps
+from typing import Optional, Any
 import redis
 from app.config import config
 
@@ -117,34 +116,3 @@ class RedisCache:
 
 # Global cache instance
 cache = RedisCache()
-
-
-def cached(ttl: int, prefix: str):
-    """
-    Decorator for caching function results
-    
-    Args:
-        ttl: Time to live in seconds
-        prefix: Cache key prefix
-    """
-    def decorator(func: Callable):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            # Generate cache key
-            cache_key = cache._generate_key(prefix, *args, **kwargs)
-            
-            # Try to get from cache
-            cached_result = cache.get(cache_key)
-            if cached_result is not None:
-                return cached_result
-            
-            # Execute function
-            result = func(*args, **kwargs)
-            
-            # Store in cache
-            if result is not None:
-                cache.set(cache_key, result, ttl)
-            
-            return result
-        return wrapper
-    return decorator
