@@ -15,3 +15,4 @@
 !/helm
 !/helios
 !/examples
+app/__pycache__/
