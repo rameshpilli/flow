@@ -5,6 +5,7 @@
 !/.env.example
 !/.dockerignore
 !/.gitignore
+!/.github
 !/README.md
 !/STRUCTURE.md
 !/HELM_QUICKSTART.md
@@ -15,4 +16,6 @@
 !/helm
 !/helios
 !/examples
+
+# Python
 app/__pycache__/

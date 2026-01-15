@@ -1,0 +1,123 @@
+# Learn more about the next generation of Helios Pipelines here:
+# https://rbcgithub.fg.rbc.com/pages/rbc-to/a0d0-helios-docs/
+
+name: Helios Docker Build Pipeline
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+jobs:
+  initialization:
+    name: Initialization
+    runs-on: ghes-runners-standard
+    outputs:
+      dockerfile: Dockerfile
+      app_code: ${{ steps.helios_context.outputs.app_code_lowercase }}
+      docker_repository: docker-${{ steps.helios_context.outputs.app_code_lowercase }}-dev
+      docker_qa_repository: docker-${{ steps.helios_context.outputs.app_code_lowercase }}-qa
+      docker_prod_repository: docker-${{ steps.helios_context.outputs.app_code_lowercase }}-prod
+      app_image_name: ${{ steps.helios_context.outputs.app_code_lowercase }}-memory-store
+      app_image_tag: ${{ steps.helios_context.outputs.default_image_tag }}
+    steps:
+      - name: Initialization
+        id: helios_context
+        uses: rbc-to/a0d0-helios-context-action@v1
+        with:
+          github_context: ${{ toJSON(github) }}
+
+  docker_build:
+    uses: rbc-to/a0d0-helios-workflows/.github/workflows/build_docker.yml@v2
+    needs: initialization
+    with:
+      image_name: ${{ needs.initialization.outputs.app_image_name }}
+      image_tag: ${{ needs.initialization.outputs.app_image_tag }}
+      dockerfile: ${{ needs.initialization.outputs.dockerfile }}
+      docker_repository: ${{ needs.initialization.outputs.docker_repository }}
+      additional_docker_repositories: docker-isa0-dev
+
+  container_image_scan:
+    name: Scan and Sign Docker Image
+    uses: rbc-to/a0d0-helios-workflows/.github/workflows/container_image_scan.yml@v2
+    needs: docker_build
+    with:
+      images: |
+        "${{ needs.docker_build.outputs.image_location }}"
+
+  sast_scan:
+    if: github.ref == 'refs/heads/qa' || github.ref == 'refs/heads/main'
+    needs: [initialization]
+    uses: rbc-to/a0d0-helios-workflows/.github/workflows/sast_scan.yml@v2
+
+  dast_scan:
+    if: github.ref == 'refs/heads/main'
+    needs: [initialization, docker_build]
+    uses: rbc-to/a0d0-helios-workflows/.github/workflows/dast_scan.yml@v2
+    with:
+      dast_file_path: /openapi.json
+      dast_con_requests: 20
+
+  docker_build_summary:
+    name: Docker Build Summary
+    needs: [initialization, container_image_scan]
+    runs-on: ghes-runners-small
+    steps:
+      - name: Print Docker Image Info
+        run: |
+          echo "::notice ::Docker Image Successfully Built"
+          echo "::notice ::Image Name: ${{ needs.initialization.outputs.app_image_name }}"
+          echo "::notice ::Image Tag: ${{ needs.initialization.outputs.app_image_tag }}"
+          echo "::notice ::Repository: ${{ needs.initialization.outputs.docker_repository }}"
+          echo "::notice ::Full Image Path: ${{ needs.initialization.outputs.docker_repository }}.artifactory.fg.rbc.com/${{ needs.initialization.outputs.app_image_name }}:${{ needs.initialization.outputs.app_image_tag }}"
+
+  # ============ QA PROMOTION (qa or main branches) ============
+  promote_to_qa:
+    if: github.ref == 'refs/heads/qa' || github.ref == 'refs/heads/main'
+    needs: [initialization, container_image_scan, docker_build]
+    uses: rbc-to/a0d0-helios-workflows/.github/workflows/promote_artifact.yml@v2
+    with:
+      appcode: ${{ needs.initialization.outputs.app_code }}
+      artifact_paths: ${{ needs.docker_build.outputs.image_location }}
+      source: dev
+      destination: qa
+
+  qa_promotion_summary:
+    name: QA Promotion Summary
+    if: github.ref == 'refs/heads/qa' || github.ref == 'refs/heads/main'
+    needs: [initialization, promote_to_qa]
+    runs-on: ghes-runners-standard
+    outputs:
+      docker_qa_artifact_path: ${{ needs.initialization.outputs.docker_qa_repository }}/${{ needs.initialization.outputs.app_image_name }}/${{ needs.initialization.outputs.app_image_tag }}
+    steps:
+      - name: Print QA Promotion Info
+        run: |
+          echo "::notice ::Docker Image Successfully Promoted to QA"
+          echo "::notice ::Image: ${{ needs.initialization.outputs.app_image_name }}:${{ needs.initialization.outputs.app_image_tag }}"
+          echo "::notice ::QA Repository: ${{ needs.initialization.outputs.docker_qa_repository }}"
+          echo "::notice ::Full QA Image Path: ${{ needs.initialization.outputs.docker_qa_repository }}.artifactory.fg.rbc.com/${{ needs.initialization.outputs.app_image_name }}:${{ needs.initialization.outputs.app_image_tag }}"
+
+  # ============ PROD PROMOTION (main branch - from QA) ============
+  promote_to_prod:
+    if: github.ref == 'refs/heads/main'
+    needs: [initialization, qa_promotion_summary]
+    uses: rbc-to/a0d0-helios-workflows/.github/workflows/promote_artifact.yml@v2
+    with:
+      appcode: ${{ needs.initialization.outputs.app_code }}
+      artifact_paths: ${{ needs.qa_promotion_summary.outputs.docker_qa_artifact_path }}
+      source: qa
+      destination: prod
+
+  prod_promotion_summary:
+    name: PROD Promotion Summary
+    if: github.ref == 'refs/heads/main'
+    needs: [initialization, promote_to_prod]
+    runs-on: ghes-runners-standard
+    steps:
+      - name: Print PROD Promotion Info
+        run: |
+          echo "::notice ::Docker Image Successfully Promoted to PROD"
+          echo "::notice ::Image: ${{ needs.initialization.outputs.app_image_name }}:${{ needs.initialization.outputs.app_image_tag }}"
+          echo "::notice ::PROD Repository: ${{ needs.initialization.outputs.docker_prod_repository }}"
+          echo "::notice ::Full PROD Image Path: ${{ needs.initialization.outputs.docker_prod_repository }}.artifactory.fg.rbc.com/${{ needs.initialization.outputs.app_image_name }}:${{ needs.initialization.outputs.app_image_tag }}"
