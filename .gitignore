@@ -1,3 +1,4 @@
-*
-!ChainServer/
+# Ignore everything in parent directory except ChainServer
+/*
+!/ChainServer
 !.gitignore

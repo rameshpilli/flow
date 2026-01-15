@@ -1,0 +1,52 @@
+# Corporate Dockerfile for Memory Store
+# Based on RBC corporate standards with artifactory registry
+
+FROM innersource-docker.artifactory.fg.rbc.com/container-hub/python:3.11-linux-amd64
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Switch to root to install system dependencies
+USER root
+
+WORKDIR /app
+
+# Install uv for fast dependency management
+RUN python3 -m pip install --no-cache-dir uv
+
+# Copy project files
+COPY pyproject.toml /app/
+COPY app/ /app/app/
+
+# Configure artifactory for Python packages
+ENV UV_INDEX_URL="https://artifactory.fg.rbc.com/artifactory/api/pypi/oss-pypi/simple"
+
+# Create virtual environment
+RUN uv venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Install dependencies
+RUN uv pip install -r pyproject.toml
+
+# Install RBC Security package (if required)
+# RUN uv pip install \
+#     https://rbcartifactory.fg.rbc.com/artifactory/pypi-tg40/rbc_security/RBC_Security-2.3.0-py2.py3-none-any.whl
+
+# Copy remaining files
+COPY env.example /app/
+
+# Create non-root user for security
+RUN useradd -m -u 1000 memorystore && \
+    chown -R memorystore:memorystore /app
+
+USER memorystore
+
+# Expose application port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD python -c "import httpx; httpx.get('http://localhost:8000/health', timeout=3.0)" || exit 1
+
+# Start Memory Store service
+CMD ["python", "-m", "app.cli", "--host", "0.0.0.0", "--port", "8000"]

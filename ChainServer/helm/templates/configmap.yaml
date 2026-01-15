@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ .Chart.Name }}-cfgmap"
+  labels:
+    {{- include "memory-store.labels" . | nindent 4 }}
+data:
+  {{- range $key, $val := .Values.configuration }}
+  {{ $key }}: {{ $val | quote }}
+  {{- end }}
+  {{- range $key, $val := .Values.vaultValues }}
+  {{ $key }}: {{ $val | quote }}
+  {{- end }}

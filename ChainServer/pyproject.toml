@@ -1,0 +1,125 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "memory-store"
+version = "0.1.0"
+description = "Mem0-based memory store service with multi-agent support and Cohere Compass vector store"
+readme = "README.md"
+repository = "https://github.com/rameshpilli/flow"
+license = "MIT"
+requires-python = ">=3.10"
+keywords = ["mem0", "memory", "ai", "agents", "vector-store", "cohere"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+# Core dependencies
+dependencies = [
+    "mem0ai>=0.1.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "httpx>=0.25.0",
+    "python-dotenv>=1.0.0",
+    "cohere>=5.0.0",
+    # For Cohere Compass vector store
+    "qdrant-client>=1.7.0",
+]
+
+[project.optional-dependencies]
+# Development dependencies
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+    "httpx-mock>=0.11.0",
+]
+
+# Production monitoring
+monitoring = [
+    "prometheus-client>=0.19.0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-instrumentation-fastapi>=0.41b0",
+]
+
+# All optional features
+all = [
+    "memory-store[dev,monitoring]",
+]
+
+[project.scripts]
+memory-store = "app.cli:main"
+
+# ============================================================
+# BUILD
+# ============================================================
+[tool.hatch.build.targets.wheel]
+packages = ["memory_store"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/memory_store", "/tests"]
+
+# ============================================================
+# RUFF - Linting & Formatting
+# ============================================================
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = ["*.ipynb"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP"]
+ignore = [
+    "E501",   # line too long
+    "E402",   # module level import not at top
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*" = ["S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["memory_store"]
+
+# ============================================================
+# PYTEST
+# ============================================================
+[tool.pytest.ini_options]
+minversion = "7.0"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = ["-ra", "-q", "--strict-markers"]
+markers = [
+    "slow: marks tests as slow",
+    "integration: marks integration tests",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+# ============================================================
+# COVERAGE
+# ============================================================
+[tool.coverage.run]
+source = ["memory_store"]
+branch = true
+omit = ["*/tests/*", "*/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
+fail_under = 70
