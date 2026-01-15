@@ -6,7 +6,7 @@ Clear explanation of how services are deployed.
 
 ### What is mem0?
 
-**mem0 is NOT a separate service** - it's a **Python library** that runs inside the Memory Store application code.
+**mem0 is NOT a separate service** - it's a **Python library** that runs inside the Mem0 application code.
 
 ```python
 # In memory_store/service.py
@@ -29,46 +29,46 @@ memory_client = Memory.from_config(config)  # ← Runs in-process
 │              Docker Compose Stack                      │
 ├────────────────────────────────────────────────────────┤
 │                                                        │
-│  Container 1: memory-store-service                     │
+│  Container 1: mem0-service                     │
 │  ├─ FastAPI application                               │
 │  ├─ mem0 library (Python code)  ← Runs here!         │
 │  ├─ Connects to: Qdrant (via network)                │
 │  └─ Connects to: Memgraph (via network)              │
 │                                                        │
-│  Container 2: memory-store-qdrant                      │
+│  Container 2: mem0-qdrant                      │
 │  ├─ Qdrant vector database                            │
 │  └─ Port 6333 (internal)                              │
 │                                                        │
-│  Container 3: memory-store-memgraph (optional)         │
+│  Container 3: mem0-memgraph (optional)         │
 │  ├─ Memgraph graph database                           │
 │  └─ Port 7687 (internal)                              │
 │                                                        │
 └────────────────────────────────────────────────────────┘
 
 Communication:
-  memory-store → http://qdrant:6333
-  memory-store → bolt://memgraph:7687
+  mem0 → http://qdrant:6333
+  mem0 → bolt://memgraph:7687
 ```
 
 ### Kubernetes Deployment
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│              Namespace: memory-store                    │
+│              Namespace: mem0                    │
 ├─────────────────────────────────────────────────────────┤
 │                                                         │
-│  Pod 1: memory-store-xxx (Deployment, 3 replicas)      │
-│  ├─ Container: memory-store                            │
+│  Pod 1: mem0-xxx (Deployment, 3 replicas)      │
+│  ├─ Container: mem0                            │
 │  │  ├─ FastAPI application                             │
 │  │  ├─ mem0 library (Python)  ← Runs here!            │
 │  │  ├─ Connects to: qdrant-service                     │
 │  │  └─ Connects to: memgraph-service                   │
 │  └─ Resources: 512Mi-2Gi RAM, 250m-1000m CPU          │
 │                                                         │
-│  Pod 2: memory-store-yyy (replica)                     │
+│  Pod 2: mem0-yyy (replica)                     │
 │  └─ Same as Pod 1                                      │
 │                                                         │
-│  Pod 3: memory-store-zzz (replica)                     │
+│  Pod 3: mem0-zzz (replica)                     │
 │  └─ Same as Pod 1                                      │
 │                                                         │
 │  ────────────────────────────────────────────────────  │
@@ -90,7 +90,7 @@ Communication:
 └─────────────────────────────────────────────────────────┘
 
 Services (Internal ClusterIP):
-  - memory-store-service:8000 → Pods 1-3
+  - mem0-service:8000 → Pods 1-3
   - qdrant-service:6333 → Pod 4
   - memgraph-service:7687 → Pod 5
 ```
@@ -99,8 +99,8 @@ Services (Internal ClusterIP):
 
 ### 1. **Independent Scaling**
 ```bash
-# Scale Memory Store service (stateless)
-kubectl scale deployment memory-store --replicas=10
+# Scale Mem0 service (stateless)
+kubectl scale deployment mem0 --replicas=10
 
 # Qdrant stays at 1 replica (stateful)
 # Memgraph stays at 1 replica (stateful)
@@ -108,7 +108,7 @@ kubectl scale deployment memory-store --replicas=10
 
 ### 2. **Resource Isolation**
 ```yaml
-# Memory Store pods
+# Mem0 pods
 resources:
   limits:
     memory: "2Gi"
@@ -129,16 +129,16 @@ resources:
 
 ### 3. **Independent Updates**
 ```bash
-# Update Memory Store without affecting databases
-kubectl set image deployment/memory-store \
-  memory-store=registry/memory-store:v2
+# Update Mem0 without affecting databases
+kubectl set image deployment/mem0 \
+  mem0=registry/mem0:v2
 
 # Qdrant and Memgraph keep running!
 ```
 
 ### 4. **Failure Isolation**
 ```
-If Memory Store crashes → Qdrant/Memgraph unaffected
+If Mem0 crashes → Qdrant/Memgraph unaffected
 If Qdrant crashes → Only vector search fails
 If Memgraph crashes → Only graph queries fail
 ```
@@ -147,9 +147,9 @@ If Memgraph crashes → Only graph queries fail
 
 ```
 ┌────────────────────────────────────────┐
-│  Pod: memory-store-all-in-one          │
+│  Pod: mem0-all-in-one          │
 ├────────────────────────────────────────┤
-│  Container 1: memory-store             │
+│  Container 1: mem0             │
 │  Container 2: qdrant (sidecar)         │
 │  Container 3: memgraph (sidecar)       │
 └────────────────────────────────────────┘
@@ -175,11 +175,11 @@ Your Agent Code
 [Ingress / Load Balancer]
      │
      ↓
-[memory-store-service:8000] ← Kubernetes Service (ClusterIP)
+[mem0-service:8000] ← Kubernetes Service (ClusterIP)
      │
-     ├→ Pod 1: memory-store-xxx
-     ├→ Pod 2: memory-store-yyy
-     └→ Pod 3: memory-store-zzz
+     ├→ Pod 1: mem0-xxx
+     ├→ Pod 2: mem0-yyy
+     └→ Pod 3: mem0-zzz
          │
          │ (Inside Pod 1)
          ├─→ mem0 library processes request
@@ -195,14 +195,14 @@ Your Agent Code
 
 **Kubernetes Services:**
 ```yaml
-# memory-store-service (exposed to cluster/ingress)
+# mem0-service (exposed to cluster/ingress)
 kind: Service
 spec:
   type: ClusterIP
   ports:
     - port: 8000
   selector:
-    app: memory-store
+    app: mem0
 
 # qdrant-service (internal only)
 kind: Service
@@ -228,7 +228,7 @@ spec:
 ### Typical Production Setup
 
 ```yaml
-# 3 Memory Store pods
+# 3 Mem0 pods
 3 pods × 2Gi RAM = 6Gi RAM
 3 pods × 1 CPU = 3 CPUs
 
@@ -247,13 +247,13 @@ Total: 10Gi RAM, 5 CPUs (without GraphRAG)
 ### Cost Estimation (AWS EKS example)
 
 **Without GraphRAG:**
-- 3× t3.medium (Memory Store): $75/month
+- 3× t3.medium (Mem0): $75/month
 - 1× t3.large (Qdrant): $60/month
 - Load Balancer: $20/month
 - **Total: ~$155/month**
 
 **With GraphRAG:**
-- 3× t3.medium (Memory Store): $75/month
+- 3× t3.medium (Mem0): $75/month
 - 1× t3.large (Qdrant): $60/month
 - 1× t3.large (Memgraph): $60/month
 - Load Balancer: $20/month
@@ -261,21 +261,21 @@ Total: 10Gi RAM, 5 CPUs (without GraphRAG)
 
 ## Scaling Strategies
 
-### Horizontal Scaling (Memory Store)
+### Horizontal Scaling (Mem0)
 
 ```bash
 # Manual
-kubectl scale deployment memory-store --replicas=5
+kubectl scale deployment mem0 --replicas=5
 
 # Automatic (HPA)
-kubectl autoscale deployment memory-store \
+kubectl autoscale deployment mem0 \
   --min=3 --max=10 \
   --cpu-percent=70
 ```
 
 **Result:**
 ```
-Memory Store: 3 → 10 pods (scales up)
+Mem0: 3 → 10 pods (scales up)
 Qdrant: 1 pod (unchanged)
 Memgraph: 1 pod (unchanged)
 ```
@@ -318,7 +318,7 @@ Pod: memgraph-def
   └─ PVC: memgraph-data-pvc (20Gi)
       └─ PV: aws-ebs-volume-yyy
 
-Memory Store Pods: NO storage (stateless)
+Mem0 Pods: NO storage (stateless)
 ```
 
 **Why separate storage:**
@@ -331,7 +331,7 @@ Memory Store Pods: NO storage (stateless)
 
 ### Pod Health Checks
 
-**Memory Store:**
+**Mem0:**
 ```yaml
 livenessProbe:
   httpGet:
@@ -360,7 +360,7 @@ livenessProbe:
 
 ### Dependency Health
 
-Memory Store `/health` endpoint checks:
+Mem0 `/health` endpoint checks:
 ```json
 {
   "service": "memory_store",
@@ -391,29 +391,29 @@ Memory Store `/health` endpoint checks:
 kubectl apply -k k8s/
 
 # This creates:
-# - Namespace: memory-store
-# - ConfigMap: memory-store-config
-# - Secret: memory-store-secrets
-# - Deployment: memory-store (3 pods)
+# - Namespace: mem0
+# - ConfigMap: mem0-config
+# - Secret: mem0-secrets
+# - Deployment: mem0 (3 pods)
 # - Deployment: qdrant (1 pod)
 # - Deployment: memgraph (1 pod, if uncommented)
-# - Service: memory-store-service
+# - Service: mem0-service
 # - Service: qdrant-service
 # - Service: memgraph-service
-# - HPA: memory-store-hpa
+# - HPA: mem0-hpa
 ```
 
 ### Check Deployment
 
 ```bash
 # See all pods
-kubectl get pods -n memory-store
+kubectl get pods -n mem0
 
 # Output:
 # NAME                            READY   STATUS    RESTARTS
-# memory-store-abc123-xxx         1/1     Running   0
-# memory-store-abc123-yyy         1/1     Running   0
-# memory-store-abc123-zzz         1/1     Running   0
+# mem0-abc123-xxx         1/1     Running   0
+# mem0-abc123-yyy         1/1     Running   0
+# mem0-abc123-zzz         1/1     Running   0
 # qdrant-def456                   1/1     Running   0
 # memgraph-ghi789                 1/1     Running   0
 ```
@@ -421,10 +421,10 @@ kubectl get pods -n memory-store
 ## Summary
 
 **Deployment Architecture:**
-- ✅ **3 separate pods** for Memory Store service (scalable)
+- ✅ **3 separate pods** for Mem0 service (scalable)
 - ✅ **1 separate pod** for Qdrant (stateful)
 - ✅ **1 separate pod** for Memgraph (stateful, optional)
-- ✅ **mem0 is a library**, not a pod (runs inside Memory Store)
+- ✅ **mem0 is a library**, not a pod (runs inside Mem0)
 
 **Benefits:**
 - ✅ Independent scaling
@@ -434,11 +434,11 @@ kubectl get pods -n memory-store
 - ✅ Standard Kubernetes patterns
 
 **Your agents only connect to:**
-- `http://memory-store-service:8000`
+- `http://mem0-service:8000`
 
 **Internal communication (automatic):**
-- Memory Store → Qdrant (via qdrant-service)
-- Memory Store → Memgraph (via memgraph-service)
+- Mem0 → Qdrant (via qdrant-service)
+- Mem0 → Memgraph (via memgraph-service)
 
 ---
 

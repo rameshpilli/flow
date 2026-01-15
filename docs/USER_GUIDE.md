@@ -1,6 +1,6 @@
-# Memory Store - User Connection Guide
+# Mem0 - User Connection Guide
 
-Complete guide for connecting to the Memory Store service from your agents and applications.
+Complete guide for connecting to the Mem0 service from your agents and applications.
 
 ## Table of Contents
 
@@ -15,14 +15,14 @@ Complete guide for connecting to the Memory Store service from your agents and a
 
 ### What Gets Deployed Together
 
-When you deploy Memory Store, **Qdrant is automatically included**:
+When you deploy Mem0, **Qdrant is automatically included**:
 
 ```
 ┌─────────────────────────────────────────────┐
-│         Memory Store Stack                  │
+│         Mem0 Stack                  │
 │                                             │
 │  ┌─────────────────┐  ┌─────────────────┐ │
-│  │  Memory Store   │  │     Qdrant      │ │
+│  │  Mem0   │  │     Qdrant      │ │
 │  │    Service      │──│  Vector Store   │ │
 │  │  (Port 8000)    │  │  (Port 6333)    │ │
 │  └─────────────────┘  └─────────────────┘ │
@@ -40,21 +40,21 @@ Your Agent Code
        ↓
    (HTTP REST API)
        ↓
-Memory Store Service (Port 8000)
+Mem0 Service (Port 8000)
        ↓
    (Internal Connection)
        ↓
 Qdrant Vector Store (Port 6333)
 ```
 
-**Key Point**: Your agents only connect to the Memory Store service. The Memory Store service handles all communication with Qdrant internally.
+**Key Point**: Your agents only connect to the Mem0 service. The Mem0 service handles all communication with Qdrant internally.
 
 ## Connection URLs by Environment
 
 ### 1. Local Development (Docker Compose)
 
 ```python
-# Memory Store Service
+# Mem0 Service
 base_url = "http://localhost:8000"
 
 # Qdrant (if you need direct access)
@@ -68,23 +68,23 @@ docker-compose up -d
 ```
 
 **Access:**
-- Memory Store API: http://localhost:8000
+- Mem0 API: http://localhost:8000
 - API Docs: http://localhost:8000/docs
 - Health Check: http://localhost:8000/health
 - Qdrant Dashboard: http://localhost:6333/dashboard
 
 ### 2. Kubernetes (Same Namespace)
 
-If your agents run in the **same namespace** as Memory Store:
+If your agents run in the **same namespace** as Mem0:
 
 ```python
 # Service name resolution
-base_url = "http://memory-store-service:8000"
+base_url = "http://mem0-service:8000"
 ```
 
 **How it works:**
 ```bash
-# Deploy Memory Store to same namespace as your agents
+# Deploy Mem0 to same namespace as your agents
 kubectl apply -k memory_store/k8s/ -n your-agent-namespace
 
 # Your agents automatically resolve the service name
@@ -97,7 +97,7 @@ If your agents run in a **different namespace**:
 
 ```python
 # Full DNS name (FQDN)
-base_url = "http://memory-store-service.memory-store.svc.cluster.local:8000"
+base_url = "http://mem0-service.mem0.svc.cluster.local:8000"
 ```
 
 **Format:**
@@ -107,7 +107,7 @@ http://<service-name>.<namespace>.svc.cluster.local:<port>
 
 **Setup:**
 ```bash
-# Deploy Memory Store to its own namespace
+# Deploy Mem0 to its own namespace
 kubectl apply -k memory_store/k8s/
 
 # Access from any namespace using FQDN
@@ -119,7 +119,7 @@ If you configured Ingress:
 
 ```python
 # Your domain
-base_url = "https://memory-store.yourdomain.com"
+base_url = "https://mem0.yourdomain.com"
 ```
 
 **Setup:**
@@ -133,10 +133,10 @@ kubectl apply -f memory_store/k8s/ingress.yaml
 
 ```python
 # Load balancer or public endpoint
-base_url = "https://memory-store.yourcompany.com"
+base_url = "https://mem0.yourcompany.com"
 
 # Or AWS ALB
-base_url = "https://memory-store-12345.us-east-1.elb.amazonaws.com"
+base_url = "https://mem0-12345.us-east-1.elb.amazonaws.com"
 ```
 
 ## Using the Python Client
@@ -160,7 +160,7 @@ from memory_store.client import MemoryStoreClient
 
 # Initialize client
 memory = MemoryStoreClient(
-    base_url="http://memory-store-service:8000",
+    base_url="http://mem0-service:8000",
     agent_id="my_agent"
 )
 
@@ -189,7 +189,7 @@ from memory_store.client import MemoryStoreClient
 
 # Automatically closes connection
 async with MemoryStoreClient(
-    base_url="http://memory-store-service:8000",
+    base_url="http://mem0-service:8000",
     agent_id="my_agent"
 ) as memory:
     await memory.add_memory("Important information")
@@ -245,7 +245,7 @@ class SimpleAgent:
 # Usage
 agent = SimpleAgent(
     agent_id="finance_agent",
-    memory_url="http://memory-store-service:8000"
+    memory_url="http://mem0-service:8000"
 )
 
 response = await agent.process_query("What's AAPL's revenue?")
@@ -293,7 +293,7 @@ forge.step(
     "analyzer",
     MemoryAwareAgent(
         agent_id="analyzer_v1",
-        memory_url="http://memory-store-service:8000"
+        memory_url="http://mem0-service:8000"
     )
 )
 
@@ -346,13 +346,13 @@ class TeamAgent:
 agent1 = TeamAgent(
     agent_id="analyst_1",
     team_id="finance_team",
-    memory_url="http://memory-store-service:8000"
+    memory_url="http://mem0-service:8000"
 )
 
 agent2 = TeamAgent(
     agent_id="analyst_2",
     team_id="finance_team",  # Same team!
-    memory_url="http://memory-store-service:8000"
+    memory_url="http://mem0-service:8000"
 )
 
 # Agent 2 can see what Agent 1 shared with the team
@@ -365,7 +365,7 @@ from memory_store.client import MemoryStoreClient
 
 async def safe_memory_operations():
     memory = MemoryStoreClient(
-        base_url="http://memory-store-service:8000",
+        base_url="http://mem0-service:8000",
         agent_id="my_agent"
     )
     
@@ -373,10 +373,10 @@ async def safe_memory_operations():
     try:
         health = await memory.health_check()
         if health.get("status") != "healthy":
-            print(f"Warning: Memory Store unhealthy: {health}")
+            print(f"Warning: Mem0 unhealthy: {health}")
             return None
     except Exception as e:
-        print(f"Cannot reach Memory Store: {e}")
+        print(f"Cannot reach Mem0: {e}")
         return None
     
     # Proceed with operations
@@ -399,11 +399,11 @@ httpx.ConnectError: [Errno 111] Connection refused
    ```bash
    # Docker Compose
    docker-compose ps
-   docker-compose logs memory-store
+   docker-compose logs mem0
    
    # Kubernetes
-   kubectl get pods -n memory-store
-   kubectl logs -n memory-store -l app=memory-store
+   kubectl get pods -n mem0
+   kubectl logs -n mem0 -l app=mem0
    ```
 
 2. **Verify URL:**
@@ -417,7 +417,7 @@ httpx.ConnectError: [Errno 111] Connection refused
 
 3. **Check port forwarding (K8s):**
    ```bash
-   kubectl port-forward -n memory-store svc/memory-store-service 8000:8000
+   kubectl port-forward -n mem0 svc/mem0-service 8000:8000
    ```
 
 ### Problem: Service Healthy but Operations Fail
@@ -432,29 +432,29 @@ Status 500: Internal Server Error
 1. **Check Cohere API key:**
    ```bash
    # Docker
-   docker-compose exec memory-store env | grep COHERE
+   docker-compose exec mem0 env | grep COHERE
    
    # Kubernetes
-   kubectl get secret memory-store-secrets -n memory-store -o yaml
+   kubectl get secret mem0-secrets -n mem0 -o yaml
    ```
 
 2. **Check Qdrant connection:**
    ```bash
    # Docker
-   docker-compose exec memory-store curl http://qdrant:6333/healthz
+   docker-compose exec mem0 curl http://qdrant:6333/healthz
    
    # Kubernetes
-   kubectl exec -n memory-store deployment/memory-store -- \
+   kubectl exec -n mem0 deployment/mem0 -- \
      curl http://qdrant-service:6333/healthz
    ```
 
 3. **View detailed logs:**
    ```bash
    # Docker
-   docker-compose logs memory-store --tail=100
+   docker-compose logs mem0 --tail=100
    
    # Kubernetes
-   kubectl logs -n memory-store -l app=memory-store --tail=100
+   kubectl logs -n mem0 -l app=mem0 --tail=100
    ```
 
 ### Problem: Timeout Errors
@@ -469,7 +469,7 @@ httpx.ReadTimeout: timed out
 1. **Increase client timeout:**
    ```python
    memory = MemoryStoreClient(
-       base_url="http://memory-store-service:8000",
+       base_url="http://mem0-service:8000",
        agent_id="my_agent",
        timeout=60.0  # Increase from default 30s
    )
@@ -477,7 +477,7 @@ httpx.ReadTimeout: timed out
 
 2. **Check resource limits (K8s):**
    ```bash
-   kubectl describe pod -n memory-store -l app=memory-store
+   kubectl describe pod -n mem0 -l app=mem0
    # Look for CPU throttling or OOM issues
    ```
 
@@ -493,22 +493,22 @@ httpx.ConnectError: [Errno -2] Name or service not known
 1. **Use correct service name:**
    ```python
    # Same namespace
-   base_url = "http://memory-store-service:8000"
+   base_url = "http://mem0-service:8000"
    
    # Different namespace
-   base_url = "http://memory-store-service.memory-store.svc.cluster.local:8000"
+   base_url = "http://mem0-service.mem0.svc.cluster.local:8000"
    ```
 
 2. **Verify service exists:**
    ```bash
-   kubectl get svc -n memory-store
-   kubectl describe svc memory-store-service -n memory-store
+   kubectl get svc -n mem0
+   kubectl describe svc mem0-service -n mem0
    ```
 
 3. **Test DNS from pod:**
    ```bash
    kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
-     nslookup memory-store-service.memory-store.svc.cluster.local
+     nslookup mem0-service.mem0.svc.cluster.local
    ```
 
 ## Best Practices
@@ -631,7 +631,7 @@ Set these in your agent environment:
 
 ```bash
 # Required
-MEMORY_STORE_URL=http://memory-store-service:8000
+MEMORY_STORE_URL=http://mem0-service:8000
 
 # Optional
 AGENT_ID=my_agent_v1
@@ -642,13 +642,13 @@ MEMORY_STORE_VERIFY_SSL=true
 MEMORY_STORE_URL=http://localhost:8000
 
 # For Kubernetes (same namespace)
-MEMORY_STORE_URL=http://memory-store-service:8000
+MEMORY_STORE_URL=http://mem0-service:8000
 
 # For Kubernetes (different namespace)
-MEMORY_STORE_URL=http://memory-store-service.memory-store.svc.cluster.local:8000
+MEMORY_STORE_URL=http://mem0-service.mem0.svc.cluster.local:8000
 
 # For production with ingress
-MEMORY_STORE_URL=https://memory-store.yourdomain.com
+MEMORY_STORE_URL=https://mem0.yourdomain.com
 ```
 
 ## Next Steps
@@ -663,22 +663,22 @@ MEMORY_STORE_URL=https://memory-store.yourdomain.com
 
 - **API Documentation**: http://localhost:8000/docs (or your service URL)
 - **Health Status**: http://localhost:8000/health
-- **Service Logs**: `kubectl logs -n memory-store -l app=memory-store`
+- **Service Logs**: `kubectl logs -n mem0 -l app=mem0`
 - **Qdrant Status**: http://localhost:6333/dashboard (local) or check K8s pod
 
 ## Summary
 
 **Key Points:**
 - ✅ Qdrant is included - no separate deployment needed
-- ✅ Connect to Memory Store service only (it handles Qdrant)
+- ✅ Connect to Mem0 service only (it handles Qdrant)
 - ✅ Use the Python client for easy integration
 - ✅ Configure via environment variables
 - ✅ Handle connection errors gracefully
 
 **Connection URLs:**
 - Local: `http://localhost:8000`
-- K8s (same namespace): `http://memory-store-service:8000`
-- K8s (different namespace): `http://memory-store-service.memory-store.svc.cluster.local:8000`
+- K8s (same namespace): `http://mem0-service:8000`
+- K8s (different namespace): `http://mem0-service.mem0.svc.cluster.local:8000`
 - Production: Your configured domain/load balancer
 
 ---

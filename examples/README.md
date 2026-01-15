@@ -1,12 +1,12 @@
-# Memory Store Examples
+# Mem0 Examples
 
-Example code demonstrating how to use the Memory Store client.
+Example code demonstrating how to use the Mem0 client.
 
 ## Running Examples
 
 ### Prerequisites
 
-1. **Start Memory Store**:
+1. **Start Mem0**:
    ```bash
    cd memory_store
    docker-compose up -d
@@ -94,17 +94,17 @@ docker-compose ps
 curl http://localhost:8000/health
 
 # View logs
-docker-compose logs memory-store
+docker-compose logs mem0
 ```
 
 ### Operations failing
 
 ```bash
 # Check Cohere API key is set
-docker-compose exec memory-store env | grep COHERE
+docker-compose exec mem0 env | grep COHERE
 
 # Check Qdrant connection
-docker-compose exec memory-store curl http://qdrant:6333/healthz
+docker-compose exec mem0 curl http://qdrant:6333/healthz
 ```
 
 ## Next Steps

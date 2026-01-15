@@ -1,6 +1,6 @@
-# Memory Store - Deployment Guide
+# Mem0 - Deployment Guide
 
-Complete deployment guide for the Memory Store service in various environments.
+Complete deployment guide for the Mem0 service in various environments.
 
 ## Table of Contents
 
@@ -91,7 +91,7 @@ cat .env  # verify configuration
 docker-compose up -d
 
 # 3. Check logs
-docker-compose logs -f memory-store
+docker-compose logs -f mem0
 
 # 4. Test the API
 curl http://localhost:8000/health
@@ -101,7 +101,7 @@ open http://localhost:8000/docs
 ```
 
 Services started:
-- Memory Store API: http://localhost:8000
+- Mem0 API: http://localhost:8000
 - Qdrant: http://localhost:6333
 - Qdrant Dashboard: http://localhost:6333/dashboard
 
@@ -124,7 +124,7 @@ export COHERE_API_KEY=your_key
 export QDRANT_URL=http://localhost:6333
 
 # 4. Run the service
-memory-store --reload --log-level DEBUG
+mem0 --reload --log-level DEBUG
 
 # Or run directly
 python -m uvicorn memory_store.api:app --reload
@@ -161,35 +161,35 @@ curl -X POST http://localhost:8000/memories/search \
 
 ```bash
 # Build image
-docker build -t memory-store:latest .
+docker build -t mem0:latest .
 
 # Run container
 docker run -d \
-  --name memory-store \
+  --name mem0 \
   -p 8000:8000 \
   --env-file .env \
-  memory-store:latest
+  mem0:latest
 
 # Check logs
-docker logs -f memory-store
+docker logs -f mem0
 ```
 
 ### Push to Registry
 
 ```bash
 # Tag image
-docker tag memory-store:latest your-registry/memory-store:latest
+docker tag mem0:latest your-registry/mem0:latest
 
 # Push to registry
-docker push your-registry/memory-store:latest
+docker push your-registry/mem0:latest
 
 # Or use Azure Container Registry
-az acr build --registry yourregistry --image memory-store:latest .
+az acr build --registry yourregistry --image mem0:latest .
 
 # Or use AWS ECR
 aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin your-account.dkr.ecr.us-east-1.amazonaws.com
-docker tag memory-store:latest your-account.dkr.ecr.us-east-1.amazonaws.com/memory-store:latest
-docker push your-account.dkr.ecr.us-east-1.amazonaws.com/memory-store:latest
+docker tag mem0:latest your-account.dkr.ecr.us-east-1.amazonaws.com/mem0:latest
+docker push your-account.dkr.ecr.us-east-1.amazonaws.com/mem0:latest
 ```
 
 ## Kubernetes Deployment
@@ -212,21 +212,21 @@ kubectl config current-context
 kubectl apply -f k8s/namespace.yaml
 
 # Verify
-kubectl get namespace memory-store
+kubectl get namespace mem0
 ```
 
 #### 2. Create Secrets
 
 ```bash
 # Create secrets from literals
-kubectl create secret generic memory-store-secrets \
-  --namespace=memory-store \
+kubectl create secret generic mem0-secrets \
+  --namespace=mem0 \
   --from-literal=COHERE_API_KEY='your_cohere_api_key' \
   --from-literal=LLM_CLIENT_SECRET='your_llm_secret' \
   --from-literal=LLM_SERVER_URL='https://your-llm-gateway.com/v1/chat/completions'
 
 # Verify (values are hidden)
-kubectl get secret memory-store-secrets -n memory-store -o yaml
+kubectl get secret mem0-secrets -n mem0 -o yaml
 ```
 
 Or create from file:
@@ -239,8 +239,8 @@ LLM_CLIENT_SECRET=your_secret
 EOF
 
 # Create secret from file
-kubectl create secret generic memory-store-secrets \
-  --namespace=memory-store \
+kubectl create secret generic mem0-secrets \
+  --namespace=mem0 \
   --from-env-file=.env.k8s
 
 # Delete the file
@@ -253,8 +253,8 @@ Edit `k8s/kustomization.yaml` to set your registry:
 
 ```yaml
 images:
-  - name: your-registry/memory-store
-    newName: your-actual-registry/memory-store  # <-- change this
+  - name: your-registry/mem0
+    newName: your-actual-registry/mem0  # <-- change this
     newTag: latest
 ```
 
@@ -275,36 +275,36 @@ kubectl apply -f k8s/ingress.yaml  # optional
 
 ```bash
 # Check all resources
-kubectl get all -n memory-store
+kubectl get all -n mem0
 
 # Check pods
-kubectl get pods -n memory-store -w
+kubectl get pods -n mem0 -w
 
 # Check services
-kubectl get svc -n memory-store
+kubectl get svc -n mem0
 
 # Check HPA (autoscaler)
-kubectl get hpa -n memory-store
+kubectl get hpa -n mem0
 ```
 
 #### 6. View Logs
 
 ```bash
-# Memory Store logs
-kubectl logs -n memory-store -l app=memory-store --tail=100 -f
+# Mem0 logs
+kubectl logs -n mem0 -l app=mem0 --tail=100 -f
 
 # Qdrant logs
-kubectl logs -n memory-store -l app=qdrant --tail=100 -f
+kubectl logs -n mem0 -l app=qdrant --tail=100 -f
 
 # Specific pod
-kubectl logs -n memory-store pod/memory-store-xxxxx -f
+kubectl logs -n mem0 pod/mem0-xxxxx -f
 ```
 
 #### 7. Test the Service
 
 ```bash
 # Port-forward to local machine
-kubectl port-forward -n memory-store svc/memory-store-service 8000:8000
+kubectl port-forward -n mem0 svc/mem0-service 8000:8000
 
 # In another terminal
 curl http://localhost:8000/health | jq
@@ -323,7 +323,7 @@ kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/cont
 kubectl apply -f k8s/ingress.yaml
 
 # Get ingress IP
-kubectl get ingress -n memory-store
+kubectl get ingress -n mem0
 ```
 
 #### AWS ALB Ingress Controller
@@ -339,20 +339,20 @@ alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:...
 kubectl apply -f k8s/ingress.yaml
 
 # Get ALB DNS
-kubectl get ingress -n memory-store
+kubectl get ingress -n mem0
 ```
 
 ### Scaling
 
 ```bash
 # Manual scaling
-kubectl scale deployment memory-store -n memory-store --replicas=5
+kubectl scale deployment mem0 -n mem0 --replicas=5
 
 # Check HPA status
-kubectl get hpa -n memory-store
+kubectl get hpa -n mem0
 
 # Describe HPA
-kubectl describe hpa memory-store-hpa -n memory-store
+kubectl describe hpa mem0-hpa -n mem0
 ```
 
 ## Production Considerations
@@ -370,12 +370,12 @@ kubectl describe hpa memory-store-hpa -n memory-store
    apiVersion: policy/v1
    kind: PodDisruptionBudget
    metadata:
-     name: memory-store-pdb
+     name: mem0-pdb
    spec:
      minAvailable: 2
      selector:
        matchLabels:
-         app: memory-store
+         app: mem0
    ```
 
 3. **Multi-AZ Deployment**
@@ -387,7 +387,7 @@ kubectl describe hpa memory-store-hpa -n memory-store
            podAffinityTerm:
              labelSelector:
                matchLabels:
-                 app: memory-store
+                 app: mem0
              topologyKey: topology.kubernetes.io/zone
    ```
 
@@ -404,10 +404,10 @@ kubectl describe hpa memory-store-hpa -n memory-store
 2. **Backup Strategy**
    ```bash
    # Create snapshot
-   kubectl exec -n memory-store qdrant-xxx -- qdrant-backup create
+   kubectl exec -n mem0 qdrant-xxx -- qdrant-backup create
    
    # Copy to S3
-   kubectl cp memory-store/qdrant-xxx:/qdrant/backups/snapshot.tar.gz ./
+   kubectl cp mem0/qdrant-xxx:/qdrant/backups/snapshot.tar.gz ./
    aws s3 cp snapshot.tar.gz s3://your-bucket/backups/
    ```
 
@@ -418,11 +418,11 @@ kubectl describe hpa memory-store-hpa -n memory-store
    apiVersion: networking.k8s.io/v1
    kind: NetworkPolicy
    metadata:
-     name: memory-store-netpol
+     name: mem0-netpol
    spec:
      podSelector:
        matchLabels:
-         app: memory-store
+         app: mem0
      policyTypes:
        - Ingress
        - Egress
@@ -461,7 +461,7 @@ annotations:
 
 ```bash
 # Structured logging to stdout
-kubectl logs -n memory-store -l app=memory-store | jq
+kubectl logs -n mem0 -l app=mem0 | jq
 
 # Or use log aggregation
 # - ELK Stack
@@ -492,36 +492,36 @@ FastAPIInstrumentor.instrument_app(app)
 
 1. **Pods not starting**
    ```bash
-   kubectl describe pod -n memory-store memory-store-xxx
-   kubectl logs -n memory-store memory-store-xxx --previous
+   kubectl describe pod -n mem0 mem0-xxx
+   kubectl logs -n mem0 mem0-xxx --previous
    ```
 
 2. **Cohere API errors**
    ```bash
    # Check secret
-   kubectl get secret memory-store-secrets -n memory-store -o yaml
+   kubectl get secret mem0-secrets -n mem0 -o yaml
    
    # Recreate secret
-   kubectl delete secret memory-store-secrets -n memory-store
-   kubectl create secret generic memory-store-secrets --from-literal=COHERE_API_KEY=new_key
+   kubectl delete secret mem0-secrets -n mem0
+   kubectl create secret generic mem0-secrets --from-literal=COHERE_API_KEY=new_key
    
    # Restart pods
-   kubectl rollout restart deployment memory-store -n memory-store
+   kubectl rollout restart deployment mem0 -n mem0
    ```
 
 3. **Qdrant connection issues**
    ```bash
    # Check Qdrant is running
-   kubectl get pods -n memory-store -l app=qdrant
+   kubectl get pods -n mem0 -l app=qdrant
    
-   # Test connection from memory-store pod
-   kubectl exec -n memory-store memory-store-xxx -- curl http://qdrant-service:6333/healthz
+   # Test connection from mem0 pod
+   kubectl exec -n mem0 mem0-xxx -- curl http://qdrant-service:6333/healthz
    ```
 
 4. **OOM (Out of Memory) errors**
    ```bash
    # Increase memory limits
-   kubectl edit deployment memory-store -n memory-store
+   kubectl edit deployment mem0 -n mem0
    # Update: resources.limits.memory: "4Gi"
    ```
 
@@ -529,35 +529,35 @@ FastAPIInstrumentor.instrument_app(app)
 
 ```bash
 # Run with debug logging
-kubectl set env deployment/memory-store -n memory-store SERVICE_LOG_LEVEL=DEBUG
+kubectl set env deployment/mem0 -n mem0 SERVICE_LOG_LEVEL=DEBUG
 
 # Watch logs
-kubectl logs -n memory-store -l app=memory-store -f --tail=100
+kubectl logs -n mem0 -l app=mem0 -f --tail=100
 ```
 
 ### Health Checks
 
 ```bash
 # Check health endpoint
-kubectl port-forward -n memory-store svc/memory-store-service 8000:8000
+kubectl port-forward -n mem0 svc/mem0-service 8000:8000
 curl http://localhost:8000/health | jq
 
 # Check from within cluster
 kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
-  curl http://memory-store-service.memory-store:8000/health
+  curl http://mem0-service.mem0:8000/health
 ```
 
 ## Rollback
 
 ```bash
 # View deployment history
-kubectl rollout history deployment memory-store -n memory-store
+kubectl rollout history deployment mem0 -n mem0
 
 # Rollback to previous version
-kubectl rollout undo deployment memory-store -n memory-store
+kubectl rollout undo deployment mem0 -n mem0
 
 # Rollback to specific revision
-kubectl rollout undo deployment memory-store -n memory-store --to-revision=2
+kubectl rollout undo deployment mem0 -n mem0 --to-revision=2
 ```
 
 ## Cleanup
@@ -567,7 +567,7 @@ kubectl rollout undo deployment memory-store -n memory-store --to-revision=2
 kubectl delete -k k8s/
 
 # Or delete namespace (removes everything)
-kubectl delete namespace memory-store
+kubectl delete namespace mem0
 ```
 
 ## Next Steps

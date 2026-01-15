@@ -1,10 +1,10 @@
-# Integration Guide: Memory Store + AgentOrchestrator
+# Integration Guide: Mem0 + AgentOrchestrator
 
-How to integrate the Memory Store service with your existing AgentOrchestrator workflows.
+How to integrate the Mem0 service with your existing AgentOrchestrator workflows.
 
 ## Overview
 
-The Memory Store provides persistent, semantic memory for your agents, allowing them to:
+The Mem0 provides persistent, semantic memory for your agents, allowing them to:
 - Remember past interactions across sessions
 - Retrieve relevant context based on semantic similarity
 - Maintain agent-specific memory spaces
@@ -23,23 +23,23 @@ The Memory Store provides persistent, semantic memory for your agents, allowing 
 │       │ Memory ops    │               │                   │
 │       ▼               ▼               ▼                   │
 │  ┌──────────────────────────────────────────┐            │
-│  │      Memory Store Client                 │            │
+│  │      Mem0 Client                 │            │
 │  └────────────────┬─────────────────────────┘            │
 └───────────────────┼──────────────────────────────────────┘
                     │
                     │ HTTP/REST
                     ▼
         ┌────────────────────────┐
-        │  Memory Store Service  │
+        │  Mem0 Service  │
         │  (Mem0 + Cohere + Qdrant)│
         └────────────────────────┘
 ```
 
 ## Installation
 
-### Step 1: Deploy Memory Store
+### Step 1: Deploy Mem0
 
-Follow the [QUICKSTART.md](QUICKSTART.md) to deploy Memory Store:
+Follow the [QUICKSTART.md](QUICKSTART.md) to deploy Mem0:
 
 ```bash
 cd memory_store
@@ -51,7 +51,7 @@ Verify it's running:
 curl http://localhost:8000/health
 ```
 
-### Step 2: Add Memory Store Client to Your Agent
+### Step 2: Add Mem0 Client to Your Agent
 
 Create a client class in your agent code:
 
@@ -67,7 +67,7 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryStoreClient:
-    """Client for Memory Store service integration."""
+    """Client for Mem0 service integration."""
     
     def __init__(
         self,
@@ -221,12 +221,12 @@ from agentorchestrator import ChainForge
 # Define agents with memory
 context_agent = MemoryAwareAgent(
     agent_id="context_builder",
-    memory_store_url="http://memory-store-service:8000",
+    memory_store_url="http://mem0-service:8000",
 )
 
 analysis_agent = MemoryAwareAgent(
     agent_id="analyzer",
-    memory_store_url="http://memory-store-service:8000",
+    memory_store_url="http://mem0-service:8000",
 )
 
 # Build chain
@@ -253,13 +253,13 @@ class TeamAgent(Agent):
         # Personal memory
         self.personal_memory = MemoryStoreClient(
             agent_id=agent_id,
-            base_url="http://memory-store-service:8000",
+            base_url="http://mem0-service:8000",
         )
         
         # Team shared memory
         self.team_memory = MemoryStoreClient(
             agent_id=f"team_{team_id}",
-            base_url="http://memory-store-service:8000",
+            base_url="http://mem0-service:8000",
         )
     
     async def execute(self, context):
@@ -342,7 +342,7 @@ print(context.get("retrieved_memories"))
 Add to your AgentOrchestrator `.env`:
 
 ```bash
-# Memory Store Configuration
+# Mem0 Configuration
 MEMORY_STORE_URL=http://localhost:8000
 MEMORY_STORE_TIMEOUT=30.0
 MEMORY_STORE_ENABLED=true
@@ -359,7 +359,7 @@ Add to your `agentorchestrator/config.py`:
 ```python
 @dataclass
 class MemoryStoreConfig:
-    """Memory Store configuration."""
+    """Mem0 configuration."""
     
     url: str = "http://localhost:8000"
     timeout: float = 30.0
@@ -385,14 +385,14 @@ class Config:
 
 ### Option 1: Same Namespace
 
-Deploy Memory Store in the same namespace as AgentOrchestrator:
+Deploy Mem0 in the same namespace as AgentOrchestrator:
 
 ```bash
 # Deploy to agentorchestrator namespace
 kubectl apply -k memory_store/k8s/ -n agentorchestrator
 
 # Agents can access via service name
-# URL: http://memory-store-service:8000
+# URL: http://mem0-service:8000
 ```
 
 ### Option 2: Separate Namespace
@@ -400,22 +400,22 @@ kubectl apply -k memory_store/k8s/ -n agentorchestrator
 Deploy in separate namespace with cross-namespace access:
 
 ```bash
-# Deploy Memory Store
+# Deploy Mem0
 kubectl apply -k memory_store/k8s/
 
 # Access from agents using FQDN
-# URL: http://memory-store-service.memory-store.svc.cluster.local:8000
+# URL: http://mem0-service.mem0.svc.cluster.local:8000
 ```
 
 ### Option 3: External Service
 
-For cloud-hosted Memory Store:
+For cloud-hosted Mem0:
 
 ```bash
 # Set in AgentOrchestrator deployment
 env:
   - name: MEMORY_STORE_URL
-    value: "https://memory-store.yourdomain.com"
+    value: "https://mem0.yourdomain.com"
 ```
 
 ## Best Practices
@@ -498,7 +498,7 @@ class MemoryMetricsMiddleware(Middleware):
 
 ## Testing
 
-### Unit Tests with Mock Memory Store
+### Unit Tests with Mock Mem0
 
 ```python
 import pytest
@@ -534,7 +534,7 @@ async def test_memory_aware_agent(mock_memory_client):
 ```python
 @pytest.mark.integration
 async def test_memory_store_integration():
-    """Test real Memory Store integration."""
+    """Test real Mem0 integration."""
     client = MemoryStoreClient(
         base_url="http://localhost:8000",
         agent_id="test_agent_integration",
@@ -589,6 +589,6 @@ export MEMORY_STORE_DEBUG=true
 
 ## Support
 
-- Memory Store API: http://localhost:8000/docs
+- Mem0 API: http://localhost:8000/docs
 - AgentOrchestrator docs: See main README
 - Issues: Open GitHub issues with both projects tagged

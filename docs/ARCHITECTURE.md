@@ -1,12 +1,12 @@
-# Memory Store - Architecture Details
+# Mem0 - Architecture Details
 
 Complete architecture documentation explaining how all components work together.
 
 ## Overview
 
-The Memory Store is a complete, self-contained service that includes **all required dependencies**. When you deploy Memory Store, you get:
+The Mem0 is a complete, self-contained service that includes **all required dependencies**. When you deploy Mem0, you get:
 
-1. ✅ **Memory Store Service** - FastAPI-based REST API
+1. ✅ **Mem0 Service** - FastAPI-based REST API
 2. ✅ **Qdrant Vector Store** - Automatically deployed alongside
 3. ✅ **Cohere Integration** - Embeddings via API key
 4. ✅ **LLM Gateway Adapter** - Connects to your existing infrastructure
@@ -33,7 +33,7 @@ The Memory Store is a complete, self-contained service that includes **all requi
                         │ - DELETE /memories
                         │
 ┌───────────────────────▼──────────────────────────────────────────┐
-│                  Memory Store Service                            │
+│                  Mem0 Service                            │
 │                                                                  │
 │  ┌────────────────────────────────────────────────────────┐    │
 │  │              FastAPI Application                        │    │
@@ -94,8 +94,8 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
   
-  # Memory Store - connects to qdrant above
-  memory-store:
+  # Mem0 - connects to qdrant above
+  mem0:
     build: .
     ports:
       - "8000:8000"
@@ -107,16 +107,16 @@ services:
 
 **Key Points:**
 - ✅ Qdrant is in the same Docker Compose file
-- ✅ Memory Store automatically connects to it
+- ✅ Mem0 automatically connects to it
 - ✅ They communicate via internal Docker network
-- ✅ Only Memory Store port (8000) needs to be exposed to your apps
+- ✅ Only Mem0 port (8000) needs to be exposed to your apps
 
 ### Kubernetes Deployment
 
 When you run `kubectl apply -k k8s/`, **both are deployed**:
 
 ```
-memory-store namespace
+mem0 namespace
 │
 ├── Qdrant Deployment (k8s/qdrant-deployment.yaml)
 │   ├── Pod: qdrant-xxx
@@ -125,11 +125,11 @@ memory-store namespace
 │   │   └── Port 6333 (internal only)
 │   └── PersistentVolumeClaim: qdrant-pvc (10GB)
 │
-└── Memory Store Deployment (k8s/deployment.yaml)
-    ├── Pods: memory-store-xxx (3 replicas)
-    │   └── Container: memory-store:latest
+└── Mem0 Deployment (k8s/deployment.yaml)
+    ├── Pods: mem0-xxx (3 replicas)
+    │   └── Container: mem0:latest
     │       └── Env: QDRANT_URL=http://qdrant-service:6333
-    ├── Service: memory-store-service (ClusterIP)
+    ├── Service: mem0-service (ClusterIP)
     │   └── Port 8000 (exposed to cluster)
     └── HPA: Scales 3-10 replicas
 ```
@@ -137,8 +137,8 @@ memory-store namespace
 **Key Points:**
 - ✅ Both deployed to same namespace
 - ✅ Qdrant service is ClusterIP (internal only)
-- ✅ Memory Store connects via Kubernetes service DNS
-- ✅ Only Memory Store service is exposed (via Ingress if configured)
+- ✅ Mem0 connects via Kubernetes service DNS
+- ✅ Only Mem0 service is exposed (via Ingress if configured)
 
 ## Data Flow
 
@@ -155,7 +155,7 @@ Agent Code
        }
        │
        ▼
-Memory Store API
+Mem0 API
    │
    ├─→ Validate request (Pydantic)
    │
@@ -191,7 +191,7 @@ Agent Code
        }
        │
        ▼
-Memory Store API
+Mem0 API
    │
    └─→ Mem0.search()
        │
@@ -271,7 +271,7 @@ kubectl delete deployment qdrant  # Pod deleted
 
 ## Scaling Considerations
 
-### Memory Store Service
+### Mem0 Service
 
 **Horizontal Scaling:**
 ```yaml
@@ -314,7 +314,7 @@ replication_factor: 2
 
 **Docker Compose:**
 ```
-memory-store container
+mem0 container
    │
    └─→ http://qdrant:6333  (Docker network)
        └─→ qdrant container
@@ -322,7 +322,7 @@ memory-store container
 
 **Kubernetes:**
 ```
-memory-store pod
+mem0 pod
    │
    └─→ http://qdrant-service:6333  (K8s service DNS)
        └─→ qdrant pod(s)
@@ -335,23 +335,23 @@ memory-store pod
 Your agent code
    │
    └─→ http://localhost:8000  (exposed port)
-       └─→ memory-store container
+       └─→ mem0 container
 ```
 
 **Kubernetes (Same Namespace):**
 ```
 Your agent pod
    │
-   └─→ http://memory-store-service:8000  (K8s service)
-       └─→ memory-store pods
+   └─→ http://mem0-service:8000  (K8s service)
+       └─→ mem0 pods
 ```
 
 **Kubernetes (Different Namespace):**
 ```
 Your agent pod (namespace: agents)
    │
-   └─→ http://memory-store-service.memory-store.svc.cluster.local:8000
-       └─→ memory-store pods (namespace: memory-store)
+   └─→ http://mem0-service.mem0.svc.cluster.local:8000
+       └─→ mem0 pods (namespace: mem0)
 ```
 
 ## Security Architecture
@@ -368,11 +368,11 @@ Your agent pod (namespace: agents)
         └──────┬──────┘
                │
    ┌───────────▼───────────────┐
-   │  memory-store-service     │ (ClusterIP)
+   │  mem0-service     │ (ClusterIP)
    └───────────┬───────────────┘
                │
    ┌───────────▼───────────────┐
-   │  Memory Store Pods        │
+   │  Mem0 Pods        │
    └───┬───────────────────┬───┘
        │                   │
        │              ┌────▼────────┐
@@ -387,21 +387,21 @@ Your agent pod (namespace: agents)
 
 **Key Points:**
 - ✅ Qdrant is NOT exposed to internet
-- ✅ Only Memory Store service is accessible
+- ✅ Only Mem0 service is accessible
 - ✅ All internal communication is within cluster
 - ✅ External APIs use HTTPS
 
 ### Authentication
 
-**Agents → Memory Store:**
+**Agents → Mem0:**
 - Currently: Network-level (Kubernetes NetworkPolicies)
 - Future: API keys, OAuth, mTLS
 
-**Memory Store → Qdrant:**
+**Mem0 → Qdrant:**
 - Internal network only
 - Optional: Qdrant API key (for Qdrant Cloud)
 
-**Memory Store → Cohere:**
+**Mem0 → Cohere:**
 - API key authentication
 - Stored in Kubernetes Secret
 
@@ -422,7 +422,7 @@ Your agent pod (namespace: agents)
 
 ### Metrics to Monitor
 
-**Memory Store Service:**
+**Mem0 Service:**
 - Request rate (req/sec)
 - Response time (p50, p95, p99)
 - Error rate (4xx, 5xx)
@@ -452,7 +452,7 @@ Your agent pod (namespace: agents)
 - Storage: ~10GB
 
 **Kubernetes (Self-Hosted):**
-- Memory Store: 3 pods × $25/month = $75
+- Mem0: 3 pods × $25/month = $75
 - Qdrant: 1 pod × $60/month = $60
 - Load Balancer: $20/month
 - Storage: $10/month
@@ -522,7 +522,7 @@ Your agent pod (namespace: agents)
 
 1. **Qdrant is included** - No separate deployment needed
 2. **Internal communication** - Qdrant not exposed externally
-3. **Simple connection** - Agents connect only to Memory Store API
+3. **Simple connection** - Agents connect only to Mem0 API
 4. **Scales together** - Both services deployed as a unit
 5. **Production-ready** - Persistence, HA, monitoring built-in
 
@@ -531,7 +531,7 @@ Your agent pod (namespace: agents)
 from memory_store.client import MemoryStoreClient
 
 memory = MemoryStoreClient(
-    base_url="http://memory-store-service:8000",
+    base_url="http://mem0-service:8000",
     agent_id="my_agent"
 )
 ```

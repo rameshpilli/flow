@@ -1,6 +1,6 @@
-# Corporate Deployment Guide - Memory Store
+# Corporate Deployment Guide - Mem0
 
-Complete guide for deploying Memory Store to RBC corporate Kubernetes environments using Helm and Helios.
+Complete guide for deploying Mem0 to RBC corporate Kubernetes environments using Helm and Helios.
 
 ## Table of Contents
 
@@ -19,7 +19,7 @@ Complete guide for deploying Memory Store to RBC corporate Kubernetes environmen
 
 ## Overview
 
-Memory Store uses RBC corporate standards for Kubernetes deployment:
+Mem0 uses RBC corporate standards for Kubernetes deployment:
 
 - **Helm**: For Kubernetes manifest templating
 - **Helios**: For multi-environment deployment orchestration
@@ -30,11 +30,11 @@ Memory Store uses RBC corporate standards for Kubernetes deployment:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│              Memory Store Deployment                     │
+│              Mem0 Deployment                     │
 ├─────────────────────────────────────────────────────────┤
 │                                                           │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ Memory Store │  │   Qdrant     │  │  Memgraph    │  │
+│  │ Mem0 │  │   Qdrant     │  │  Memgraph    │  │
 │  │   (API)      │  │ (Vector DB)  │  │ (Graph DB)   │  │
 │  │  Pods: 1-10  │  │   Pods: 1    │  │   Pods: 1    │  │
 │  └──────────────┘  └──────────────┘  └──────────────┘  │
@@ -93,7 +93,7 @@ memory_store/
 │   │   └── prod/values.yaml       # PROD overrides
 │   └── templates/
 │       ├── _helpers.tpl           # Template helpers
-│       ├── deployment.yaml        # Memory Store deployment
+│       ├── deployment.yaml        # Mem0 deployment
 │       ├── service.yaml           # Service definition
 │       ├── configmap.yaml         # Configuration
 │       ├── ingress.yaml           # External access
@@ -137,11 +137,11 @@ FROM innersource-docker.artifactory.fg.rbc.com/container-hub/python:3.11-linux-a
 # Build image
 docker build \
   -f deployments/Dockerfile.corporate \
-  -t docker-isa0-dev.artifactory.fg.rbc.com/isa0-memory-store:0.1.0 \
+  -t docker-isa0-dev.artifactory.fg.rbc.com/isa0-mem0:0.1.0 \
   .
 
 # Push to Artifactory
-docker push docker-isa0-dev.artifactory.fg.rbc.com/isa0-memory-store:0.1.0
+docker push docker-isa0-dev.artifactory.fg.rbc.com/isa0-mem0:0.1.0
 ```
 
 ### 3. CI/CD Integration
@@ -167,7 +167,7 @@ rbc:
     host: artifactory.fg.rbc.com
 
 image:
-  name: isa0-memory-store
+  name: isa0-mem0
   pullPolicy: IfNotPresent
 
 service:
@@ -224,7 +224,7 @@ To customize for your app code:
 3. Update ingress hosts:
    ```yaml
    ingress:
-     host: memory-store.your-domain.fg.rbc.com
+     host: mem0.your-domain.fg.rbc.com
    ```
 
 ---
@@ -432,12 +432,12 @@ The `deploy.sh` script automatically verifies:
 
 1. **Deployment rollout**:
    ```bash
-   kubectl rollout status deployment/memory-store --timeout=5m
+   kubectl rollout status deployment/mem0 --timeout=5m
    ```
 
 2. **Pod health**:
    ```bash
-   kubectl get pods -l app.kubernetes.io/name=memory-store
+   kubectl get pods -l app.kubernetes.io/name=mem0
    ```
 
 3. **Health endpoint**:
@@ -447,31 +447,31 @@ The `deploy.sh` script automatically verifies:
 
 4. **Qdrant status**:
    ```bash
-   kubectl get pods -l app.kubernetes.io/name=memory-store-qdrant
+   kubectl get pods -l app.kubernetes.io/name=mem0-qdrant
    ```
 
 5. **Memgraph status** (if enabled):
    ```bash
-   kubectl get pods -l app.kubernetes.io/name=memory-store-memgraph
+   kubectl get pods -l app.kubernetes.io/name=mem0-memgraph
    ```
 
 ### Manual Verification
 
 ```bash
 # Check all resources
-kubectl get all -l app.kubernetes.io/name=memory-store
+kubectl get all -l app.kubernetes.io/name=mem0
 
 # Check HPA
-kubectl get hpa memory-store
+kubectl get hpa mem0
 
 # Check ingress
-kubectl get ingress memory-store
+kubectl get ingress mem0
 
 # View logs
-kubectl logs -f deployment/memory-store
+kubectl logs -f deployment/mem0
 
 # Test API
-kubectl port-forward svc/memory-store 8000:80
+kubectl port-forward svc/mem0 8000:80
 curl http://localhost:8000/docs
 ```
 
@@ -514,7 +514,7 @@ Failed to pull image: unauthorized
 kubectl get secret artifactory-docker-isa0-dev-secret -o yaml
 
 # Test image pull manually
-docker pull docker-isa0-dev.artifactory.fg.rbc.com/isa0-memory-store:0.1.0
+docker pull docker-isa0-dev.artifactory.fg.rbc.com/isa0-mem0:0.1.0
 ```
 
 #### 2. Vault Authentication Failures
@@ -552,11 +552,11 @@ Failed to connect to Qdrant
 
 ```bash
 # Check Qdrant pod
-kubectl get pod -l app.kubernetes.io/name=memory-store-qdrant
+kubectl get pod -l app.kubernetes.io/name=mem0-qdrant
 
-# Test connectivity from Memory Store pod
-kubectl exec -it <memory-store-pod> -- \
-  curl http://memory-store-qdrant:6333/
+# Test connectivity from Mem0 pod
+kubectl exec -it <mem0-pod> -- \
+  curl http://mem0-qdrant:6333/
 ```
 
 #### 4. Health Check Failures
@@ -593,10 +593,10 @@ kubectl exec <pod-name> -- netstat -tlnp | grep 8000
 
 ```bash
 # Check ingress
-kubectl get ingress memory-store -o yaml
+kubectl get ingress mem0 -o yaml
 
 # Check certificate
-kubectl get certificate memory-store-cert-tls
+kubectl get certificate mem0-cert-tls
 
 # Test DNS
 nslookup mem0.cfk.devfg.rbc.com
@@ -606,22 +606,22 @@ nslookup mem0.cfk.devfg.rbc.com
 
 ```bash
 # Describe deployment
-kubectl describe deployment memory-store
+kubectl describe deployment mem0
 
 # Get events
 kubectl get events --sort-by='.lastTimestamp'
 
 # Check resource usage
-kubectl top pods -l app.kubernetes.io/name=memory-store
+kubectl top pods -l app.kubernetes.io/name=mem0
 
 # Exec into pod
 kubectl exec -it <pod-name> -- /bin/bash
 
 # View all logs
-kubectl logs -l app.kubernetes.io/name=memory-store --all-containers=true
+kubectl logs -l app.kubernetes.io/name=mem0 --all-containers=true
 
 # Check ConfigMap
-kubectl get configmap memory-store-cfgmap -o yaml
+kubectl get configmap mem0-cfgmap -o yaml
 ```
 
 ### Getting Help
@@ -660,24 +660,24 @@ After successful deployment:
 
 ```bash
 # Template Helm chart locally
-helm template memory-store ./helm/ \
+helm template mem0 ./helm/ \
   --values ./helm/environments/dev/values.yaml
 
 # Install directly with Helm (without Helios)
-helm install memory-store ./helm/ \
+helm install mem0 ./helm/ \
   --values ./helm/environments/dev/values.yaml \
   --namespace isa0-dev
 
 # Upgrade release
-helm upgrade memory-store ./helm/ \
+helm upgrade mem0 ./helm/ \
   --values ./helm/environments/dev/values.yaml \
   --namespace isa0-dev
 
 # Rollback
-helm rollback memory-store 1 --namespace isa0-dev
+helm rollback mem0 1 --namespace isa0-dev
 
 # Uninstall
-helm uninstall memory-store --namespace isa0-dev
+helm uninstall mem0 --namespace isa0-dev
 ```
 
 ### Environment URLs

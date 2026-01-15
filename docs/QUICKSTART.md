@@ -1,6 +1,6 @@
-# Memory Store - Quick Start Guide
+# Mem0 - Quick Start Guide
 
-Get the Memory Store service running in under 5 minutes.
+Get the Mem0 service running in under 5 minutes.
 
 ## Prerequisites
 
@@ -44,8 +44,8 @@ docker-compose ps
 ```
 
 You should see:
-- `memory-store-service` - Running on port 8000
-- `memory-store-qdrant` - Running on port 6333
+- `mem0-service` - Running on port 8000
+- `mem0-qdrant` - Running on port 6333
 
 **Optional: Enable GraphRAG** (relationship-based memory)
 ```bash
@@ -182,7 +182,7 @@ console.log(memories);
 
 ```bash
 # View logs
-docker-compose logs -f memory-store
+docker-compose logs -f mem0
 
 # Stop services
 docker-compose down
@@ -205,7 +205,7 @@ docker-compose down -v
    ```bash
    pip install -e ".[dev]"
    docker run -d -p 6333:6333 qdrant/qdrant  # Just Qdrant
-   memory-store --reload --log-level DEBUG
+   mem0 --reload --log-level DEBUG
    ```
 
 2. **Run tests**:
@@ -226,7 +226,7 @@ docker-compose down -v
 
 ```bash
 # Check logs
-docker-compose logs memory-store
+docker-compose logs mem0
 
 # Common issues:
 # 1. Invalid Cohere API key - check .env file
@@ -252,7 +252,7 @@ curl http://localhost:8000/health | jq
 
 # Verify Cohere API key is valid
 # Check logs for specific errors
-docker-compose logs memory-store | tail -50
+docker-compose logs mem0 | tail -50
 ```
 
 ## Getting Help

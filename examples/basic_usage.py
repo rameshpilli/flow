@@ -1,7 +1,7 @@
 """
-Basic Memory Store Usage Examples
+Basic Mem0 Usage Examples
 
-Run these examples to test your Memory Store deployment.
+Run these examples to test your Mem0 deployment.
 """
 
 import asyncio
@@ -245,12 +245,12 @@ async def example_5_error_handling():
 async def main():
     """Run all examples."""
     print("\n" + "=" * 60)
-    print("Memory Store Client Examples")
+    print("Mem0 Client Examples")
     print("=" * 60)
     print(f"\nConnecting to: {os.getenv('MEMORY_STORE_URL', 'http://localhost:8000')}")
-    print("\nNote: Make sure Memory Store is running!")
+    print("\nNote: Make sure Mem0 is running!")
     print("  Local: docker-compose up -d")
-    print("  K8s: kubectl port-forward -n memory-store svc/mem0-service 8000:8000")
+    print("  K8s: kubectl port-forward -n mem0 svc/mem0-service 8000:8000")
     
     try:
         await example_1_basic_operations()
@@ -266,9 +266,9 @@ async def main():
     except Exception as e:
         print(f"\n✗ Example failed with error: {e}")
         print("\nTroubleshooting:")
-        print("  1. Is Memory Store running? Check: curl http://localhost:8000/health")
+        print("  1. Is Mem0 running? Check: curl http://localhost:8000/health")
         print("  2. Is Cohere API key set?")
-        print("  3. Check logs: docker-compose logs memory-store")
+        print("  3. Check logs: docker-compose logs mem0")
 
 
 if __name__ == "__main__":

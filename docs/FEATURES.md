@@ -1,4 +1,4 @@
-# Memory Store - Feature Overview
+# Mem0 - Feature Overview
 
 Complete list of features and capabilities.
 
@@ -174,7 +174,7 @@ kubectl apply -k k8s/
 ## Scaling Features
 
 ### Horizontal Scaling
-- **Memory Store Service**: 3-10 replicas (HPA)
+- **Mem0 Service**: 3-10 replicas (HPA)
 - **Qdrant**: Single or clustered
 - **Memgraph**: Vertical scaling recommended
 

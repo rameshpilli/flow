@@ -1,6 +1,6 @@
-# Memory Store Documentation
+# Mem0 Documentation
 
-Complete documentation for the Memory Store service.
+Complete documentation for the Mem0 service.
 
 ## 📖 Getting Started
 

@@ -1,4 +1,4 @@
-# Memory Store - Project Summary
+# Mem0 - Project Summary
 
 ## Overview
 
@@ -7,7 +7,7 @@ A production-ready, Kubernetes-native memory management service built for multi-
 ## What Was Built
 
 ### Core Service
-- **Memory Store Service** (`memory_store/service.py`): Core business logic using mem0
+- **Mem0 Service** (`memory_store/service.py`): Core business logic using mem0
 - **FastAPI REST API** (`memory_store/api.py`): RESTful API for memory operations
 - **LLM Gateway Adapter** (`memory_store/llm_adapter.py`): Integration with your existing LLM infrastructure
 - **Configuration Management** (`memory_store/config.py`): Pydantic-based configuration with environment variable support
@@ -15,7 +15,7 @@ A production-ready, Kubernetes-native memory management service built for multi-
 ### Infrastructure
 - **Docker Support**: 
   - `Dockerfile`: Production-ready multi-stage build
-  - `docker-compose.yml`: Local development stack (Memory Store + Qdrant)
+  - `docker-compose.yml`: Local development stack (Mem0 + Qdrant)
   - `.dockerignore`: Optimized Docker context
 
 - **Kubernetes Deployment**:
@@ -23,7 +23,7 @@ A production-ready, Kubernetes-native memory management service built for multi-
   - `k8s/configmap.yaml`: Non-sensitive configuration
   - `k8s/secret.yaml`: Secret management template
   - `k8s/qdrant-deployment.yaml`: Qdrant vector store deployment
-  - `k8s/deployment.yaml`: Memory Store service deployment with HPA
+  - `k8s/deployment.yaml`: Mem0 service deployment with HPA
   - `k8s/ingress.yaml`: Ingress configuration for external access
   - `k8s/kustomization.yaml`: Kustomize overlay for environment-specific configs
 
@@ -64,7 +64,7 @@ A production-ready, Kubernetes-native memory management service built for multi-
                       │ REST API (HTTP/JSON)
                       ▼
 ┌─────────────────────────────────────────────────────────┐
-│              Memory Store Service                        │
+│              Mem0 Service                        │
 │  ┌──────────────────────────────────────────────────┐  │
 │  │  FastAPI                                         │  │
 │  │  - /memories (POST) - Add memory                │  │
@@ -100,7 +100,7 @@ A production-ready, Kubernetes-native memory management service built for multi-
 
 ### Component Details
 
-1. **Memory Store Service**
+1. **Mem0 Service**
    - FastAPI for high-performance async API
    - Pydantic for data validation
    - Multi-agent isolation via agent_id
@@ -252,7 +252,7 @@ docker-compose up -d
 
 ```bash
 pip install -e ".[dev]"
-memory-store --reload
+mem0 --reload
 ```
 
 ### 3. Kubernetes (Production)
@@ -421,7 +421,7 @@ make k8s-logs
 
 ### Infrastructure (Kubernetes)
 Example AWS costs:
-- Memory Store pods (3x t3.medium): ~$75/month
+- Mem0 pods (3x t3.medium): ~$75/month
 - Qdrant (1x t3.large): ~$60/month
 - Load Balancer: ~$20/month
 - Storage (100GB): ~$10/month
@@ -480,7 +480,7 @@ Built using:
 
 ## Summary
 
-This Memory Store service provides a production-ready solution for persistent, semantic memory in multi-agent systems. It integrates seamlessly with your existing AgentOrchestrator infrastructure while providing the flexibility to deploy in any environment from local development to large-scale Kubernetes clusters.
+This Mem0 service provides a production-ready solution for persistent, semantic memory in multi-agent systems. It integrates seamlessly with your existing AgentOrchestrator infrastructure while providing the flexibility to deploy in any environment from local development to large-scale Kubernetes clusters.
 
 The service is designed with production requirements in mind: high availability, horizontal scaling, security, monitoring, and operational simplicity. With comprehensive documentation and multiple deployment options, you can get started in minutes and scale to production with confidence.
 

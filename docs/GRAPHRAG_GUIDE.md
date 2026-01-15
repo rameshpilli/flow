@@ -28,7 +28,7 @@ Complete guide for enabling relationship-based memory using Memgraph graph store
 ## Architecture with GraphRAG
 
 ```
-Memory Store Service
+Mem0 Service
        │
        ├─→ Cohere (Embeddings)
        │      ↓
@@ -80,9 +80,9 @@ docker-compose up -d
 docker-compose ps
 
 # Should show:
-# - memory-store-service
-# - memory-store-qdrant
-# - memory-store-memgraph
+# - mem0-service
+# - mem0-qdrant
+# - mem0-memgraph
 
 # Test Memgraph connection
 docker-compose exec memgraph mgconsole
@@ -105,8 +105,8 @@ MEM0_GRAPH_STORE_ENABLED: "true"
 kubectl apply -k .
 
 # 4. Verify
-kubectl get pods -n memory-store | grep memgraph
-kubectl logs -n memory-store -l app=memgraph
+kubectl get pods -n mem0 | grep memgraph
+kubectl logs -n mem0 -l app=memgraph
 ```
 
 ## Using GraphRAG
@@ -225,7 +225,7 @@ await memory.add_memory(
 docker-compose exec memgraph mgconsole
 
 # Or from Kubernetes
-kubectl exec -it -n memory-store deployment/memgraph -- mgconsole
+kubectl exec -it -n mem0 deployment/memgraph -- mgconsole
 ```
 
 ### Cypher Queries
@@ -259,7 +259,7 @@ RETURN p.name, c.name, prod.name;
 curl http://localhost:7444/metrics
 
 # Check connection
-docker-compose exec memory-store python -c "
+docker-compose exec mem0 python -c "
 from neo4j import GraphDatabase
 driver = GraphDatabase.driver('bolt://memgraph:7687')
 with driver.session() as session:
@@ -401,7 +401,7 @@ To disable and go back to vector-only:
 MEM0_GRAPH_STORE_ENABLED=false
 
 # Restart
-docker-compose restart memory-store
+docker-compose restart mem0
 
 # Optionally stop Memgraph
 docker-compose stop memgraph
