@@ -28,8 +28,8 @@ services:
   # Memory Store Service
   memory-store:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..  # Parent directory to access memory_store/ package
+      dockerfile: deployments/Dockerfile.corporate
     container_name: memory-store-service
     ports:
       - "8000:8000"

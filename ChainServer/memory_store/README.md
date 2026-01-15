@@ -158,19 +158,13 @@ The `helios/` directory contains corporate deployment configuration:
 
 ## 🐳 Docker
 
-### Standard Dockerfile
-```bash
-# Build
-make docker-build
-
-# Run with compose
-make docker-compose-up
-```
-
 ### Corporate Dockerfile
 ```bash
 # Build with corporate base image
-make docker-build-corporate
+make docker-build
+
+# Run with compose (local development)
+make docker-compose-up
 
 # Uses RBC Artifactory registry:
 # - innersource-docker.artifactory.fg.rbc.com
@@ -326,9 +320,8 @@ memory_store/
 │   ├── env-config.yml    # Environment targets
 │   └── deploy.sh         # Deployment script
 ├── deployments/          # Docker configurations
-│   ├── Dockerfile        # Standard Dockerfile
-│   ├── Dockerfile.corporate  # Corporate Dockerfile
-│   └── docker-compose.yml
+│   ├── Dockerfile.corporate  # Corporate Dockerfile (RBC)
+│   └── docker-compose.yml    # Local development
 ├── docs/                 # Documentation
 ├── tests/                # Test suite
 └── examples/             # Code examples

@@ -63,10 +63,7 @@ check: lint test ## Run all checks (lint + test)
 # Docker
 # ───────────────────────────────────────────────────────────────────────────────
 
-docker-build: ## Build Docker image (standard)
-	$(DOCKER) build -f deployments/Dockerfile -t $(IMAGE_NAME):$(IMAGE_TAG) .
-
-docker-build-corporate: ## Build Docker image (corporate)
+docker-build: ## Build Docker image (corporate)
 	$(DOCKER) build -f deployments/Dockerfile.corporate -t $(IMAGE_NAME):$(IMAGE_TAG) .
 
 docker-run: ## Run Docker container locally

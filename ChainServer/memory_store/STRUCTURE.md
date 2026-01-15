@@ -29,7 +29,6 @@ memory_store/
 │   └── PROJECT_SUMMARY.md        # Technical overview
 │
 ├── 🐳 deployments/               # Docker & container configs
-│   ├── Dockerfile                # Standard container image
 │   ├── Dockerfile.corporate      # Corporate container image (RBC)
 │   ├── docker-compose.yml        # Local development stack
 │   └── .dockerignore             # Docker build exclusions
@@ -82,14 +81,14 @@ memory_store/
 
 - **Source Code**: 7 files
 - **Documentation**: 11 files (10 guides + 1 index)
-- **Deployment**: 4 files (2 Dockerfiles, compose, ignore)
+- **Deployment**: 3 files (Dockerfile, compose, ignore)
 - **Helm Chart**: 16 files (chart, values, templates)
 - **Helios**: 2 files (config, deploy script)
 - **Tests**: 4 files
 - **Examples**: 2 files
 - **Config**: 5 files (pyproject, Makefile, env, structure, quickstart)
 
-**Total**: 51 files across 8 directories
+**Total**: 50 files across 8 directories
 
 ## Key Principles
 
@@ -130,13 +129,10 @@ make dev
 
 ### Docker
 ```bash
-# Build (standard)
-docker build -f deployments/Dockerfile -t memory-store .
+# Build (corporate Dockerfile)
+make docker-build
 
-# Build (corporate)
-make docker-build-corporate
-
-# Run with compose
+# Run with compose (local development)
 docker-compose -f deployments/docker-compose.yml up -d
 
 # Or with Makefile
