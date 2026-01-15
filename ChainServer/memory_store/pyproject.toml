@@ -7,6 +7,7 @@ name = "memory-store"
 version = "0.1.0"
 description = "Mem0-based memory store service with multi-agent support and Cohere Compass vector store"
 readme = "README.md"
+repository = "https://github.com/rameshpilli/flow"
 license = "MIT"
 requires-python = ">=3.10"
 keywords = ["mem0", "memory", "ai", "agents", "vector-store", "cohere"]

@@ -61,19 +61,19 @@ check: lint test ## Run all checks (lint + test)
 # ───────────────────────────────────────────────────────────────────────────────
 
 docker-build: ## Build Docker image
-	$(DOCKER) build -t $(IMAGE_NAME):$(IMAGE_TAG) .
+	$(DOCKER) build -f deployments/Dockerfile -t $(IMAGE_NAME):$(IMAGE_TAG) .
 
 docker-run: ## Run Docker container locally
 	$(DOCKER) run -p 8000:8000 --env-file .env $(IMAGE_NAME):$(IMAGE_TAG)
 
 docker-compose-up: ## Start services with docker-compose
-	docker-compose up -d
+	docker-compose -f deployments/docker-compose.yml up -d
 
 docker-compose-down: ## Stop services with docker-compose
-	docker-compose down
+	docker-compose -f deployments/docker-compose.yml down
 
 docker-compose-logs: ## View docker-compose logs
-	docker-compose logs -f memory-store
+	docker-compose -f deployments/docker-compose.yml logs -f memory-store
 
 docker-tag: ## Tag image for registry
 	$(DOCKER) tag $(IMAGE_NAME):$(IMAGE_TAG) $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)

@@ -45,18 +45,19 @@ A production-ready, Kubernetes-native memory management service built on [mem0](
 
 Your agents only connect to the Memory Store API. The service handles all communication with Qdrant internally.
 
-## Documentation
+## 📚 Documentation
 
 | Document | Description |
 |----------|-------------|
-| **[QUICKSTART.md](QUICKSTART.md)** | Get started in 5 minutes |
-| **[USER_GUIDE.md](USER_GUIDE.md)** | How to connect from your agents |
-| **[INTEGRATION.md](INTEGRATION.md)** | AgentOrchestrator integration guide |
-| **[DEPLOYMENT.md](DEPLOYMENT.md)** | Complete deployment guide |
-| **[DEPLOYMENT_ARCHITECTURE.md](DEPLOYMENT_ARCHITECTURE.md)** | Pod/container layout explained |
-| **[ARCHITECTURE.md](ARCHITECTURE.md)** | Architecture and design details |
-| **[GRAPHRAG_GUIDE.md](GRAPHRAG_GUIDE.md)** | GraphRAG setup (optional) |
-| **[FEATURES.md](FEATURES.md)** | Complete feature list |
+| **[docs/QUICKSTART.md](docs/QUICKSTART.md)** | Get started in 5 minutes |
+| **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)** | How to connect from your agents |
+| **[docs/INTEGRATION.md](docs/INTEGRATION.md)** | AgentOrchestrator integration guide |
+| **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** | Complete deployment guide |
+| **[docs/DEPLOYMENT_ARCHITECTURE.md](docs/DEPLOYMENT_ARCHITECTURE.md)** | Pod/container layout explained |
+| **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** | Architecture and design details |
+| **[docs/GRAPHRAG_GUIDE.md](docs/GRAPHRAG_GUIDE.md)** | GraphRAG setup (optional) |
+| **[docs/FEATURES.md](docs/FEATURES.md)** | Complete feature list |
+| **[docs/PROJECT_SUMMARY.md](docs/PROJECT_SUMMARY.md)** | Technical overview |
 | **[examples/](examples/)** | Code examples |
 
 ## Quick Start
@@ -75,7 +76,7 @@ Your agents only connect to the Memory Store API. The service handles all commun
 
 3. **Start the services**:
    ```bash
-   docker-compose up -d
+   docker-compose -f deployments/docker-compose.yml up -d
    ```
 
 4. **Access the API**:
@@ -369,7 +370,7 @@ class MemoryAwareAgent(Agent):
         return result
 ```
 
-See **[INTEGRATION.md](INTEGRATION.md)** for more integration patterns and examples.
+See **[docs/INTEGRATION.md](docs/INTEGRATION.md)** for more integration patterns and examples.
 
 ## Development
 
@@ -457,7 +458,7 @@ Enable relationship-based memory for advanced use cases:
 MEM0_GRAPH_STORE_ENABLED=true
 
 # Start with Memgraph
-docker-compose --profile graph up -d
+docker-compose -f deployments/docker-compose.yml --profile graph up -d
 ```
 
 **Benefits:**
@@ -466,7 +467,7 @@ docker-compose --profile graph up -d
 - 📊 Knowledge graph visualization
 - 🔍 Complex pattern matching
 
-See **[GRAPHRAG_GUIDE.md](GRAPHRAG_GUIDE.md)** for complete setup and use cases.
+See **[docs/GRAPHRAG_GUIDE.md](docs/GRAPHRAG_GUIDE.md)** for complete setup and use cases.
 
 ## Roadmap
 
