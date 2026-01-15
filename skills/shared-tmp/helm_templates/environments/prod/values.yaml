@@ -1,0 +1,49 @@
+# Production environment overrides
+
+replicaCount: 3
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+  requests:
+    cpu: 1000m
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+configuration:
+  LOG_LEVEL: "INFO"
+  DEVELOPMENT: "false"
+  MAX_QUERY_ROWS: "1000"
+  QUERY_TIMEOUT_SECONDS: "30"
+  
+  # Cache settings for production
+  ENABLE_CACHING: "true"
+  CACHE_TTL_TABLES_LIST: "7200"      # 2 hours
+  CACHE_TTL_TABLE_SCHEMA: "14400"    # 4 hours
+  CACHE_TTL_QUERY_RESULTS: "600"     # 10 minutes
+
+redis:
+  maxMemory: 512mb
+
+# Production ingress configuration (example - adjust as needed)
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: dbx-sql-mcp.your-domain.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: dbx-sql-mcp-tls
+      hosts:
+        - dbx-sql-mcp.your-domain.com

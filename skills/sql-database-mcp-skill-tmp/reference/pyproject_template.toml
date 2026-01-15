@@ -1,0 +1,41 @@
+[project]
+name = "dbx-sql-mcp"
+version = "0.1.0"
+description = "Databricks SQL MCP Server - Natural language querying for Databricks SQL warehouses via Model Context Protocol"
+readme = "README.md"
+requires-python = ">=3.10"
+
+dependencies = [
+  "fastmcp==2.11.3",
+  "uvicorn>=0.23.2",
+  "python-dotenv>=1.0.0",
+  "pydantic>=2.11.0",
+  "redis>=5.0.0",
+  "langchain>=0.1.0",
+  "langchain-community>=0.0.10",
+  "databricks-sql-connector>=3.0.0",
+  "sqlalchemy>=2.0.0",
+  "PyJWT>=2.8.0",
+  "rbc-security==2.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4.0",
+  "pytest-asyncio>=0.21.0",
+  "ruff>=0.1.0",
+  "black>=23.7.0",
+]
+
+[tool.uv]
+index-url = "https://artifactory.fg.rbc.com/artifactory/api/pypi/oss-pypi/simple"
+extra-index-url = [
+  "https://artifactory.fg.rbc.com/artifactory/api/pypi/pypi-innersource/simple",
+]
+
+[tool.setuptools]
+packages = ["app"]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"

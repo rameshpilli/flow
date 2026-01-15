@@ -1,0 +1,29 @@
+# QAT environment overrides
+
+replicaCount: 2
+
+resources:
+  limits:
+    cpu: 1500m
+    memory: 1.5Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: false
+
+configuration:
+  LOG_LEVEL: "INFO"
+  DEVELOPMENT: "false"
+  MAX_QUERY_ROWS: "1000"
+  QUERY_TIMEOUT_SECONDS: "30"
+  
+  # Cache settings
+  ENABLE_CACHING: "true"
+  CACHE_TTL_TABLES_LIST: "3600"      # 1 hour
+  CACHE_TTL_TABLE_SCHEMA: "7200"     # 2 hours
+  CACHE_TTL_QUERY_RESULTS: "300"     # 5 minutes
+
+redis:
+  maxMemory: 256mb

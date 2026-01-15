@@ -1,0 +1,110 @@
+rbc:
+  appCode: isa0  # Update with your app code
+  artifactory:
+    host: artifactory.fg.rbc.com
+
+# Image configuration for RBC deployment
+image:
+  name: isa0-dbx-sql-mcp  # Update with your image name
+  pullPolicy: IfNotPresent
+  artifactoryRepo: docker-isa0-dev  # Update with your artifactory repo
+
+# Values set by k8s config processing action
+ghActionInput:
+  imageTag:        ""
+  imageName:       ""
+  branchName:      ""
+  isReleaseBranch: false
+
+replicaCount: 1
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000  # MCP server port
+
+ingress:
+  enabled: false  # Configure per environment
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: false  # Enable per environment as needed
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Redis Configuration (built into main container as sidecar pattern)
+redis:
+  enabled: true  # Redis is always available (built into container)
+  maxMemory: 256mb
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Application-specific configuration
+# These values will be populated from Vault in deployment
+configuration:
+  # Databricks connection (from Vault)
+  DATABRICKS_HOST: ""
+  DATABRICKS_TOKEN: ""
+  DATABRICKS_SQL_WAREHOUSE_ID: ""
+  DATABRICKS_CATALOG: ""
+  DATABRICKS_SCHEMA: ""
+  
+  # Server configuration
+  MCP_SERVER_PORT: "8000"
+  MCP_SERVER_HOST: "0.0.0.0"
+  
+  # Query limits
+  MAX_QUERY_ROWS: "1000"
+  QUERY_TIMEOUT_SECONDS: "30"
+  
+  # Redis configuration
+  REDIS_HOST: "localhost"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  ENABLE_CACHING: "true"
+  
+  # Cache TTL settings (in seconds)
+  CACHE_TTL_TABLES_LIST: "3600"
+  CACHE_TTL_TABLE_SCHEMA: "7200"
+  CACHE_TTL_QUERY_RESULTS: "300"
+  
+  # Authentication
+  AUTH_SERVER_SECRET: ""
+  
+  # Logging
+  LOG_LEVEL: "INFO"
+  LOG_TO_STDOUT: "true"
+  
+  # Environment
+  DEVELOPMENT: "false"
