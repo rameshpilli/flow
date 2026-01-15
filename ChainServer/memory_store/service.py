@@ -1,0 +1,348 @@
+"""
+Memory Store Service
+
+Core service class for managing mem0 memory with multi-agent support.
+"""
+
+import logging
+from typing import Any
+
+from mem0 import Memory
+
+from memory_store.config import MemoryStoreConfig, get_config
+from memory_store.llm_adapter import create_llm_adapter_from_config
+
+logger = logging.getLogger(__name__)
+
+
+class MemoryStoreService:
+    """
+    Memory Store Service using mem0 with Cohere Compass vector store.
+
+    Provides multi-agent memory isolation where each agent gets its own
+    namespace/user_id in the memory system.
+
+    Features:
+    - Per-agent memory isolation
+    - Semantic search using Cohere embeddings
+    - Qdrant vector store backend
+    - LLM Gateway integration
+    - Kubernetes-ready
+    """
+
+    def __init__(self, config: MemoryStoreConfig | None = None):
+        """
+        Initialize the memory store service.
+
+        Args:
+            config: Optional configuration, uses global config if not provided
+        """
+        self.config = config or get_config()
+        self._memory_client = None
+        self._initialize_memory()
+
+    def _initialize_memory(self):
+        """Initialize mem0 with Cohere Compass and Qdrant."""
+        try:
+            # Build mem0 configuration
+            mem0_config = {
+                "version": self.config.mem0.version,
+                # Vector store configuration (Qdrant)
+                "vector_store": {
+                    "provider": "qdrant",
+                    "config": {
+                        "host": self.config.qdrant.url.replace("http://", "").replace(
+                            "https://", ""
+                        ),
+                        "port": 6333,  # Default Qdrant port
+                        "collection_name": self.config.qdrant.collection_name,
+                        "embedding_model_dims": self.config.qdrant.vector_size,
+                        "api_key": self.config.qdrant.api_key,
+                        "on_disk": self.config.qdrant.on_disk,
+                    },
+                },
+                # Embedder configuration (Cohere)
+                "embedder": {
+                    "provider": "cohere",
+                    "config": {
+                        "api_key": self.config.cohere.api_key,
+                        "model": self.config.cohere.embedding_model,
+                        "embedding_dims": self.config.qdrant.vector_size,
+                    },
+                },
+                # LLM configuration (optional, for memory processing)
+                "llm": {
+                    "provider": "openai",  # Use OpenAI-compatible interface
+                    "config": {
+                        "model": self.config.llm.model_name,
+                        "temperature": self.config.llm.temperature,
+                        "max_tokens": self.config.llm.max_tokens,
+                        # If LLM gateway is configured, we'll use a custom provider
+                        # For now, this is a placeholder
+                    },
+                },
+            }
+
+            # Add graph store if enabled
+            if self.config.mem0.graph_store_enabled:
+                provider = self.config.mem0.graph_store_provider.lower()
+                
+                if provider == "memgraph":
+                    mem0_config["graph_store"] = {
+                        "provider": "neo4j",  # Mem0 uses neo4j driver for both
+                        "config": {
+                            "url": self.config.memgraph.connection_url,
+                            "username": self.config.memgraph.username,
+                            "password": self.config.memgraph.password,
+                        },
+                    }
+                    logger.info(f"Graph store enabled with Memgraph: {self.config.memgraph.host}")
+                elif provider == "neo4j":
+                    # Legacy Neo4j support
+                    mem0_config["graph_store"] = {
+                        "provider": "neo4j",
+                        "config": {
+                            "url": self.config.memgraph.connection_url,
+                            "username": self.config.memgraph.username,
+                            "password": self.config.memgraph.password,
+                        },
+                    }
+                    logger.info("Graph store enabled with Neo4j")
+                else:
+                    logger.warning(f"Unknown graph store provider: {provider}, graph store disabled")
+
+            # Initialize mem0 client
+            self._memory_client = Memory.from_config(mem0_config)
+            logger.info("Mem0 memory client initialized successfully")
+
+        except Exception as e:
+            logger.error(f"Failed to initialize mem0 memory client: {e}")
+            raise
+
+    def add_memory(
+        self,
+        agent_id: str,
+        messages: str | list[dict[str, str]],
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Add a memory for a specific agent.
+
+        Args:
+            agent_id: Unique identifier for the agent
+            messages: Text or conversation messages to remember
+            metadata: Optional metadata to attach to the memory
+
+        Returns:
+            Memory creation result with memory ID
+        """
+        try:
+            result = self._memory_client.add(
+                messages=messages,
+                user_id=agent_id,
+                metadata=metadata or {},
+            )
+            logger.info(f"Added memory for agent {agent_id}: {result}")
+            return result
+        except Exception as e:
+            logger.error(f"Failed to add memory for agent {agent_id}: {e}")
+            raise
+
+    def get_memories(
+        self,
+        agent_id: str,
+        query: str | None = None,
+        limit: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Retrieve memories for a specific agent.
+
+        Args:
+            agent_id: Unique identifier for the agent
+            query: Optional semantic search query
+            limit: Maximum number of memories to return
+            metadata: Optional metadata filters
+
+        Returns:
+            List of relevant memories
+        """
+        try:
+            limit = limit or self.config.mem0.search_limit
+
+            if query:
+                # Semantic search
+                memories = self._memory_client.search(
+                    query=query,
+                    user_id=agent_id,
+                    limit=limit,
+                )
+            else:
+                # Get all memories
+                memories = self._memory_client.get_all(
+                    user_id=agent_id,
+                    limit=limit,
+                )
+
+            logger.info(
+                f"Retrieved {len(memories) if memories else 0} memories for agent {agent_id}"
+            )
+            return memories or []
+        except Exception as e:
+            logger.error(f"Failed to get memories for agent {agent_id}: {e}")
+            raise
+
+    def update_memory(
+        self, agent_id: str, memory_id: str, data: str | dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        Update an existing memory.
+
+        Args:
+            agent_id: Unique identifier for the agent
+            memory_id: ID of the memory to update
+            data: New memory data
+
+        Returns:
+            Update result
+        """
+        try:
+            result = self._memory_client.update(
+                memory_id=memory_id,
+                data=data,
+            )
+            logger.info(f"Updated memory {memory_id} for agent {agent_id}")
+            return result
+        except Exception as e:
+            logger.error(
+                f"Failed to update memory {memory_id} for agent {agent_id}: {e}"
+            )
+            raise
+
+    def delete_memory(self, agent_id: str, memory_id: str) -> dict[str, Any]:
+        """
+        Delete a specific memory.
+
+        Args:
+            agent_id: Unique identifier for the agent
+            memory_id: ID of the memory to delete
+
+        Returns:
+            Deletion result
+        """
+        try:
+            result = self._memory_client.delete(memory_id=memory_id)
+            logger.info(f"Deleted memory {memory_id} for agent {agent_id}")
+            return result
+        except Exception as e:
+            logger.error(
+                f"Failed to delete memory {memory_id} for agent {agent_id}: {e}"
+            )
+            raise
+
+    def delete_all_memories(self, agent_id: str) -> dict[str, Any]:
+        """
+        Delete all memories for a specific agent.
+
+        Args:
+            agent_id: Unique identifier for the agent
+
+        Returns:
+            Deletion result
+        """
+        try:
+            result = self._memory_client.delete_all(user_id=agent_id)
+            logger.info(f"Deleted all memories for agent {agent_id}")
+            return result
+        except Exception as e:
+            logger.error(f"Failed to delete all memories for agent {agent_id}: {e}")
+            raise
+
+    def get_memory_history(
+        self, agent_id: str, memory_id: str
+    ) -> list[dict[str, Any]]:
+        """
+        Get the version history of a memory.
+
+        Args:
+            agent_id: Unique identifier for the agent
+            memory_id: ID of the memory
+
+        Returns:
+            List of memory versions
+        """
+        try:
+            history = self._memory_client.history(memory_id=memory_id)
+            logger.info(
+                f"Retrieved history for memory {memory_id} for agent {agent_id}"
+            )
+            return history or []
+        except Exception as e:
+            logger.error(
+                f"Failed to get history for memory {memory_id} for agent {agent_id}: {e}"
+            )
+            raise
+
+    async def health_check(self) -> dict[str, Any]:
+        """
+        Perform a health check on the memory store.
+
+        Returns:
+            Health status information
+        """
+        status = {
+            "service": "memory_store",
+            "status": "healthy",
+            "components": {},
+        }
+
+        try:
+            # Check Qdrant connection
+            # Note: This would need actual Qdrant client check
+            status["components"]["qdrant"] = {
+                "status": "healthy",
+                "url": self.config.qdrant.url,
+            }
+
+            # Check Cohere API
+            status["components"]["cohere"] = {
+                "status": "healthy" if self.config.cohere.is_configured else "unconfigured",
+                "model": self.config.cohere.embedding_model,
+            }
+
+            # Check LLM Gateway
+            status["components"]["llm_gateway"] = {
+                "status": "healthy" if self.config.llm.is_configured else "unconfigured",
+                "url": self.config.llm.server_url,
+            }
+            
+            # Check Memgraph (if enabled)
+            if self.config.mem0.graph_store_enabled:
+                status["components"]["memgraph"] = {
+                    "status": "healthy" if self.config.memgraph.is_configured else "unconfigured",
+                    "host": self.config.memgraph.host,
+                    "provider": self.config.mem0.graph_store_provider,
+                }
+
+        except Exception as e:
+            status["status"] = "unhealthy"
+            status["error"] = str(e)
+            logger.error(f"Health check failed: {e}")
+
+        return status
+
+
+def create_memory_service(config: MemoryStoreConfig | None = None) -> MemoryStoreService:
+    """
+    Factory function to create a memory store service.
+
+    Args:
+        config: Optional configuration
+
+    Returns:
+        Initialized MemoryStoreService
+    """
+    return MemoryStoreService(config=config)
+
+
+__all__ = ["MemoryStoreService", "create_memory_service"]

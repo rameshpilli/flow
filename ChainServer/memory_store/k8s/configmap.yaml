@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: memory-store-config
+  namespace: memory-store
+  labels:
+    app: memory-store
+data:
+  # Service Configuration
+  SERVICE_HOST: "0.0.0.0"
+  SERVICE_PORT: "8000"
+  SERVICE_WORKERS: "4"
+  SERVICE_LOG_LEVEL: "INFO"
+  SERVICE_CORS_ENABLED: "true"
+  SERVICE_CORS_ORIGINS: "*"
+  SERVICE_RATE_LIMIT_ENABLED: "true"
+  SERVICE_RATE_LIMIT_PER_MINUTE: "60"
+  SERVICE_HEALTH_CHECK_INTERVAL: "30"
+
+  # Qdrant Configuration
+  QDRANT_URL: "http://qdrant-service:6333"
+  QDRANT_COLLECTION_NAME: "memory_store"
+  QDRANT_VECTOR_SIZE: "1024"
+  QDRANT_DISTANCE_METRIC: "cosine"
+  QDRANT_ON_DISK: "false"
+  QDRANT_SHARD_NUMBER: "1"
+  QDRANT_REPLICATION_FACTOR: "1"
+
+  # Cohere Configuration
+  COHERE_EMBEDDING_MODEL: "embed-english-v3.0"
+  COHERE_SEARCH_MODEL: "rerank-english-v3.0"
+
+  # LLM Gateway Configuration (if used)
+  LLM_MODEL_NAME: "gpt-4"
+  LLM_TEMPERATURE: "0.0"
+  LLM_MAX_TOKENS: "4096"
+  LLM_TIMEOUT: "60.0"
+
+  # Mem0 Configuration
+  MEM0_VERSION: "v1.1"
+  MEM0_GRAPH_STORE_ENABLED: "false"  # Set to true to enable GraphRAG
+  MEM0_GRAPH_STORE_PROVIDER: "memgraph"
+  MEM0_SEARCH_LIMIT: "10"
+  MEM0_SEARCH_THRESHOLD: "0.7"
+  MEM0_AUTO_PRUNE_ENABLED: "false"
+  MEM0_PRUNE_THRESHOLD_DAYS: "90"
+
+  # Memgraph Configuration (only needed if MEM0_GRAPH_STORE_ENABLED=true)
+  MEMGRAPH_HOST: "memgraph-service"
+  MEMGRAPH_PORT: "7687"

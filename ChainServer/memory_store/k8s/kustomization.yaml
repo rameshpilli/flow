@@ -1,0 +1,45 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: memory-store
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - qdrant-deployment.yaml
+  - deployment.yaml
+  - ingress.yaml
+  # Uncomment to enable Memgraph GraphRAG
+  # - memgraph-deployment.yaml
+
+# Common labels for all resources
+commonLabels:
+  app.kubernetes.io/name: memory-store
+  app.kubernetes.io/component: ai-memory
+  app.kubernetes.io/managed-by: kustomize
+
+# Image transformations
+images:
+  - name: your-registry/memory-store
+    newName: your-actual-registry/memory-store
+    newTag: latest
+
+# ConfigMap generator (alternative to configmap.yaml)
+# configMapGenerator:
+#   - name: memory-store-config
+#     literals:
+#       - SERVICE_HOST=0.0.0.0
+#       - SERVICE_PORT=8000
+
+# Secret generator (alternative to secret.yaml)
+# secretGenerator:
+#   - name: memory-store-secrets
+#     literals:
+#       - COHERE_API_KEY=your_key
+
+# Namespace-level resource quotas
+# - resource-quota.yaml
+
+# Network policies
+# - network-policy.yaml
