@@ -15,7 +15,7 @@ AgentOrchestrator is a DAG-based chain orchestration framework. It provides deco
 │                                                                          │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                  │
 │  │   Agents    │    │    Steps    │    │   Chains    │                  │
-│  │  @ao.    │    │  @ao.    │    │  @ao.    │                  │
+│  │  @forge.    │    │  @forge.    │    │  @forge.    │                  │
 │  │   agent()   │    │   step()    │    │   chain()   │                  │
 │  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘                  │
 │         │                  │                  │                          │
@@ -60,15 +60,15 @@ AgentOrchestrator is a DAG-based chain orchestration framework. It provides deco
 ### 1. AgentOrchestrator (Entry Point)
 
 The main orchestrator that provides:
-- Decorator registration (`@ao.step`, `@ao.agent`, `@ao.chain`)
-- Chain execution (`ao.launch()`, `ao.run()`)
-- Middleware management (`ao.use()`)
-- Resource management (`ao.register_resource()`)
+- Decorator registration (`@forge.step`, `@forge.agent`, `@forge.chain`)
+- Chain execution (`forge.launch()`, `forge.run()`)
+- Middleware management (`forge.use()`)
+- Resource management (`forge.register_resource()`)
 
 ```python
 from agentorchestrator import AgentOrchestrator
 
-ao = AgentOrchestrator(name="my_app")
+forge = AgentOrchestrator(name="my_app")
 ```
 
 ### 2. Registry System
@@ -97,7 +97,7 @@ Executes chains with:
 Shared state across steps:
 
 ```python
-@ao.step(name="my_step")
+@forge.step(name="my_step")
 async def my_step(ctx: ChainContext):
     # Read data
     value = ctx.get("key", default=None)
@@ -136,7 +136,7 @@ Pluggable processing hooks:
 │                        Chain Execution Flow                           │
 ├──────────────────────────────────────────────────────────────────────┤
 │                                                                       │
-│   ao.launch("my_chain", initial_data)                             │
+│   forge.launch("my_chain", initial_data)                             │
 │                      │                                                │
 │                      ▼                                                │
 │   ┌──────────────────────────────────────┐                           │
@@ -248,63 +248,6 @@ The built-in Client Meeting Prep (CMPT) chain has 3 stages:
 
 ---
 
-## Agent Squad Integration
-
-AgentOrchestrator integrates with AWS Labs' [Agent Squad](https://github.com/awslabs/agent-squad) framework for intelligent multi-agent routing.
-
-### Execution Patterns
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        CHAIN (DAG-Based - Default)                       │
-│   step1 ──► step2 ──► step3 ──► step4                                   │
-│         └──► step2b ──┘                                                  │
-│   (Static dependency-based execution)                                    │
-└─────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        BROADCAST (Parallel Fan-out)                      │
-│                    ┌──► agent_1 ──┐                                      │
-│   query ──────────►├──► agent_2 ──├──► aggregate results                │
-│                    └──► agent_3 ──┘                                      │
-│   (All agents receive same query simultaneously)                         │
-└─────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        SUPERVISOR (Dynamic Delegation)                   │
-│                         ┌──► agent_1 ──┐                                │
-│   query ──► lead_agent ─┼──► agent_2 ──┼──► lead synthesizes            │
-│             (decides)   └──────────────┘                                │
-│   (Lead agent chooses WHICH agents to call based on query)              │
-└─────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        CLASSIFIER (Single Best Agent)                    │
-│                    ┌──  agent_1                                          │
-│   query ──► route ─┼──► agent_2  (only ONE selected)                    │
-│                    └──  agent_3                                          │
-│   (Routes to single best-fit agent)                                      │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### Response Handling
-
-Large agent responses are handled via configurable strategies:
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  SUPERVISOR with Hierarchical Processing                                 │
-│                                                                          │
-│  sec_agent ──► 50KB ──► summarize ──► 2KB ──┐                           │
-│  capiq_agent ► 40KB ──► summarize ──► 2KB ──┼──► lead_agent ──► response│
-│  news_agent ─► 30KB ──► summarize ──► 2KB ──┘     (6KB input)           │
-│                                                                          │
-│  Raw content stored separately for citations                             │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
 ## Production Features
 
 ### Resilience
@@ -362,7 +305,7 @@ agentorchestrator/
 ├── cli.py               # Command-line interface
 │
 ├── core/
-│   ├── ao.py         # AgentOrchestrator main class
+│   ├── forge.py         # AgentOrchestrator main class
 │   ├── context.py       # ChainContext & scopes
 │   ├── registry.py      # Component registries
 │   ├── dag.py           # DAG builder & executor
@@ -388,10 +331,6 @@ agentorchestrator/
 ├── agents/
 │   ├── base.py          # BaseAgent, ResilientAgent
 │   └── data_agents.py   # Pre-built agents
-│
-├── integrations/
-│   ├── __init__.py      # Integration exports
-│   └── agent_squad.py   # Agent Squad bridge & supervisor
 │
 ├── services/
 │   ├── context_builder.py

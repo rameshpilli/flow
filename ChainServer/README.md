@@ -56,8 +56,7 @@ ChainServer/
 │   └── docs/                    # Documentation
 ├── cmpt/                        # CMPT domain implementation
 │   ├── domain_config.py         # Domain-specific prompts & extractors
-│   ├── chain.py                 # DAG-based chain (default)
-│   ├── chain_squad.py           # Supervisor-style chain (Agent Squad)
+│   ├── mcp_auth.py              # MCP authentication
 │   └── services/                # CMPT business logic services
 │       ├── models.py            # Pydantic models
 │       ├── agents.py            # MCP agent integrations
@@ -79,7 +78,6 @@ AgentOrchestrator is a **domain-agnostic** orchestration framework that provides
 - **Parallel execution** - Independent steps run concurrently
 - **Middleware system** - Logging, caching, summarization, token management
 - **Pluggable summarization** - Register domain-specific extractors at runtime
-- **Agent Squad Integration** - Intelligent multi-agent routing via AWS Labs Agent Squad
 
 ### Basic Usage
 
@@ -144,34 +142,6 @@ chain = create_extraction_chain(
 result = await chain.ainvoke({"text": "Revenue was $10B, up 15%..."})
 # result is FinancialMetrics(revenue=10000000000, growth_rate=0.15)
 ```
-
-### Agent Squad Integration (Supervisor Pattern)
-
-AgentOrchestrator integrates with [AWS Labs Agent Squad](https://github.com/awslabs/agent-squad) for intelligent multi-agent routing.
-
-```python
-from agentorchestrator.agents import SupervisorAgent, SupervisorConfig
-
-# Supervisor coordinates team agents dynamically
-supervisor = SupervisorAgent(
-    team=[sec_agent, capiq_agent, news_agent],
-    config=SupervisorConfig(
-        lead_model="anthropic.claude-3-sonnet-20240229-v1:0",
-        response_strategy=ResponseStrategy.SUMMARIZE,
-    ),
-    llm=my_llm,
-)
-
-# Lead agent decides which specialists to invoke
-result = await supervisor.fetch("What are Apple's key financial risks?")
-```
-
-**Execution Strategies:**
-- `supervisor` - Lead agent decides which team members to call dynamically
-- `broadcast` - All agents execute in parallel, results aggregated
-- `classifier` - Routes to single best-fit agent
-
-See [chain_squad.py](cmpt/chain_squad.py) for a complete supervisor-style implementation.
 
 ## CMPT Implementation
 
@@ -292,11 +262,6 @@ def register_my_extractors():
 - langchain-text-splitters
 - langchain-openai (for OpenAI)
 - langchain-anthropic (for Claude)
-
-### Optional (for Agent Squad integration)
-- agent-squad[anthropic] (for Anthropic models)
-- agent-squad[aws] (for AWS Bedrock)
-- agent-squad[all] (for all providers)
 
 ## License
 

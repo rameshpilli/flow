@@ -43,19 +43,6 @@ openai = [
 anthropic = [
     "langchain-anthropic>=0.1.0",
 ]
-# Agent Squad integration (AWS Labs multi-agent framework)
-agent-squad = [
-    "agent-squad>=0.1.0",
-]
-agent-squad-anthropic = [
-    "agent-squad[anthropic]>=0.1.0",
-]
-agent-squad-aws = [
-    "agent-squad[aws]>=0.1.0",
-]
-agent-squad-all = [
-    "agent-squad[all]>=0.1.0",
-]
 # LLM chains (LCEL support) - includes core + both providers
 llm = [
     "langchain-core>=0.1.0",
@@ -77,7 +64,7 @@ dev = [
 ]
 # All optional features
 all = [
-    "agentorchestrator[summarization,openai,anthropic,llm,observability,agent-squad-all]",
+    "agentorchestrator[summarization,openai,anthropic,llm,observability]",
 ]
 
 [project.scripts]
