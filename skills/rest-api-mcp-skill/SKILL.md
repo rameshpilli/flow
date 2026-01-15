@@ -30,28 +30,32 @@ Generate production-ready MCP servers for **REST APIs and microservices** using 
 - SQL databases → Use `sql-database-mcp-skill` instead
 - WebSocket services → Custom implementation needed
 
-## Quick Start
+## How This Skill Works
 
-**You provide:**
-```
-Service: Client360 / Salesforce / Custom API
-Base URL: https://api.yourservice.com
-Endpoints:
-  - GET /clients
-  - POST /clients/{id}/data
-  - GET /contacts/{id}
-Auth: Bearer token / Basic auth / API Key
-```
+**When user requests an MCP server for a REST API:**
 
-**You get:**
-- ✅ Complete MCP server with httpx AsyncClient
-- ✅ 5-10 tools (endpoint-specific)
-- ✅ Connection pooling (50 keepalive connections)
-- ✅ Per-API timeout configuration
-- ✅ Parallel execution (asyncio.gather)
-- ✅ Redis caching layer
-- ✅ Complete K8s deployment
-- ✅ Ready in **~15 minutes**
+1. **ASK these questions first** (don't assume!):
+   - What is the service/API name?
+   - What is the base URL?
+   - What endpoints do you want to expose? (list them)
+   - What HTTP methods? (GET, POST, PUT, DELETE)
+   - What authentication type? (Bearer token, Basic auth, API Key, OAuth, None)
+   - What should be cached and for how long?
+   - Do you need an orchestrator for multi-API calls?
+   - App code for deployment?
+   - Kubernetes namespace?
+
+2. **THEN generate based on their answers:**
+   - ✅ Complete MCP server with httpx AsyncClient
+   - ✅ 5-10 tools (customized for their endpoints)
+   - ✅ Connection pooling (50 keepalive connections)
+   - ✅ Per-API timeout configuration
+   - ✅ Parallel execution (asyncio.gather)
+   - ✅ Redis caching layer
+   - ✅ Complete K8s deployment
+   - ✅ Ready in **~15 minutes**
+
+**IMPORTANT:** Always gather requirements first. Don't hardcode to Client360, Salesforce, or any specific API.
 
 ## Architecture
 
@@ -149,36 +153,49 @@ All working code is in the `reference/` folder.
 
 ## Generation Workflow
 
-### Step 1: Gather Information
+### Step 1: Gather Information (ALWAYS DO THIS FIRST!)
 
-Ask user for:
-```yaml
-Service name: Client360 / Salesforce / CustomAPI
-Base URL: https://api.yourservice.com
-Auth type: Bearer / Basic / API Key / OAuth
+**Ask the user these questions:**
 
-Endpoints:
-  - name: Get clients
-    method: GET
-    path: /clients
-    timeout: 10s
-    cache_ttl: 3600
-  
-  - name: Get client data
-    method: POST
-    path: /clients/{id}/data
-    timeout: 15s
-    cache_ttl: 300
-  
-  - name: Get contacts
-    method: GET
-    path: /contacts/{id}
-    timeout: 10s
-    cache_ttl: 1800
+1. **"What is the name of the API/service you're wrapping?"**
+   - Example: "Salesforce", "GitHub", "Internal CRM", "Financial Services API"
+   - This will be used for naming (e.g., `salesforce-mcp`, `github-mcp`)
 
-App code: isa0 (for K8s deployment)
-Namespace: isa0-dev
-```
+2. **"What is the base URL for the API?"**
+   - Example: `https://api.github.com`, `https://your-company.api.com`
+
+3. **"What endpoints do you want to expose as MCP tools?"**
+   - Ask for each endpoint:
+     - Path (e.g., `/users`, `/repos/{owner}/{repo}`)
+     - HTTP method (GET, POST, PUT, DELETE, PATCH)
+     - Purpose/description
+     - Path parameters (e.g., `{id}`, `{owner}`)
+     - Query parameters (e.g., `?page=1&limit=100`)
+
+4. **"What authentication does the API use?"**
+   - Options: Bearer token, Basic auth, API Key, OAuth 2.0, Custom headers, None
+   - If Bearer: Where to get the token?
+   - If API Key: Header name? Query param?
+   - If OAuth: Flow type?
+
+5. **"What data should be cached?"**
+   - For each endpoint, ask:
+     - Should this be cached? (Yes/No)
+     - If yes, for how long? (seconds)
+     - Suggestions:
+       - Static data: 3600-7200s (1-2 hours)
+       - Dynamic data: 300-900s (5-15 minutes)
+       - Real-time data: 0s (no cache)
+
+6. **"Do you need parallel execution for multiple APIs?"**
+   - If yes, will generate orchestrator
+   - If no, will skip orchestrator
+
+7. **"What is your app code for deployment?"** (e.g., `isa0`, `tb20`)
+
+8. **"What Kubernetes namespace?"** (e.g., `isa0-dev`, `tb20-prod`)
+
+**Store these answers and use them throughout generation. Do NOT use hardcoded examples.**
 
 ### Step 2: Read Reference Templates
 
@@ -452,46 +469,59 @@ autoscaling:
   maxReplicas: 10
 ```
 
-## Examples
+## Example Conversations
 
-### Example 1: Client360 API
+### Example 1: User Doesn't Specify Details
 
-**User:** "Create an MCP server for Client360 API at https://client360.api.com with endpoints: GET /clients, POST /clients/{id}/revenue, GET /contacts/{id}"
+**User:** "Create an MCP server for my API"
 
-**Generated:**
-- Project: `client360-mcp/`
-- Tools: 7 tools
-  - `search_clients(query)`
-  - `get_client_revenue(client_id)`
-  - `get_contacts(client_id)`
-  - `get_comprehensive_data(client_id, endpoints)` (orchestrator)
-  - `clear_cache()`
-  - `cache_stats()`
-- Connection: httpx with 50 keepalive connections
-- Timeouts: 10s (fast), 15s (medium), 30s (slow)
-- Ready in: ~15 minutes
+**Claude (YOU):** "I'll help you create an MCP server for your REST API. First, I need some information:
 
-### Example 2: Salesforce API
+1. What is the name of the API/service? (e.g., 'GitHub', 'Salesforce', 'Internal CRM')
+2. What is the base URL? (e.g., 'https://api.github.com')
+3. What endpoints do you want to expose? (Please list them with HTTP methods)
+4. What authentication does the API use?
+5. What should be cached and for how long?
+6. Do you need parallel execution for multiple APIs?
+7. What app code for deployment?
+8. What Kubernetes namespace?"
 
-**User:** "Create an MCP server for Salesforce API with OAuth authentication"
+**Then generate based on answers.**
 
-**Generated:**
-- Project: `salesforce-mcp/`
-- Tools: 8-10 tools (CRM operations)
-- Auth: OAuth 2.0 flow
-- Connection pooling enabled
-- Ready in: ~15 minutes
+### Example 2: User Provides Some Details
 
-### Example 3: Internal Microservice
+**User:** "Create an MCP server for GitHub API"
 
-**User:** "Create an MCP server for our internal Financial Services API at https://fin.internal.com"
+**Claude (YOU):** "Great! I'll create a GitHub MCP server. I need more details:
 
-**Generated:**
-- Project: `financial-services-mcp/`
-- Tools: Based on endpoints provided
-- Internal auth (JWT/Basic)
-- Connection pooling
-- Ready in: ~15 minutes
+1. ✓ Service name: GitHub
+2. Base URL? (Is it 'https://api.github.com' or GitHub Enterprise?)
+3. Which endpoints? For example:
+   - GET /repos/{owner}/{repo} - Get repository info?
+   - GET /users/{username} - Get user info?
+   - GET /issues - List issues?
+   - Others?
+4. Authentication: Personal access token? OAuth app? GitHub App?
+5. Caching preferences for each endpoint?
+6. App code and namespace for deployment?"
+
+**Wait for answers, then generate.**
+
+### Example 3: User Provides Complete Details
+
+**User:** "Create MCP server for 'WeatherAPI' at https://api.weather.com/v1 with endpoints: GET /current/{city} (cache 15min), GET /forecast/{city} (cache 1hour), POST /alerts/subscribe. Auth: API key in header 'X-API-Key'. App code 'wx01', namespace 'wx01-prod'"
+
+**Claude (YOU):** "Perfect! I have all the details. Generating WeatherAPI MCP server with:
+- Base URL: https://api.weather.com/v1
+- Endpoints:
+  * GET /current/{city} - cache 900s
+  * GET /forecast/{city} - cache 3600s
+  * POST /alerts/subscribe - no cache
+- Auth: API Key header 'X-API-Key'
+- App code: wx01
+- Namespace: wx01-prod
+
+[Proceed with generation using THESE values, not examples]"
 
 ## Success Criteria
 

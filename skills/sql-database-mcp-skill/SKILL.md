@@ -32,24 +32,29 @@ Generate production-ready MCP servers for **SQL databases** using **LangChain's 
 - GraphQL → Use `rest-api-mcp-skill` instead
 - Non-SQL databases → Custom implementation needed
 
-## Quick Start
+## How This Skill Works
 
-**You provide:**
-```
-Database: Databricks / Snowflake / PostgreSQL
-Host: your-db.cloud.provider.com
-Catalog: main (or database name)
-Schema: default (or schema name)
-Warehouse ID: abc123 (if applicable)
-```
+**When user requests an MCP server for a SQL database:**
 
-**You get:**
-- ✅ Complete MCP server wrapping LangChain SQLDatabaseToolkit
-- ✅ 6 tools (list_tables, get_schema, execute_query, etc.)
-- ✅ Read-only query validation (SELECT-only)
-- ✅ Redis caching with intelligent TTLs
-- ✅ Complete K8s deployment (Helm + Helios)
-- ✅ Ready in **~10 minutes**
+1. **ASK these questions first** (don't assume!):
+   - What database type? (Databricks / Snowflake / PostgreSQL / MySQL / Other)
+   - What is the host/connection URL?
+   - What catalog/database name?
+   - What schema name?
+   - Warehouse ID? (if Databricks/Snowflake)
+   - Port? (if PostgreSQL/MySQL)
+   - App code for deployment?
+   - Namespace for Kubernetes?
+
+2. **THEN generate based on their answers:**
+   - ✅ Complete MCP server wrapping LangChain SQLDatabaseToolkit
+   - ✅ 6 tools customized for their database
+   - ✅ Read-only query validation (SELECT-only)
+   - ✅ Redis caching with intelligent TTLs
+   - ✅ Complete K8s deployment (Helm + Helios)
+   - ✅ Ready in **~10 minutes**
+
+**IMPORTANT:** Always gather requirements first. Don't hardcode to Databricks or any specific database.
 
 ## Architecture
 
@@ -121,19 +126,34 @@ All working code is in the `reference/` folder.
 
 ## Generation Workflow
 
-### Step 1: Gather Information
+### Step 1: Gather Information (ALWAYS DO THIS FIRST!)
 
-Ask user for:
-```yaml
-Database type: Databricks / Snowflake / PostgreSQL / MySQL
-Host: your-db.cloud.provider.com
-Catalog: main (or database name)
-Schema: default (or public)
-Warehouse ID: abc123 (for Databricks/Snowflake)
-Port: 5432 (for PostgreSQL)
-App code: isa0 (for K8s deployment)
-Namespace: isa0-dev (for K8s)
-```
+**Ask the user these questions:**
+
+1. **"What type of SQL database are you connecting to?"**
+   - Options: Databricks, Snowflake, PostgreSQL, MySQL, MariaDB, SQL Server, Oracle, Other
+   - Wait for answer before continuing
+
+2. **"What is your database host/connection URL?"**
+   - Example: `my-workspace.cloud.databricks.com` or `db.example.com`
+
+3. **"What is your catalog or database name?"**
+   - Databricks/Snowflake: catalog name (e.g., `main`, `analytics`)
+   - PostgreSQL/MySQL: database name (e.g., `customers`, `sales`)
+
+4. **"What schema do you want to use?"**
+   - Common: `default`, `public`, or custom schema name
+
+5. **Additional database-specific questions:**
+   - **If Databricks/Snowflake:** "What is your warehouse ID?"
+   - **If PostgreSQL/MySQL:** "What port? (default: 5432 for PostgreSQL, 3306 for MySQL)"
+   - **If SQL Server:** "What instance name?"
+
+6. **"What is your app code for deployment?"** (e.g., `isa0`, `tb20`)
+
+7. **"What Kubernetes namespace?"** (e.g., `isa0-dev`, `tb20-qat`)
+
+**Store these answers and use them throughout generation. Do NOT use hardcoded examples.**
 
 ### Step 2: Read Reference Templates
 
@@ -348,40 +368,53 @@ def database_list_tables() -> str:
 
 **See `reference/langchain_pattern.md` for complete details.**
 
-## Examples
+## Example Conversations
 
-### Example 1: Databricks
+### Example 1: User Doesn't Specify Details
 
-**User:** "Create a Databricks MCP server for catalog 'sales', schema 'analytics', warehouse '2a3b4c5d', host 'my-workspace.cloud.databricks.com'"
+**User:** "Create an MCP server for my database"
 
-**Generated:**
-- Project: `databricks-sql-mcp/`
-- Tools: `databricks_list_tables`, `databricks_get_schema`, etc.
-- Connection: `databricks://token:...`
-- Driver: `databricks-sql-connector`
-- Ready in: ~10 minutes
+**Claude (YOU):** "I'll help you create an MCP server for your SQL database. First, I need some information:
 
-### Example 2: Snowflake
+1. What type of SQL database are you connecting to? (Databricks, Snowflake, PostgreSQL, MySQL, etc.)
+2. What is your database host/connection URL?
+3. What catalog/database name?
+4. What schema?
+5. [Ask database-specific questions based on type]
+6. What app code for deployment?
+7. What Kubernetes namespace?"
 
-**User:** "Create a Snowflake MCP server for database 'PROD_DB', schema 'PUBLIC', warehouse 'COMPUTE_WH', account 'abc123'"
+**Then generate based on answers.**
 
-**Generated:**
-- Project: `snowflake-mcp/`
-- Tools: `snowflake_list_tables`, `snowflake_get_schema`, etc.
-- Connection: `snowflake://...`
-- Driver: `snowflake-connector-python`
-- Ready in: ~10 minutes
+### Example 2: User Provides Some Details
 
-### Example 3: PostgreSQL
+**User:** "Create a Databricks MCP server for catalog 'sales'"
 
-**User:** "Create a PostgreSQL MCP server for database 'customers', schema 'public', host 'db.example.com', port 5432'"
+**Claude (YOU):** "Great! I'll create a Databricks MCP server. I need a few more details:
 
-**Generated:**
-- Project: `postgres-mcp/`
-- Tools: `postgres_list_tables`, `postgres_get_schema`, etc.
-- Connection: `postgresql://...`
-- Driver: `psycopg2-binary`
-- Ready in: ~10 minutes
+1. ✓ Database type: Databricks
+2. ✓ Catalog: sales
+3. What schema? (e.g., 'default', 'analytics')
+4. What is your Databricks host? (e.g., 'my-workspace.cloud.databricks.com')
+5. What is your warehouse ID?
+6. What app code for deployment?
+7. What Kubernetes namespace?"
+
+**Wait for answers, then generate.**
+
+### Example 3: User Provides All Details
+
+**User:** "Create a PostgreSQL MCP server: database 'customers', schema 'public', host 'prod-db.example.com', port 5432, app code 'isa0', namespace 'isa0-prod'"
+
+**Claude (YOU):** "Perfect! I have all the details I need. Generating PostgreSQL MCP server with:
+- Database: customers
+- Schema: public
+- Host: prod-db.example.com
+- Port: 5432
+- App code: isa0
+- Namespace: isa0-prod
+
+[Proceed with generation using THESE values, not examples]"
 
 ## Success Criteria
 
