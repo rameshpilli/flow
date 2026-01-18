@@ -364,8 +364,8 @@ async def check_agents_health() -> ComponentHealth:
     try:
         from agentorchestrator import get_orchestrator
 
-        forge = get_orchestrator()
-        agent_names = list(forge._agent_registry.keys())
+        ao = get_orchestrator()
+        agent_names = list(ao._agent_registry.keys())
 
         if not agent_names:
             return ComponentHealth(
@@ -381,7 +381,7 @@ async def check_agents_health() -> ComponentHealth:
 
         for name in agent_names:
             try:
-                agent = forge.get_agent(name)
+                agent = ao.get_agent(name)
                 if hasattr(agent, "health_check"):
                     is_healthy = await agent.health_check()
                     if is_healthy:
@@ -425,8 +425,8 @@ async def check_chains_health() -> ComponentHealth:
     try:
         from agentorchestrator import get_orchestrator
 
-        forge = get_orchestrator()
-        chain_names = list(forge._chain_registry.keys())
+        ao = get_orchestrator()
+        chain_names = list(ao._chain_registry.keys())
 
         if not chain_names:
             return ComponentHealth(
@@ -442,7 +442,7 @@ async def check_chains_health() -> ComponentHealth:
 
         for name in chain_names:
             try:
-                result = forge.check(name)
+                result = ao.check(name)
                 if result.get("valid"):
                     valid_chains.append(name)
                 else:

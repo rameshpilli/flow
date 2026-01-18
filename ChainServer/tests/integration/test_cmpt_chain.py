@@ -58,19 +58,19 @@ class TestCMPTChainIntegration:
     @pytest.mark.asyncio
     async def test_simple_chain_end_to_end(self):
         """Test a simple multi-step chain from start to finish."""
-        forge = AgentOrchestrator(name="test_integration", isolated=True)
+        ao = AgentOrchestrator(name="test_integration", isolated=True)
 
         # Track execution order
         execution_log = []
 
-        @forge.step(name="fetch_company_data", produces=["company_data"])
+        @ao.step(name="fetch_company_data", produces=["company_data"])
         async def fetch_company_data(ctx: ChainContext):
             execution_log.append("fetch_company_data")
             company = ctx.get("company_name", "TestCorp")
             ctx.set("company_data", {"name": company, "revenue": 1000000})
             return {"company": company}
 
-        @forge.step(name="enrich_data", deps=["fetch_company_data"], produces=["enriched_data"])
+        @ao.step(name="enrich_data", deps=["fetch_company_data"], produces=["enriched_data"])
         async def enrich_data(ctx: ChainContext):
             execution_log.append("enrich_data")
             company_data = ctx.get("company_data")
@@ -82,19 +82,19 @@ class TestCMPTChainIntegration:
             ctx.set("enriched_data", enriched)
             return enriched
 
-        @forge.step(name="generate_summary", deps=["enrich_data"])
+        @ao.step(name="generate_summary", deps=["enrich_data"])
         async def generate_summary(ctx: ChainContext):
             execution_log.append("generate_summary")
             enriched = ctx.get("enriched_data")
             summary = f"Company {enriched['name']} in {enriched['industry']} sector"
             return {"summary": summary}
 
-        @forge.chain(name="test_chain")
+        @ao.chain(name="test_chain")
         class TestChain:
             steps = ["fetch_company_data", "enrich_data", "generate_summary"]
 
         # Run the chain
-        result = await forge.run("test_chain", {"company_name": "Apple Inc"})
+        result = await ao.run("test_chain", {"company_name": "Apple Inc"})
 
         # Verify success
         assert result["success"] is True
@@ -109,7 +109,7 @@ class TestCMPTChainIntegration:
     @pytest.mark.asyncio
     async def test_parallel_steps_with_mocked_http(self):
         """Test parallel data fetching with mocked HTTP responses."""
-        forge = AgentOrchestrator(name="test_parallel", isolated=True)
+        ao = AgentOrchestrator(name="test_parallel", isolated=True)
 
         # Mock HTTP responses
         mock_responses = {
@@ -118,25 +118,25 @@ class TestCMPTChainIntegration:
             "news": [{"title": "TestCorp launches new product"}],
         }
 
-        @forge.step(name="fetch_company")
+        @ao.step(name="fetch_company")
         async def fetch_company(ctx: ChainContext):
             await asyncio.sleep(0.05)  # Simulate network delay
             ctx.set("company_info", mock_responses["company"])
             return mock_responses["company"]
 
-        @forge.step(name="fetch_financials")
+        @ao.step(name="fetch_financials")
         async def fetch_financials(ctx: ChainContext):
             await asyncio.sleep(0.05)
             ctx.set("financial_info", mock_responses["financials"])
             return mock_responses["financials"]
 
-        @forge.step(name="fetch_news")
+        @ao.step(name="fetch_news")
         async def fetch_news(ctx: ChainContext):
             await asyncio.sleep(0.05)
             ctx.set("news_info", mock_responses["news"])
             return mock_responses["news"]
 
-        @forge.step(name="combine_data", deps=["fetch_company", "fetch_financials", "fetch_news"])
+        @ao.step(name="combine_data", deps=["fetch_company", "fetch_financials", "fetch_news"])
         async def combine_data(ctx: ChainContext):
             combined = {
                 "company": ctx.get("company_info"),
@@ -145,14 +145,14 @@ class TestCMPTChainIntegration:
             }
             return combined
 
-        @forge.chain(name="parallel_chain")
+        @ao.chain(name="parallel_chain")
         class ParallelChain:
             steps = ["fetch_company", "fetch_financials", "fetch_news", "combine_data"]
 
         # Run and measure time
         import time
         start = time.perf_counter()
-        result = await forge.run("parallel_chain")
+        result = await ao.run("parallel_chain")
         duration = time.perf_counter() - start
 
         # Verify success
@@ -223,17 +223,17 @@ class TestCMPTChainIntegration:
     @pytest.mark.asyncio
     async def test_step_result_rich_metadata(self):
         """Test that chain returns error information on step failure."""
-        forge = AgentOrchestrator(name="test_metadata", isolated=True)
+        ao = AgentOrchestrator(name="test_metadata", isolated=True)
 
-        @forge.step(name="error_step")
+        @ao.step(name="error_step")
         async def error_step(ctx: ChainContext):
             raise ValueError("Detailed error message")
 
-        @forge.chain(name="error_chain")
+        @ao.chain(name="error_chain")
         class ErrorChain:
             steps = ["error_step"]
 
-        result = await forge.run("error_chain")
+        result = await ao.run("error_chain")
 
         # Chain should have failed
         assert result["success"] is False
@@ -254,33 +254,33 @@ class TestParallelismBenchmark:
     @pytest.mark.asyncio
     async def test_parallel_speedup(self):
         """Verify that parallel execution provides speedup over sequential."""
-        forge = AgentOrchestrator(name="test_benchmark", isolated=True)
+        ao = AgentOrchestrator(name="test_benchmark", isolated=True)
 
         STEP_DELAY = 0.1  # 100ms per step
         NUM_PARALLEL_STEPS = 5
 
         # Create parallel steps
         for i in range(NUM_PARALLEL_STEPS):
-            @forge.step(name=f"parallel_step_{i}")
+            @ao.step(name=f"parallel_step_{i}")
             async def parallel_step(ctx: ChainContext, idx=i):
                 await asyncio.sleep(STEP_DELAY)
                 return {"step": idx}
 
-        @forge.step(
+        @ao.step(
             name="final_step",
             deps=[f"parallel_step_{i}" for i in range(NUM_PARALLEL_STEPS)]
         )
         async def final_step(ctx: ChainContext):
             return {"done": True}
 
-        @forge.chain(name="benchmark_chain")
+        @ao.chain(name="benchmark_chain")
         class BenchmarkChain:
             steps = [f"parallel_step_{i}" for i in range(NUM_PARALLEL_STEPS)] + ["final_step"]
 
         # Run and measure
         import time
         start = time.perf_counter()
-        result = await forge.run("benchmark_chain")
+        result = await ao.run("benchmark_chain")
         duration = time.perf_counter() - start
 
         assert result["success"] is True
@@ -302,19 +302,19 @@ class TestParallelismBenchmark:
     @pytest.mark.asyncio
     async def test_concurrency_limit_respected(self):
         """Test that max_concurrency is accepted by step decorator."""
-        forge = AgentOrchestrator(name="test_concurrency", isolated=True)
+        ao = AgentOrchestrator(name="test_concurrency", isolated=True)
 
-        @forge.step(name="limited_step", max_concurrency=2)
+        @ao.step(name="limited_step", max_concurrency=2)
         async def limited_step(ctx: ChainContext):
             await asyncio.sleep(0.1)
             return {}
 
-        @forge.chain(name="test_chain")
+        @ao.chain(name="test_chain")
         class TestChain:
             steps = ["limited_step"]
 
         # Verify the step can be executed
-        result = await forge.run("test_chain")
+        result = await ao.run("test_chain")
         assert result["success"] is True
 
 

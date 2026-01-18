@@ -21,25 +21,25 @@ class IsolatedOrchestrator:
     Automatically uses isolated registries and cleans up after tests.
 
     Usage with async context manager:
-        async with IsolatedOrchestrator() as forge:
-            @forge.step(name="my_step")
+        async with IsolatedOrchestrator() as ao:
+            @ao.step(name="my_step")
             async def my_step(ctx):
                 return {"result": True}
 
-            @forge.chain(name="my_chain")
+            @ao.chain(name="my_chain")
             class MyChain:
                 steps = ["my_step"]
 
-            result = await forge.launch("my_chain", {})
+            result = await ao.launch("my_chain", {})
             assert result["success"]
 
     Usage with pytest fixture:
         @pytest.fixture
-        async def forge():
+        async def ao():
             async with IsolatedOrchestrator() as f:
                 yield f
 
-        async def test_something(forge):
+        async def test_something(ao):
             ...
     """
 
@@ -50,37 +50,37 @@ class IsolatedOrchestrator:
         enable_tracing: bool = False,
     ):
         """
-        Initialize isolated forge.
+        Initialize isolated ao.
 
         Args:
-            name: Forge instance name
+            name: ao instance name
             enable_middleware: Enable middleware system
             enable_tracing: Enable OpenTelemetry tracing
         """
         self._name = name
         self._enable_middleware = enable_middleware
         self._enable_tracing = enable_tracing
-        self._forge: AgentOrchestrator | None = None
+        self._ao: AgentOrchestrator | None = None
         self._context_token = None
 
     async def __aenter__(self) -> AgentOrchestrator:
-        """Enter async context - create isolated forge."""
+        """Enter async context - create isolated ao."""
         # Enter temporary registries context
         self._context_token = AgentOrchestrator.temp_registries().__enter__()
 
-        # Create forge instance
-        self._forge = AgentOrchestrator(
+        # Create ao instance
+        self._ao = AgentOrchestrator(
             name=self._name,
             isolated=True,
         )
 
-        return self._forge
+        return self._ao
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit async context - cleanup."""
-        if self._forge:
+        if self._ao:
             try:
-                await self._forge.cleanup_resources(timeout_seconds=5.0)
+                await self._ao.cleanup_resources(timeout_seconds=5.0)
             except Exception:
                 pass  # Ignore cleanup errors in tests
 
@@ -91,14 +91,14 @@ class IsolatedOrchestrator:
     def __enter__(self) -> AgentOrchestrator:
         """Sync context manager entry (for non-async setup)."""
         self._context_token = AgentOrchestrator.temp_registries().__enter__()
-        self._forge = AgentOrchestrator(name=self._name, isolated=True)
-        return self._forge
+        self._ao = AgentOrchestrator(name=self._name, isolated=True)
+        return self._ao
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Sync context manager exit."""
-        if self._forge:
+        if self._ao:
             try:
-                self._forge._cleanup_resources_sync(timeout_seconds=5.0)
+                self._ao._cleanup_resources_sync(timeout_seconds=5.0)
             except Exception:
                 pass
 
@@ -106,7 +106,7 @@ class IsolatedOrchestrator:
             AgentOrchestrator.temp_registries().__exit__(None, None, None)
 
 
-def create_test_forge(
+def create_test_ao(
     name: str = "test",
     isolated: bool = True,
 ) -> AgentOrchestrator:
@@ -117,7 +117,7 @@ def create_test_forge(
     context manager for automatic cleanup.
 
     Args:
-        name: Forge instance name
+        name: ao instance name
         isolated: Use isolated registries
 
     Returns:
@@ -173,7 +173,7 @@ class SampleChainRequest:
     max_results: int = 10
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dict for forge.launch()."""
+        """Convert to dict for ao.launch()."""
         return {
             "entity_name": self.entity_name,
             "entity_id": self.entity_id,
@@ -201,7 +201,7 @@ def sample_chain_request(
         **overrides: Override any default values
 
     Returns:
-        Dict suitable for forge.launch(data=...)
+        Dict suitable for ao.launch(data=...)
     """
     request = SampleChainRequest(entity_name=entity_name, entity_id=entity_id)
 
@@ -230,7 +230,7 @@ def pytest_fixtures():
         )
 
         @pytest.fixture
-        async def forge():
+        async def ao():
             async with IsolatedOrchestrator() as f:
                 yield f
 

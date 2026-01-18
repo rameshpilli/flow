@@ -76,7 +76,7 @@ class Resource(ABC):
                 return self.conn
 
         # Register with AgentOrchestrator
-        forge.resource("db", DatabaseResource())
+        ao.resource("db", DatabaseResource())
     """
 
     @abstractmethod

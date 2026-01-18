@@ -45,7 +45,7 @@ Usage:
     middleware.register_extractor("my_step", my_key_field_extractor)
     middleware.register_generator("my_step", my_summary_generator)
 
-    forge.use(middleware)
+    ao.use(middleware)
 """
 
 import json
@@ -162,7 +162,7 @@ class OffloadMiddleware(Middleware):
         middleware.register_extractor("my_agent", my_extractor_func)
         middleware.register_generator("my_agent", my_generator_func)
 
-        forge.use(middleware)
+        ao.use(middleware)
     """
 
     def __init__(

@@ -9,16 +9,16 @@ Supports multiple metrics backends including:
 
 Usage:
     # Basic usage with in-memory backend
-    forge.use(MetricsMiddleware())
+    ao.use(MetricsMiddleware())
 
     # With OpenTelemetry
     from opentelemetry import metrics
     meter = metrics.get_meter("agentorchestrator")
-    forge.use(MetricsMiddleware(backend=OTelMetricsBackend(meter)))
+    ao.use(MetricsMiddleware(backend=OTelMetricsBackend(meter)))
 
     # Get metrics
     middleware = MetricsMiddleware()
-    forge.use(middleware)
+    ao.use(middleware)
     # ... run chains ...
     stats = middleware.get_stats()
 """
@@ -275,10 +275,10 @@ class MetricsMiddleware(Middleware):
     Usage:
         # Basic usage
         metrics = MetricsMiddleware()
-        forge.use(metrics)
+        ao.use(metrics)
 
         # Run chains...
-        result = await forge.run("my_chain")
+        result = await ao.run("my_chain")
 
         # Get stats
         stats = metrics.get_stats()
@@ -287,7 +287,7 @@ class MetricsMiddleware(Middleware):
         # With custom backend
         from opentelemetry import metrics as otel_metrics
         meter = otel_metrics.get_meter("my-app")
-        forge.use(MetricsMiddleware(backend=OTelMetricsBackend(meter)))
+        ao.use(MetricsMiddleware(backend=OTelMetricsBackend(meter)))
     """
 
     # Metric names

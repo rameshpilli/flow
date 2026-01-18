@@ -165,19 +165,19 @@ pip install "agentorchestrator[all]"
 ```python
 from agentorchestrator import AgentOrchestrator
 
-forge = AgentOrchestrator(name="my_app")
+ao = AgentOrchestrator(name="my_app")
 
-@forge.step(name="hello")
+@ao.step(name="hello")
 async def hello(ctx):
     return {"message": "Hello, World!"}
 
-@forge.chain(name="hello_chain")
+@ao.chain(name="hello_chain")
 class HelloChain:
     steps = ["hello"]
 
 # Run
 import asyncio
-result = asyncio.run(forge.launch("hello_chain", {}))
+result = asyncio.run(ao.launch("hello_chain", {}))
 print(result)
 ```
 
@@ -188,9 +188,9 @@ print(result)
 ```python
 from agentorchestrator import AgentOrchestrator, create_openai_summarizer, SummarizerMiddleware
 
-forge = AgentOrchestrator(name="my_app")
+ao = AgentOrchestrator(name="my_app")
 summarizer = create_openai_summarizer(api_key="sk-...")
-forge.use(SummarizerMiddleware(summarizer=summarizer, max_tokens=4000))
+ao.use(SummarizerMiddleware(summarizer=summarizer, max_tokens=4000))
 ```
 
 **Requirements**: `pip install agentorchestrator[openai]`

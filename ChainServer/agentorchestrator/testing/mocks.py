@@ -75,8 +75,8 @@ class MockAgent(BaseAgent):
             error=ConnectionError("API unavailable"),
         )
 
-        # Register with forge
-        forge.register_agent(mock)
+        # Register with ao
+        ao.register_agent(mock)
     """
 
     def __init__(
@@ -249,12 +249,12 @@ def mock_step(
     Usage:
         @mock_step("fetch_news", returns={"articles": []})
         async def test_chain_with_mocked_step():
-            result = await forge.launch("my_chain", {})
+            result = await ao.launch("my_chain", {})
             assert result["success"]
 
         @mock_step("failing_step", raises=ValueError("oops"))
         async def test_error_handling():
-            result = await forge.launch("my_chain", {})
+            result = await ao.launch("my_chain", {})
             assert not result["success"]
 
     Args:
@@ -276,12 +276,12 @@ def mock_step(
 
             # Patch the step in registry
             from agentorchestrator import get_orchestrator
-            forge = get_orchestrator()
+            ao = get_orchestrator()
 
             # Store original and patch
             original = None
-            if step_name in forge._step_registry:
-                original_spec = forge._step_registry.get_spec(step_name)
+            if step_name in ao._step_registry:
+                original_spec = ao._step_registry.get_spec(step_name)
                 if original_spec:
                     original = original_spec.func
                     # Replace with mock
@@ -292,7 +292,7 @@ def mock_step(
             finally:
                 # Restore original
                 if original is not None:
-                    spec = forge._step_registry.get_spec(step_name)
+                    spec = ao._step_registry.get_spec(step_name)
                     if spec:
                         spec.func = original
 
@@ -319,8 +319,8 @@ async def mock_chain(
             agent_mocks={
                 "news_agent": MockAgent(name="news_agent", default_response=[]),
             },
-        ) as forge:
-            result = await forge.launch("my_chain", {})
+        ) as ao:
+            result = await ao.launch("my_chain", {})
             assert result["success"]
 
     Args:
@@ -330,7 +330,7 @@ async def mock_chain(
     """
     from agentorchestrator import get_orchestrator
 
-    forge = get_orchestrator()
+    ao = get_orchestrator()
     originals: dict[str, Any] = {}
     original_agents: dict[str, Any] = {}
 
@@ -338,8 +338,8 @@ async def mock_chain(
         # Mock steps
         if step_mocks:
             for step_name, return_value in step_mocks.items():
-                if step_name in forge._step_registry:
-                    spec = forge._step_registry.get_spec(step_name)
+                if step_name in ao._step_registry:
+                    spec = ao._step_registry.get_spec(step_name)
                     if spec:
                         originals[step_name] = spec.func
 
@@ -351,23 +351,23 @@ async def mock_chain(
         # Mock agents
         if agent_mocks:
             for agent_name, mock_agent in agent_mocks.items():
-                if agent_name in forge._agent_registry:
-                    original_agents[agent_name] = forge._agent_registry.get(agent_name)
-                forge._agent_registry.register(agent_name, mock_agent)
+                if agent_name in ao._agent_registry:
+                    original_agents[agent_name] = ao._agent_registry.get(agent_name)
+                ao._agent_registry.register(agent_name, mock_agent)
 
-        yield forge
+        yield ao
 
     finally:
         # Restore steps
         for step_name, original_fn in originals.items():
-            spec = forge._step_registry.get_spec(step_name)
+            spec = ao._step_registry.get_spec(step_name)
             if spec:
                 spec.func = original_fn
 
         # Restore agents
         for agent_name, original_agent in original_agents.items():
             if original_agent:
-                forge._agent_registry.register(agent_name, original_agent)
+                ao._agent_registry.register(agent_name, original_agent)
 
 
 class MockMiddleware(Middleware):
@@ -378,9 +378,9 @@ class MockMiddleware(Middleware):
 
     Usage:
         mock_mw = MockMiddleware()
-        forge.use_middleware(mock_mw)
+        ao.use_middleware(mock_mw)
 
-        await forge.launch("chain", {})
+        await ao.launch("chain", {})
 
         assert mock_mw.before_calls == ["step1", "step2", "step3"]
         assert mock_mw.after_calls == ["step1", "step2", "step3"]

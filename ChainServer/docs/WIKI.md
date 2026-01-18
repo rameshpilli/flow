@@ -1915,9 +1915,9 @@ class MyCustomAgentAgent(BaseAgent):
 
 
 # Register with AgentOrchestrator
-def register(forge):
+def register(ao):
     """Register this agent with AgentOrchestrator instance."""
-    forge.register_agent("mycustomagent", MyCustomAgentAgent)
+    ao.register_agent("mycustomagent", MyCustomAgentAgent)
 ```
 
 #### Create a New Chain
@@ -1943,11 +1943,11 @@ from agentorchestrator import AgentOrchestrator, ChainContext
 
 
 # Create AgentOrchestrator instance (isolated for this chain)
-forge = AgentOrchestrator(name="datapipeline", isolated=True)
+ao = AgentOrchestrator(name="datapipeline", isolated=True)
 
 
 # Define steps
-@forge.step
+@ao.step
 async def step_1(ctx: ChainContext) -> dict:
     """First step: Initialize and prepare data."""
     initial_data = ctx.initial_data or {}
@@ -1956,7 +1956,7 @@ async def step_1(ctx: ChainContext) -> dict:
     return result
 
 
-@forge.step(deps=[step_1])
+@ao.step(deps=[step_1])
 async def step_2(ctx: ChainContext) -> dict:
     """Second step: Process data from step 1."""
     step_1_result = ctx.get("step_1_result")
@@ -1965,7 +1965,7 @@ async def step_2(ctx: ChainContext) -> dict:
     return result
 
 
-@forge.step(deps=[step_2])
+@ao.step(deps=[step_2])
 async def step_3(ctx: ChainContext) -> dict:
     """Final step: Generate output."""
     step_2_result = ctx.get("step_2_result")
@@ -1973,7 +1973,7 @@ async def step_3(ctx: ChainContext) -> dict:
 
 
 # Define chain
-@forge.chain
+@ao.chain
 class DataPipelineChain:
     """DataPipeline workflow chain."""
     steps = [step_1, step_2, step_3]
@@ -1984,7 +1984,7 @@ if __name__ == "__main__":
     import asyncio
 
     async def main():
-        result = await forge.launch("DataPipelineChain", {"input": "test"})
+        result = await ao.launch("DataPipelineChain", {"input": "test"})
         print(result)
 
     asyncio.run(main())

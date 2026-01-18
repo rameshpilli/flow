@@ -143,11 +143,11 @@ class AgentOrchestrator:
             # Use custom registries
             from agentorchestrator.core.registry import create_isolated_registries
             a, s, c = create_isolated_registries()
-            forge = AgentOrchestrator(agent_registry=a, step_registry=s, chain_registry=c)
+            ao = AgentOrchestrator(agent_registry=a, step_registry=s, chain_registry=c)
 
             # Context manager for temporary registries
-            with AgentOrchestrator.temp_registries() as forge:
-                @forge.step
+            with AgentOrchestrator.temp_registries() as ao:
+                @ao.step
                 def temp_step(ctx): ...
         """
         self.name = name
@@ -217,11 +217,11 @@ class AgentOrchestrator:
         automatically cleaned up.
 
         Usage:
-            with AgentOrchestrator.temp_registries() as forge:
-                @forge.step
+            with AgentOrchestrator.temp_registries() as ao:
+                @ao.step
                 def my_step(ctx): ...
 
-                result = await forge.launch("my_chain")
+                result = await ao.launch("my_chain")
             # Registries automatically cleared after block
         """
         return cls(name=name, isolated=True, **kwargs)
@@ -605,8 +605,8 @@ class AgentOrchestrator:
         if self._step_registry.has(wrapper_step_name):
             return wrapper_step_name
 
-        # Capture forge reference for closure
-        forge = self
+        # Capture ao reference for closure
+        ao = self
 
         async def subchain_handler(ctx: ChainContext) -> dict[str, Any]:
             """
@@ -622,7 +622,7 @@ class AgentOrchestrator:
 
             # Execute the subchain
             logger.info(f"Executing subchain '{subchain_name}' from parent '{parent_chain_name}'")
-            result = await forge.launch(
+            result = await ao.launch(
                 subchain_name,
                 data=subchain_data,
                 validate_input=False,  # Parent already validated
@@ -802,17 +802,17 @@ class AgentOrchestrator:
 
         Usage:
             # Direct instance
-            forge.register_resource("config", config_dict)
+            ao.register_resource("config", config_dict)
 
             # Factory with cleanup
-            forge.register_resource(
+            ao.register_resource(
                 "db",
                 factory=lambda: create_db_pool(),
                 cleanup=lambda pool: pool.close(),
             )
 
             # Async factory with dependencies
-            forge.register_resource(
+            ao.register_resource(
                 "cache",
                 factory=create_redis,
                 cleanup=lambda c: c.close(),
@@ -850,13 +850,13 @@ class AgentOrchestrator:
         Decorator to register a factory function as a resource.
 
         Usage:
-            @forge.resource("db", cleanup=lambda c: c.close())
+            @ao.resource("db", cleanup=lambda c: c.close())
             def create_db():
                 return DatabasePool()
 
-            @forge.resource("cache", dependencies=["config"])
+            @ao.resource("cache", dependencies=["config"])
             async def create_cache():
-                config = await forge.get_resource_async("config")
+                config = await ao.get_resource_async("config")
                 return Redis(config.redis_url)
         """
         def decorator(factory: Callable[[], Any]) -> Callable[[], Any]:
@@ -1093,7 +1093,7 @@ class AgentOrchestrator:
         """
         from agentorchestrator.core.visualize import DAGVisualizer
 
-        # Pass our registries to handle isolated forge instances
+        # Pass our registries to handle isolated ao instances
         viz = DAGVisualizer(
             step_registry=self._step_registry,
             chain_registry=self._chain_registry,
@@ -1422,10 +1422,10 @@ class AgentOrchestrator:
 
         Usage:
             # Run with checkpointing
-            result = await forge.launch_resumable("my_chain", {"company": "Apple"})
+            result = await ao.launch_resumable("my_chain", {"company": "Apple"})
 
             # If it fails, resume later
-            result = await forge.resume(result["run_id"])
+            result = await ao.resume(result["run_id"])
         """
         return await self._resumable_runner.run(
             chain_name=chain_name,
@@ -1453,7 +1453,7 @@ class AgentOrchestrator:
 
         Usage:
             # Resume a failed run
-            result = await forge.resume("run_abc123")
+            result = await ao.resume("run_abc123")
         """
         return await self._resumable_runner.resume(
             run_id=run_id,
@@ -1685,10 +1685,10 @@ def get_orchestrator() -> AgentOrchestrator:
     return _default_orchestrator
 
 
-def set_orchestrator(forge: AgentOrchestrator) -> None:
+def set_orchestrator(ao: AgentOrchestrator) -> None:
     """Set the default AgentOrchestrator instance"""
     global _default_orchestrator
-    _default_orchestrator = forge
+    _default_orchestrator = ao
 
 
 # Convenience type alias

@@ -16,7 +16,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 
 def _get_orchestrator():
-    """Get the global forge instance (lazy import to avoid circular deps)"""
+    """Get the global ao instance (lazy import to avoid circular deps)"""
     from agentorchestrator.core.orchestrator import get_orchestrator
     return get_orchestrator()
 

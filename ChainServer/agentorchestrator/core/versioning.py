@@ -19,7 +19,7 @@ Usage:
     )
 
     # Version a chain
-    @forge.chain(name="my_chain", version="2.0.0")
+    @ao.chain(name="my_chain", version="2.0.0")
     class MyChain:
         steps = [...]
 
@@ -569,17 +569,17 @@ async def validate_chain(
     from agentorchestrator import get_orchestrator
 
     result = ValidationResult(chain_name=chain_name)
-    forge = get_orchestrator()
+    ao = get_orchestrator()
 
     # Check chain exists
-    if chain_name not in forge._chain_registry:
+    if chain_name not in ao._chain_registry:
         result.valid = False
         result.errors.append(f"Chain '{chain_name}' not found")
         return result
 
     try:
-        # Basic validation via forge.check()
-        check_result = forge.check(chain_name)
+        # Basic validation via ao.check()
+        check_result = ao.check(chain_name)
 
         if not check_result.get("valid"):
             result.valid = False
@@ -587,16 +587,16 @@ async def validate_chain(
             result.warnings.extend(check_result.get("warnings", []))
 
         # Count steps
-        chain_spec = forge._chain_registry.get_spec(chain_name)
+        chain_spec = ao._chain_registry.get_spec(chain_name)
         if chain_spec:
             result.steps_validated = len(chain_spec.steps)
 
         # Check agents if requested
         if check_agents:
-            for agent_name in forge._agent_registry.keys():
+            for agent_name in ao._agent_registry.keys():
                 result.agents_checked.append(agent_name)
                 try:
-                    agent = forge.get_agent(agent_name)
+                    agent = ao.get_agent(agent_name)
                     if hasattr(agent, "health_check"):
                         # Don't actually run health check in dry-run
                         if not dry_run:
@@ -612,7 +612,7 @@ async def validate_chain(
 
         # Check resources if requested
         if check_resources:
-            for resource_name in forge._resource_manager._resources.keys():
+            for resource_name in ao._resource_manager._resources.keys():
                 result.resources_checked.append(resource_name)
 
         # Validate input contract if sample_data provided

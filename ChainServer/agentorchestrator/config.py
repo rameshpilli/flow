@@ -533,7 +533,7 @@ class Config:
         Usage:
             config = get_config()
             middleware = config.get_summarizer_middleware()
-            forge.use(middleware)
+            ao.use(middleware)
         """
         from agentorchestrator.middleware.summarizer import create_domain_aware_middleware
 
@@ -551,7 +551,7 @@ class Config:
         Usage:
             config = get_config()
             middleware = config.get_cache_middleware()
-            forge.use(middleware)
+            ao.use(middleware)
         """
         from agentorchestrator.middleware.cache import CacheMiddleware
 

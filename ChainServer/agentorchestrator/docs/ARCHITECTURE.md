@@ -15,7 +15,7 @@ AgentOrchestrator is a DAG-based chain orchestration framework. It provides deco
 │                                                                          │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                  │
 │  │   Agents    │    │    Steps    │    │   Chains    │                  │
-│  │  @forge.    │    │  @forge.    │    │  @forge.    │                  │
+│  │  @ao.    │    │  @ao.    │    │  @ao.    │                  │
 │  │   agent()   │    │   step()    │    │   chain()   │                  │
 │  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘                  │
 │         │                  │                  │                          │
@@ -60,15 +60,15 @@ AgentOrchestrator is a DAG-based chain orchestration framework. It provides deco
 ### 1. AgentOrchestrator (Entry Point)
 
 The main orchestrator that provides:
-- Decorator registration (`@forge.step`, `@forge.agent`, `@forge.chain`)
-- Chain execution (`forge.launch()`, `forge.run()`)
-- Middleware management (`forge.use()`)
-- Resource management (`forge.register_resource()`)
+- Decorator registration (`@ao.step`, `@ao.agent`, `@ao.chain`)
+- Chain execution (`ao.launch()`, `ao.run()`)
+- Middleware management (`ao.use()`)
+- Resource management (`ao.register_resource()`)
 
 ```python
 from agentorchestrator import AgentOrchestrator
 
-forge = AgentOrchestrator(name="my_app")
+ao = AgentOrchestrator(name="my_app")
 ```
 
 ### 2. Registry System
@@ -97,7 +97,7 @@ Executes chains with:
 Shared state across steps:
 
 ```python
-@forge.step(name="my_step")
+@ao.step(name="my_step")
 async def my_step(ctx: ChainContext):
     # Read data
     value = ctx.get("key", default=None)
@@ -136,7 +136,7 @@ Pluggable processing hooks:
 │                        Chain Execution Flow                           │
 ├──────────────────────────────────────────────────────────────────────┤
 │                                                                       │
-│   forge.launch("my_chain", initial_data)                             │
+│   ao.launch("my_chain", initial_data)                             │
 │                      │                                                │
 │                      ▼                                                │
 │   ┌──────────────────────────────────────┐                           │
@@ -305,7 +305,7 @@ agentorchestrator/
 ├── cli.py               # Command-line interface
 │
 ├── core/
-│   ├── forge.py         # AgentOrchestrator main class
+│   ├── ao.py         # AgentOrchestrator main class
 │   ├── context.py       # ChainContext & scopes
 │   ├── registry.py      # Component registries
 │   ├── dag.py           # DAG builder & executor

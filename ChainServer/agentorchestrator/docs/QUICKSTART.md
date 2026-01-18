@@ -13,17 +13,17 @@ pip install -e ./agentorchestrator
 ```python
 from agentorchestrator import AgentOrchestrator
 
-# Create a forge instance
-forge = AgentOrchestrator(name="my_app")
+# Create a ao instance
+ao = AgentOrchestrator(name="my_app")
 
 # Define a step
-@forge.step(name="greet")
+@ao.step(name="greet")
 async def greet(ctx):
     name = ctx.get("name", "World")
     return {"greeting": f"Hello, {name}!"}
 
 # Define a chain
-@forge.chain(name="hello_chain")
+@ao.chain(name="hello_chain")
 class HelloChain:
     steps = ["greet"]
 
@@ -31,7 +31,7 @@ class HelloChain:
 import asyncio
 
 async def main():
-    result = await forge.launch("hello_chain", {"name": "AgentOrchestrator"})
+    result = await ao.launch("hello_chain", {"name": "AgentOrchestrator"})
     print(result["greeting"])  # "Hello, AgentOrchestrator!"
 
 asyncio.run(main())
@@ -42,33 +42,33 @@ asyncio.run(main())
 ```python
 from agentorchestrator import AgentOrchestrator
 
-forge = AgentOrchestrator(name="pipeline")
+ao = AgentOrchestrator(name="pipeline")
 
-@forge.step(name="fetch")
+@ao.step(name="fetch")
 async def fetch(ctx):
     # Simulate fetching data
     ctx.set("data", [1, 2, 3, 4, 5])
     return {"fetched": True}
 
-@forge.step(name="process", deps=["fetch"])  # Runs after fetch
+@ao.step(name="process", deps=["fetch"])  # Runs after fetch
 async def process(ctx):
     data = ctx.get("data")
     result = [x * 2 for x in data]
     ctx.set("processed", result)
     return {"processed": result}
 
-@forge.step(name="summarize", deps=["process"])
+@ao.step(name="summarize", deps=["process"])
 async def summarize(ctx):
     data = ctx.get("processed")
     return {"sum": sum(data), "count": len(data)}
 
-@forge.chain(name="data_pipeline")
+@ao.chain(name="data_pipeline")
 class DataPipeline:
     steps = ["fetch", "process", "summarize"]
 
 # Run
 async def main():
-    result = await forge.launch("data_pipeline", {})
+    result = await ao.launch("data_pipeline", {})
     print(f"Sum: {result['sum']}, Count: {result['count']}")
 
 asyncio.run(main())
@@ -79,21 +79,21 @@ asyncio.run(main())
 Steps without dependencies run in parallel:
 
 ```python
-@forge.step(name="fetch_a")
+@ao.step(name="fetch_a")
 async def fetch_a(ctx):
     await asyncio.sleep(1)  # Simulates slow API
     return {"a": "data_a"}
 
-@forge.step(name="fetch_b")
+@ao.step(name="fetch_b")
 async def fetch_b(ctx):
     await asyncio.sleep(1)  # Simulates slow API
     return {"b": "data_b"}
 
-@forge.step(name="combine", deps=["fetch_a", "fetch_b"])
+@ao.step(name="combine", deps=["fetch_a", "fetch_b"])
 async def combine(ctx):
     return {"combined": True}
 
-@forge.chain(name="parallel_chain")
+@ao.chain(name="parallel_chain")
 class ParallelChain:
     steps = ["fetch_a", "fetch_b", "combine"]
 
@@ -105,13 +105,13 @@ class ParallelChain:
 ```python
 from agentorchestrator import AgentOrchestrator, LoggerMiddleware, CacheMiddleware
 
-forge = AgentOrchestrator(name="my_app")
+ao = AgentOrchestrator(name="my_app")
 
 # Add logging
-forge.use(LoggerMiddleware())
+ao.use(LoggerMiddleware())
 
 # Add caching (5 minute TTL)
-forge.use(CacheMiddleware(ttl_seconds=300))
+ao.use(CacheMiddleware(ttl_seconds=300))
 ```
 
 ## Testing
@@ -120,16 +120,16 @@ forge.use(CacheMiddleware(ttl_seconds=300))
 from agentorchestrator.testing import IsolatedOrchestrator
 
 async def test_my_chain():
-    async with IsolatedOrchestrator() as forge:
-        @forge.step(name="test_step")
+    async with IsolatedOrchestrator() as ao:
+        @ao.step(name="test_step")
         async def test_step(ctx):
             return {"result": "ok"}
 
-        @forge.chain(name="test_chain")
+        @ao.chain(name="test_chain")
         class TestChain:
             steps = ["test_step"]
 
-        result = await forge.launch("test_chain", {})
+        result = await ao.launch("test_chain", {})
         assert result["success"]
 ```
 

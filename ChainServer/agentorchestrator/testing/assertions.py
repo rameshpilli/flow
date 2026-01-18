@@ -18,7 +18,7 @@ def assert_step_completed(
     Assert that a specific step completed successfully.
 
     Args:
-        result: Execution result from forge.launch()
+        result: Execution result from ao.launch()
         step_name: Name of step to check
         message: Optional custom error message
 
@@ -79,7 +79,7 @@ def assert_step_failed(
     Assert that a specific step failed.
 
     Args:
-        result: Execution result from forge.launch()
+        result: Execution result from ao.launch()
         step_name: Name of step to check
         error_type: Optional expected error type name
         message: Optional custom error message
@@ -203,7 +203,7 @@ def assert_context_missing(
 
 
 def assert_chain_valid(
-    forge,  # AgentOrchestrator instance
+    ao,  # AgentOrchestrator instance
     chain_name: str,
     message: str | None = None,
 ) -> None:
@@ -211,14 +211,14 @@ def assert_chain_valid(
     Assert that a chain passes validation.
 
     Args:
-        forge: AgentOrchestrator instance
+        ao: AgentOrchestrator instance
         chain_name: Name of chain to validate
         message: Optional custom error message
 
     Raises:
         AssertionError if chain is invalid
     """
-    result = forge.check(chain_name)
+    result = ao.check(chain_name)
 
     if not result.get("valid"):
         errors = result.get("errors", [])
@@ -228,7 +228,7 @@ def assert_chain_valid(
 
 
 def assert_chain_invalid(
-    forge,  # AgentOrchestrator instance
+    ao,  # AgentOrchestrator instance
     chain_name: str,
     expected_error: str | None = None,
     message: str | None = None,
@@ -239,7 +239,7 @@ def assert_chain_invalid(
     Useful for testing that invalid configurations are caught.
 
     Args:
-        forge: AgentOrchestrator instance
+        ao: AgentOrchestrator instance
         chain_name: Name of chain to validate
         expected_error: Optional substring to find in error messages
         message: Optional custom error message
@@ -247,7 +247,7 @@ def assert_chain_invalid(
     Raises:
         AssertionError if chain is valid (or wrong error)
     """
-    result = forge.check(chain_name)
+    result = ao.check(chain_name)
 
     if result.get("valid"):
         raise AssertionError(
@@ -272,7 +272,7 @@ def assert_execution_success(
     Assert that chain execution was successful.
 
     Args:
-        result: Execution result from forge.launch()
+        result: Execution result from ao.launch()
         message: Optional custom error message
 
     Raises:
@@ -301,7 +301,7 @@ def assert_execution_failed(
     Assert that chain execution failed.
 
     Args:
-        result: Execution result from forge.launch()
+        result: Execution result from ao.launch()
         message: Optional custom error message
 
     Raises:
@@ -329,7 +329,7 @@ def assert_partial_success(
     Assert partial success (some steps completed, some failed).
 
     Args:
-        result: Execution result from forge.launch()
+        result: Execution result from ao.launch()
         min_completed: Minimum number of completed steps
         message: Optional custom error message
 

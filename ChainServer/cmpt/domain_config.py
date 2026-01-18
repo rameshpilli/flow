@@ -660,7 +660,7 @@ def sample_cmpt_chain_request(
         **overrides: Override any default values
 
     Returns:
-        Dict suitable for forge.launch(data=...)
+        Dict suitable for ao.launch(data=...)
     """
     from datetime import datetime
 

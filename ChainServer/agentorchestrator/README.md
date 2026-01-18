@@ -6,7 +6,7 @@ AgentOrchestrator is a lightweight, decorator-driven framework for building data
 
 ## Features
 
-- **Decorator-Based**: Simple `@forge.step()`, `@forge.agent()`, `@forge.chain()` decorators
+- **Decorator-Based**: Simple `@ao.step()`, `@ao.agent()`, `@ao.chain()` decorators
 - **DAG Execution**: Automatic dependency resolution with parallel execution
 - **Middleware**: Logging, caching, summarization, token management
 - **Context Management**: Scoped storage with Redis offloading for large payloads
@@ -28,25 +28,25 @@ pip install -e ".[all]"
 ```python
 from agentorchestrator import AgentOrchestrator
 
-forge = AgentOrchestrator(name="my_app")
+ao = AgentOrchestrator(name="my_app")
 
-@forge.step(name="fetch")
+@ao.step(name="fetch")
 async def fetch(ctx):
     ctx.set("data", [1, 2, 3])
     return {"fetched": True}
 
-@forge.step(name="process", deps=["fetch"])
+@ao.step(name="process", deps=["fetch"])
 async def process(ctx):
     data = ctx.get("data")
     return {"sum": sum(data)}
 
-@forge.chain(name="my_pipeline")
+@ao.chain(name="my_pipeline")
 class MyPipeline:
     steps = ["fetch", "process"]
 
 # Run
 import asyncio
-result = asyncio.run(forge.launch("my_pipeline", {}))
+result = asyncio.run(ao.launch("my_pipeline", {}))
 print(result)  # {"sum": 6, ...}
 ```
 

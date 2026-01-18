@@ -76,46 +76,46 @@ class TestAgentOrchestrator:
         get_step_registry().clear()
         get_chain_registry().clear()
 
-    def test_forge_creation(self):
-        forge = AgentOrchestrator(name="test_app", version="1.0.0")
-        assert forge.name == "test_app"
-        assert forge.version == "1.0.0"
+    def test_ao_creation(self):
+        ao = AgentOrchestrator(name="test_app", version="1.0.0")
+        assert ao.name == "test_app"
+        assert ao.version == "1.0.0"
 
     def test_step_registration(self):
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
 
-        @forge.step(name="my_step")
+        @ao.step(name="my_step")
         async def my_step(ctx: ChainContext):
             return {"result": "done"}
 
-        assert "my_step" in forge.list_steps()
+        assert "my_step" in ao.list_steps()
 
     def test_agent_registration(self):
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
 
-        @forge.agent(name="my_agent")
+        @ao.agent(name="my_agent")
         class MyAgent(BaseAgent):
             async def fetch(self, query: str, **kwargs) -> AgentResult:
                 return AgentResult(data={"query": query}, source="test", query=query)
 
-        assert "my_agent" in forge.list_agents()
+        assert "my_agent" in ao.list_agents()
 
     def test_chain_registration(self):
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
 
-        @forge.step(name="step_a")
+        @ao.step(name="step_a")
         async def step_a(ctx):
             return {}
 
-        @forge.step(name="step_b")
+        @ao.step(name="step_b")
         async def step_b(ctx):
             return {}
 
-        @forge.chain(name="my_chain")
+        @ao.chain(name="my_chain")
         class MyChain:
             steps = ["step_a", "step_b"]
 
-        assert "my_chain" in forge.list_chains()
+        assert "my_chain" in ao.list_chains()
 
 
 class TestDAGExecution:
@@ -128,24 +128,24 @@ class TestDAGExecution:
 
     @pytest.mark.asyncio
     async def test_simple_chain_execution(self):
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
 
-        @forge.step(name="step1", produces=["data1"])
+        @ao.step(name="step1", produces=["data1"])
         async def step1(ctx: ChainContext):
             ctx.set("data1", "from_step1")
             return {"data1": "from_step1"}
 
-        @forge.step(name="step2", deps=["step1"], produces=["data2"])
+        @ao.step(name="step2", deps=["step1"], produces=["data2"])
         async def step2(ctx: ChainContext):
             data1 = ctx.get("data1")
             ctx.set("data2", f"processed_{data1}")
             return {"data2": ctx.get("data2")}
 
-        @forge.chain(name="test_chain")
+        @ao.chain(name="test_chain")
         class TestChain:
             steps = ["step1", "step2"]
 
-        result = await forge.run("test_chain")
+        result = await ao.run("test_chain")
 
         assert result["success"] is True
         assert len(result["results"]) == 2
@@ -154,33 +154,33 @@ class TestDAGExecution:
     @pytest.mark.asyncio
     async def test_parallel_execution(self):
         """Test that independent steps run in parallel"""
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
         execution_order = []
 
-        @forge.step(name="parallel_a")
+        @ao.step(name="parallel_a")
         async def parallel_a(ctx):
             execution_order.append("a_start")
             await asyncio.sleep(0.1)
             execution_order.append("a_end")
             return {}
 
-        @forge.step(name="parallel_b")
+        @ao.step(name="parallel_b")
         async def parallel_b(ctx):
             execution_order.append("b_start")
             await asyncio.sleep(0.1)
             execution_order.append("b_end")
             return {}
 
-        @forge.step(name="combine", deps=["parallel_a", "parallel_b"])
+        @ao.step(name="combine", deps=["parallel_a", "parallel_b"])
         async def combine(ctx):
             execution_order.append("combine")
             return {}
 
-        @forge.chain(name="parallel_chain")
+        @ao.chain(name="parallel_chain")
         class ParallelChain:
             steps = ["parallel_a", "parallel_b", "combine"]
 
-        result = await forge.run("parallel_chain")
+        result = await ao.run("parallel_chain")
 
         assert result["success"] is True
         # Both a and b should start before either ends (parallel execution)
@@ -189,17 +189,17 @@ class TestDAGExecution:
 
     @pytest.mark.asyncio
     async def test_error_handling(self):
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
 
-        @forge.step(name="failing_step")
+        @ao.step(name="failing_step")
         async def failing_step(ctx):
             raise ValueError("Test error")
 
-        @forge.chain(name="error_chain")
+        @ao.chain(name="error_chain")
         class ErrorChain:
             steps = ["failing_step"]
 
-        result = await forge.run("error_chain")
+        result = await ao.run("error_chain")
 
         assert result["success"] is False
         # error is a dict with structured error info
@@ -216,40 +216,40 @@ class TestMiddleware:
 
     @pytest.mark.asyncio
     async def test_logger_middleware(self):
-        forge = AgentOrchestrator(name="test")
-        forge.use(LoggerMiddleware())
+        ao = AgentOrchestrator(name="test")
+        ao.use(LoggerMiddleware())
 
-        @forge.step(name="logged_step")
+        @ao.step(name="logged_step")
         async def logged_step(ctx):
             return {"done": True}
 
-        @forge.chain(name="logged_chain")
+        @ao.chain(name="logged_chain")
         class LoggedChain:
             steps = ["logged_step"]
 
-        result = await forge.run("logged_chain")
+        result = await ao.run("logged_chain")
         assert result["success"] is True
 
     @pytest.mark.asyncio
     async def test_cache_middleware(self):
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
         cache = CacheMiddleware(ttl_seconds=60)
-        forge.use(cache)
+        ao.use(cache)
 
         call_count = 0
 
-        @forge.step(name="cached_step")
+        @ao.step(name="cached_step")
         async def cached_step(ctx):
             nonlocal call_count
             call_count += 1
             return {"count": call_count}
 
-        @forge.chain(name="cached_chain")
+        @ao.chain(name="cached_chain")
         class CachedChain:
             steps = ["cached_step"]
 
         # First run
-        await forge.run("cached_chain")
+        await ao.run("cached_chain")
 
         # Check stats
         stats = cache.get_stats()
@@ -266,9 +266,9 @@ class TestAgents:
 
     @pytest.mark.asyncio
     async def test_custom_agent(self):
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
 
-        @forge.agent(name="test_agent")
+        @ao.agent(name="test_agent")
         class TestAgent(BaseAgent):
             async def fetch(self, query: str, **kwargs) -> AgentResult:
                 return AgentResult(
@@ -277,7 +277,7 @@ class TestAgents:
                     query=query,
                 )
 
-        agent = forge.get_agent("test_agent")
+        agent = ao.get_agent("test_agent")
         result = await agent.fetch("test query")
 
         assert result.success is True
@@ -285,9 +285,9 @@ class TestAgents:
 
     @pytest.mark.asyncio
     async def test_agent_in_step(self):
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
 
-        @forge.agent(name="data_agent")
+        @ao.agent(name="data_agent")
         class DataAgent(BaseAgent):
             async def fetch(self, query: str, **kwargs) -> AgentResult:
                 return AgentResult(
@@ -296,18 +296,18 @@ class TestAgents:
                     query=query,
                 )
 
-        @forge.step(name="fetch_step", produces=["items"])
+        @ao.step(name="fetch_step", produces=["items"])
         async def fetch_step(ctx: ChainContext):
-            agent = forge.get_agent("data_agent")
+            agent = ao.get_agent("data_agent")
             result = await agent.fetch("get items")
             ctx.set("items", result.data["items"])
             return {"items": result.data["items"]}
 
-        @forge.chain(name="agent_chain")
+        @ao.chain(name="agent_chain")
         class AgentChain:
             steps = ["fetch_step"]
 
-        result = await forge.run("agent_chain")
+        result = await ao.run("agent_chain")
 
         assert result["success"] is True
         assert result["context"]["data"]["items"] == [1, 2, 3]
@@ -322,26 +322,26 @@ class TestVisualization:
         get_chain_registry().clear()
 
     def test_chain_visualization(self):
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
 
-        @forge.step(name="step_a")
+        @ao.step(name="step_a")
         async def step_a(ctx):
             return {}
 
-        @forge.step(name="step_b", deps=["step_a"])
+        @ao.step(name="step_b", deps=["step_a"])
         async def step_b(ctx):
             return {}
 
-        @forge.step(name="step_c", deps=["step_b"])
+        @ao.step(name="step_c", deps=["step_b"])
         async def step_c(ctx):
             return {}
 
-        @forge.chain(name="viz_chain")
+        @ao.chain(name="viz_chain")
         class VizChain:
             steps = ["step_a", "step_b", "step_c"]
 
         # Use graph() method instead of visualize_chain()
-        viz = forge.graph("viz_chain")
+        viz = ao.graph("viz_chain")
 
         assert "step_a" in viz
         assert "step_b" in viz
@@ -769,29 +769,29 @@ class TestDAGExecutorBehaviors:
     @pytest.mark.asyncio
     async def test_fail_fast_cancels_pending_tasks(self):
         """Test that fail_fast mode truly cancels pending tasks when one fails."""
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
         started_tasks = set()
         completed_tasks = set()
 
-        @forge.step(name="fast_fail")
+        @ao.step(name="fast_fail")
         async def fast_fail(ctx):
             started_tasks.add("fast_fail")
             await asyncio.sleep(0.05)
             raise ValueError("Intentional failure")
 
-        @forge.step(name="slow_step")
+        @ao.step(name="slow_step")
         async def slow_step(ctx):
             started_tasks.add("slow_step")
             await asyncio.sleep(0.5)  # This should be cancelled
             completed_tasks.add("slow_step")
             return {}
 
-        @forge.chain(name="fail_fast_chain")
+        @ao.chain(name="fail_fast_chain")
         class FailFastChain:
             steps = ["fast_fail", "slow_step"]
             error_handling = "fail_fast"
 
-        result = await forge.run("fail_fast_chain")
+        result = await ao.run("fail_fast_chain")
 
         assert result["success"] is False
         # Both started (run in parallel)
@@ -803,10 +803,10 @@ class TestDAGExecutorBehaviors:
     @pytest.mark.asyncio
     async def test_retry_only_records_final_result(self):
         """Test that retry logic only records the final outcome, not intermediate failures."""
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
         attempt_count = 0
 
-        @forge.step(name="flaky_step", retry=2)  # Will retry up to 2 times
+        @ao.step(name="flaky_step", retry=2)  # Will retry up to 2 times
         async def flaky_step(ctx):
             nonlocal attempt_count
             attempt_count += 1
@@ -814,12 +814,12 @@ class TestDAGExecutorBehaviors:
                 raise ValueError(f"Attempt {attempt_count} failed")
             return {"success": True}
 
-        @forge.chain(name="retry_chain")
+        @ao.chain(name="retry_chain")
         class RetryChain:
             steps = ["flaky_step"]
             error_handling = "retry"
 
-        result = await forge.run("retry_chain")
+        result = await ao.run("retry_chain")
 
         # Should succeed on the 3rd attempt
         assert result["success"] is True
@@ -834,30 +834,30 @@ class TestDAGExecutorBehaviors:
     @pytest.mark.asyncio
     async def test_continue_mode_skips_failed_dependents(self):
         """Test that in continue mode, dependents of failed steps are skipped."""
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
 
-        @forge.step(name="step_a")
+        @ao.step(name="step_a")
         async def step_a(ctx):
             raise ValueError("Step A fails")
 
-        @forge.step(name="step_b")
+        @ao.step(name="step_b")
         async def step_b(ctx):
             return {"b": "success"}
 
-        @forge.step(name="step_c", deps=["step_a"])  # Depends on failing step
+        @ao.step(name="step_c", deps=["step_a"])  # Depends on failing step
         async def step_c(ctx):
             return {"c": "success"}
 
-        @forge.step(name="step_d", deps=["step_b"])  # Depends on succeeding step
+        @ao.step(name="step_d", deps=["step_b"])  # Depends on succeeding step
         async def step_d(ctx):
             return {"d": "success"}
 
-        @forge.chain(name="continue_chain")
+        @ao.chain(name="continue_chain")
         class ContinueChain:
             steps = ["step_a", "step_b", "step_c", "step_d"]
             error_handling = "continue"
 
-        result = await forge.run("continue_chain")
+        result = await ao.run("continue_chain")
 
         # Overall should fail because step_a failed
         assert result["success"] is False
@@ -881,11 +881,11 @@ class TestDAGExecutorBehaviors:
     @pytest.mark.asyncio
     async def test_per_step_concurrency_limit(self):
         """Test that per-step concurrency limits are respected."""
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
         concurrent_count = 0
         max_concurrent = 0
 
-        @forge.step(name="limited_step", max_concurrency=2)
+        @ao.step(name="limited_step", max_concurrency=2)
         async def limited_step(ctx):
             nonlocal concurrent_count, max_concurrent
             concurrent_count += 1
@@ -896,22 +896,22 @@ class TestDAGExecutorBehaviors:
 
         # We need multiple parallel invocations
         # Since chains run once, we'll just verify the config is applied
-        # Use the forge's own registry (since it's isolated)
-        spec = forge._step_registry.get_spec("limited_step")
+        # Use the ao's own registry (since it's isolated)
+        spec = ao._step_registry.get_spec("limited_step")
         assert spec is not None
         assert spec.max_concurrency == 2
 
     @pytest.mark.asyncio
     async def test_step_spec_has_resources_field(self):
         """Test that StepSpec has a dedicated resources field (not in retry_config)."""
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
 
-        @forge.step(name="resource_step", resources=["db", "cache"])
+        @ao.step(name="resource_step", resources=["db", "cache"])
         async def resource_step(ctx, db=None, cache=None):
             return {}
 
-        # Use forge's own registry (isolated)
-        spec = forge._step_registry.get_spec("resource_step")
+        # Use ao's own registry (isolated)
+        spec = ao._step_registry.get_spec("resource_step")
         assert spec is not None
 
         # Resources should be a proper list field, not buried in retry_config
@@ -924,16 +924,16 @@ class TestDAGExecutorBehaviors:
     @pytest.mark.asyncio
     async def test_retry_config_is_typed_dataclass(self):
         """Test that retry_config is now a proper RetryConfig dataclass."""
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
 
-        @forge.step(name="retry_step", retry=3)
+        @ao.step(name="retry_step", retry=3)
         async def retry_step(ctx):
             return {}
 
         from agentorchestrator.core.registry import RetryConfig
 
-        # Use forge's own registry (isolated)
-        spec = forge._step_registry.get_spec("retry_step")
+        # Use ao's own registry (isolated)
+        spec = ao._step_registry.get_spec("retry_step")
         assert spec is not None
 
         # Should be a RetryConfig instance, not a dict
@@ -978,30 +978,30 @@ class TestErrorHandlingModes:
     @pytest.mark.asyncio
     async def test_fail_fast_stops_immediately(self):
         """Test that fail_fast mode stops execution on first failure."""
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
         executed_steps = []
 
-        @forge.step(name="step_a")
+        @ao.step(name="step_a")
         async def step_a(ctx):
             executed_steps.append("a")
             raise ValueError("Step A fails")
 
-        @forge.step(name="step_b")
+        @ao.step(name="step_b")
         async def step_b(ctx):
             executed_steps.append("b")
             return {"b": "success"}
 
-        @forge.step(name="step_c", deps=["step_a", "step_b"])
+        @ao.step(name="step_c", deps=["step_a", "step_b"])
         async def step_c(ctx):
             executed_steps.append("c")
             return {"c": "success"}
 
-        @forge.chain(name="fail_fast_chain")
+        @ao.chain(name="fail_fast_chain")
         class FailFastChain:
             steps = ["step_a", "step_b", "step_c"]
             error_handling = "fail_fast"
 
-        result = await forge.run("fail_fast_chain")
+        result = await ao.run("fail_fast_chain")
 
         assert result["success"] is False
         # step_a and step_b start in parallel, step_c never runs
@@ -1011,36 +1011,36 @@ class TestErrorHandlingModes:
     @pytest.mark.asyncio
     async def test_continue_mode_runs_all_independent_steps(self):
         """Test that continue mode runs all steps that can run."""
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
         executed_steps = []
 
-        @forge.step(name="step_a")
+        @ao.step(name="step_a")
         async def step_a(ctx):
             executed_steps.append("a")
             raise ValueError("Step A fails")
 
-        @forge.step(name="step_b")
+        @ao.step(name="step_b")
         async def step_b(ctx):
             executed_steps.append("b")
             ctx.set("b_data", "from_b")
             return {"b": "success"}
 
-        @forge.step(name="step_c", deps=["step_a"])
+        @ao.step(name="step_c", deps=["step_a"])
         async def step_c(ctx):
             executed_steps.append("c")
             return {"c": "success"}
 
-        @forge.step(name="step_d", deps=["step_b"])
+        @ao.step(name="step_d", deps=["step_b"])
         async def step_d(ctx):
             executed_steps.append("d")
             return {"d": "success"}
 
-        @forge.chain(name="continue_chain")
+        @ao.chain(name="continue_chain")
         class ContinueChain:
             steps = ["step_a", "step_b", "step_c", "step_d"]
             error_handling = "continue"
 
-        result = await forge.run("continue_chain")
+        result = await ao.run("continue_chain")
 
         assert result["success"] is False  # Overall fails
         assert "a" in executed_steps  # Ran and failed
@@ -1051,22 +1051,22 @@ class TestErrorHandlingModes:
     @pytest.mark.asyncio
     async def test_continue_mode_skipped_step_has_reason(self):
         """Test that skipped steps have clear skip reasons."""
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
 
-        @forge.step(name="failing_parent")
+        @ao.step(name="failing_parent")
         async def failing_parent(ctx):
             raise ValueError("Parent fails")
 
-        @forge.step(name="child_step", deps=["failing_parent"])
+        @ao.step(name="child_step", deps=["failing_parent"])
         async def child_step(ctx):
             return {"child": "success"}
 
-        @forge.chain(name="skip_chain")
+        @ao.chain(name="skip_chain")
         class SkipChain:
             steps = ["failing_parent", "child_step"]
             error_handling = "continue"
 
-        result = await forge.run("skip_chain")
+        result = await ao.run("skip_chain")
 
         # Find child_step result
         child_result = next(
@@ -1080,10 +1080,10 @@ class TestErrorHandlingModes:
     @pytest.mark.asyncio
     async def test_retry_mode_retries_on_failure(self):
         """Test that retry mode actually retries failed steps."""
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
         attempt_count = 0
 
-        @forge.step(name="flaky_step", retry=3)
+        @ao.step(name="flaky_step", retry=3)
         async def flaky_step(ctx):
             nonlocal attempt_count
             attempt_count += 1
@@ -1091,12 +1091,12 @@ class TestErrorHandlingModes:
                 raise ValueError(f"Attempt {attempt_count} failed")
             return {"success": True, "attempts": attempt_count}
 
-        @forge.chain(name="retry_chain")
+        @ao.chain(name="retry_chain")
         class RetryChain:
             steps = ["flaky_step"]
             error_handling = "retry"
 
-        result = await forge.run("retry_chain")
+        result = await ao.run("retry_chain")
 
         assert result["success"] is True
         assert attempt_count == 3  # Took 3 attempts
@@ -1104,21 +1104,21 @@ class TestErrorHandlingModes:
     @pytest.mark.asyncio
     async def test_retry_exhaustion_records_failure(self):
         """Test that exhausted retries result in proper failure recording."""
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
         attempt_count = 0
 
-        @forge.step(name="always_fails", retry=2)
+        @ao.step(name="always_fails", retry=2)
         async def always_fails(ctx):
             nonlocal attempt_count
             attempt_count += 1
             raise ValueError("Always fails")
 
-        @forge.chain(name="exhausted_chain")
+        @ao.chain(name="exhausted_chain")
         class ExhaustedChain:
             steps = ["always_fails"]
             error_handling = "retry"
 
-        result = await forge.run("exhausted_chain")
+        result = await ao.run("exhausted_chain")
 
         assert result["success"] is False
         assert attempt_count == 3  # Initial + 2 retries
@@ -1141,23 +1141,23 @@ class TestResourceCleanup:
             nonlocal cleanup_called
             cleanup_called = True
 
-        forge = AgentOrchestrator(name="test")
-        forge.register_resource(
+        ao = AgentOrchestrator(name="test")
+        ao.register_resource(
             "test_resource",
             factory=lambda: {"data": "test"},
             cleanup=cleanup_fn,
         )
 
-        @forge.step(name="use_resource", resources=["test_resource"])
+        @ao.step(name="use_resource", resources=["test_resource"])
         async def use_resource(ctx, test_resource=None):
             return {"used": True}
 
-        @forge.chain(name="resource_chain")
+        @ao.chain(name="resource_chain")
         class ResourceChain:
             steps = ["use_resource"]
 
-        async with forge:
-            await forge.run("resource_chain")
+        async with ao:
+            await ao.run("resource_chain")
 
         assert cleanup_called is True
 
@@ -1170,23 +1170,23 @@ class TestResourceCleanup:
             nonlocal cleanup_called
             cleanup_called = True
 
-        forge = AgentOrchestrator(name="test")
-        forge.register_resource(
+        ao = AgentOrchestrator(name="test")
+        ao.register_resource(
             "test_resource",
             factory=lambda: {"data": "test"},
             cleanup=cleanup_fn,
         )
 
-        @forge.step(name="failing_step", resources=["test_resource"])
+        @ao.step(name="failing_step", resources=["test_resource"])
         async def failing_step(ctx, test_resource=None):
             raise ValueError("Step fails")
 
-        @forge.chain(name="failing_chain")
+        @ao.chain(name="failing_chain")
         class FailingChain:
             steps = ["failing_step"]
 
-        async with forge:
-            result = await forge.run("failing_chain")
+        async with ao:
+            result = await ao.run("failing_chain")
             assert result["success"] is False
 
         assert cleanup_called is True
@@ -1203,26 +1203,26 @@ class TestStepScopeCleanup:
     @pytest.mark.asyncio
     async def test_step_scope_cleanup_on_success(self):
         """Test that step-scoped data is cleaned up after step completes."""
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
 
-        @forge.step(name="step_with_scope")
+        @ao.step(name="step_with_scope")
         async def step_with_scope(ctx):
             ctx.set("step_local", "temp_value", scope=ContextScope.STEP)
             ctx.set("chain_data", "persists", scope=ContextScope.CHAIN)
             return {"done": True}
 
-        @forge.step(name="check_scope", deps=["step_with_scope"])
+        @ao.step(name="check_scope", deps=["step_with_scope"])
         async def check_scope(ctx):
             # Step-scoped data from previous step should be gone
             step_local = ctx.get("step_local")
             chain_data = ctx.get("chain_data")
             return {"step_local": step_local, "chain_data": chain_data}
 
-        @forge.chain(name="scope_chain")
+        @ao.chain(name="scope_chain")
         class ScopeChain:
             steps = ["step_with_scope", "check_scope"]
 
-        result = await forge.run("scope_chain")
+        result = await ao.run("scope_chain")
 
         assert result["success"] is True
         # Find check_scope result
@@ -1236,26 +1236,26 @@ class TestStepScopeCleanup:
     @pytest.mark.asyncio
     async def test_step_scope_cleanup_on_exception(self):
         """Test that step-scoped data is cleaned up even when step fails."""
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
         ctx_after_failure = None
 
-        @forge.step(name="failing_step")
+        @ao.step(name="failing_step")
         async def failing_step(ctx):
             ctx.set("temp_data", "should_be_cleaned", scope=ContextScope.STEP)
             raise ValueError("Step fails")
 
-        @forge.step(name="after_failure")
+        @ao.step(name="after_failure")
         async def after_failure(ctx):
             nonlocal ctx_after_failure
             ctx_after_failure = ctx.get("temp_data")
             return {"done": True}
 
-        @forge.chain(name="cleanup_chain")
+        @ao.chain(name="cleanup_chain")
         class CleanupChain:
             steps = ["failing_step", "after_failure"]
             error_handling = "continue"
 
-        await forge.run("cleanup_chain")
+        await ao.run("cleanup_chain")
 
         # Step-scoped data should be cleaned up even after failure
         assert ctx_after_failure is None
@@ -1281,22 +1281,22 @@ class TestMiddlewareIsolation:
             async def after(self, ctx, step_name, result):
                 raise RuntimeError("Middleware fails")
 
-        forge = AgentOrchestrator(name="test")
-        forge.use(FailingMiddleware())
+        ao = AgentOrchestrator(name="test")
+        ao.use(FailingMiddleware())
 
         step_executed = False
 
-        @forge.step(name="test_step")
+        @ao.step(name="test_step")
         async def test_step(ctx):
             nonlocal step_executed
             step_executed = True
             return {"success": True}
 
-        @forge.chain(name="middleware_chain")
+        @ao.chain(name="middleware_chain")
         class MiddlewareChain:
             steps = ["test_step"]
 
-        result = await forge.run("middleware_chain")
+        result = await ao.run("middleware_chain")
 
         assert result["success"] is True
         assert step_executed is True
@@ -1329,20 +1329,20 @@ class TestMiddlewareIsolation:
             async def after(self, ctx, step_name, result):
                 middleware_order.append("second_after")
 
-        forge = AgentOrchestrator(name="test")
-        forge.use(FirstMiddleware())
-        forge.use(SecondMiddleware())
+        ao = AgentOrchestrator(name="test")
+        ao.use(FirstMiddleware())
+        ao.use(SecondMiddleware())
 
-        @forge.step(name="test_step")
+        @ao.step(name="test_step")
         async def test_step(ctx):
             middleware_order.append("step")
             return {}
 
-        @forge.chain(name="multi_mw_chain")
+        @ao.chain(name="multi_mw_chain")
         class MultiMWChain:
             steps = ["test_step"]
 
-        await forge.run("multi_mw_chain")
+        await ao.run("multi_mw_chain")
 
         # Second middleware should still run
         assert "second_before" in middleware_order
@@ -1363,20 +1363,20 @@ class TestMetricsMiddleware:
         """Test that MetricsMiddleware collects step duration."""
         from agentorchestrator.middleware import MetricsMiddleware
 
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
         metrics = MetricsMiddleware()
-        forge.use(metrics)
+        ao.use(metrics)
 
-        @forge.step(name="timed_step")
+        @ao.step(name="timed_step")
         async def timed_step(ctx):
             await asyncio.sleep(0.05)  # 50ms
             return {"done": True}
 
-        @forge.chain(name="metrics_chain")
+        @ao.chain(name="metrics_chain")
         class MetricsChain:
             steps = ["timed_step"]
 
-        await forge.run("metrics_chain")
+        await ao.run("metrics_chain")
 
         stats = metrics.get_stats()
         assert "histograms" in stats
@@ -1391,24 +1391,24 @@ class TestMetricsMiddleware:
         """Test that MetricsMiddleware tracks success/failure counts."""
         from agentorchestrator.middleware import MetricsMiddleware
 
-        forge = AgentOrchestrator(name="test")
+        ao = AgentOrchestrator(name="test")
         metrics = MetricsMiddleware()
-        forge.use(metrics)
+        ao.use(metrics)
 
-        @forge.step(name="success_step")
+        @ao.step(name="success_step")
         async def success_step(ctx):
             return {"done": True}
 
-        @forge.step(name="fail_step")
+        @ao.step(name="fail_step")
         async def fail_step(ctx):
             raise ValueError("Fails")
 
-        @forge.chain(name="mixed_chain")
+        @ao.chain(name="mixed_chain")
         class MixedChain:
             steps = ["success_step", "fail_step"]
             error_handling = "continue"
 
-        await forge.run("mixed_chain")
+        await ao.run("mixed_chain")
 
         stats = metrics.get_stats()
         assert "counters" in stats

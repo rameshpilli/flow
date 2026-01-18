@@ -23,7 +23,7 @@ class LoggerMiddleware(Middleware):
     - Context snapshots
 
     Usage:
-        forge.use_middleware(LoggerMiddleware(
+        ao.use_middleware(LoggerMiddleware(
             level=logging.INFO,
             include_context=True,
         ))

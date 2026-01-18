@@ -25,7 +25,7 @@ class TestCMPTIntegration:
         3. ResponseBuilder generates a final response
         """
         # 1. Setup
-        forge = AgentOrchestrator(name="cmpt_test")
+        ao = AgentOrchestrator(name="cmpt_test")
 
         # Initialize services (using default mocks)
         context_service = ContextBuilderService()
@@ -35,21 +35,21 @@ class TestCMPTIntegration:
         )
 
         # 2. Register Steps
-        @forge.step(name="context_builder", produces=["context_output"])
+        @ao.step(name="context_builder", produces=["context_output"])
         async def run_context(ctx):
             req = ctx.get("request")
             output = await context_service.execute(req)
             ctx.set("context_output", output)
             return {"company": output.company_name}
 
-        @forge.step(name="prioritization", deps=["context_builder"], produces=["priority_output"])
+        @ao.step(name="prioritization", deps=["context_builder"], produces=["priority_output"])
         async def run_prioritization(ctx):
             context_out = ctx.get("context_output")
             output = await prioritization_service.execute(context_out)
             ctx.set("priority_output", output)
             return {"subqueries": len(output.subqueries)}
 
-        @forge.step(name="response_builder", deps=["prioritization"], produces=["final_response"])
+        @ao.step(name="response_builder", deps=["prioritization"], produces=["final_response"])
         async def run_response(ctx):
             context_out = ctx.get("context_output")
             priority_out = ctx.get("priority_output")
@@ -57,7 +57,7 @@ class TestCMPTIntegration:
             ctx.set("final_response", output)
             return {"prepared_content": output.prepared_content}
 
-        @forge.chain(name="cmpt_full_chain")
+        @ao.chain(name="cmpt_full_chain")
         class CMPTChain:
             steps = ["context_builder", "prioritization", "response_builder"]
 
@@ -72,7 +72,7 @@ class TestCMPTIntegration:
             )
         )
 
-        result = await forge.run("cmpt_full_chain", {"request": request})
+        result = await ao.run("cmpt_full_chain", {"request": request})
 
         # 4. Verify
         assert result["success"] is True, f"Chain failed with error: {result.get('error')}"

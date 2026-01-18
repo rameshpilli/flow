@@ -42,7 +42,7 @@ class TokenManagerMiddleware(Middleware):
 
     Usage:
         # Basic usage
-        forge.use(TokenManagerMiddleware(
+        ao.use(TokenManagerMiddleware(
             max_total_tokens=100000,
             warning_threshold=0.8,
         ))
@@ -53,7 +53,7 @@ class TokenManagerMiddleware(Middleware):
         store = RedisContextStore(port=6380)
         summarizer = SummarizerMiddleware(...)
 
-        forge.use(TokenManagerMiddleware(
+        ao.use(TokenManagerMiddleware(
             max_total_tokens=100000,
             warning_threshold=0.8,
             auto_summarize=True,

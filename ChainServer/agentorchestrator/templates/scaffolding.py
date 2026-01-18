@@ -504,7 +504,7 @@ def get_orchestrator():
 
 def cmd_run(args: argparse.Namespace) -> int:
     """Run a chain."""
-    forge = get_orchestrator()
+    ao = get_orchestrator()
 
     data = {{}}
     if args.data:
@@ -517,7 +517,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"Running {{args.chain_name}}...")
 
     try:
-        result = asyncio.run(forge.launch(args.chain_name, data))
+        result = asyncio.run(ao.launch(args.chain_name, data))
         print(json.dumps(result, indent=2, default=str))
         return 0 if result.get("success") else 1
     except Exception as e:
@@ -527,15 +527,15 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def cmd_check(args: argparse.Namespace) -> int:
     """Validate chain definitions."""
-    forge = get_orchestrator()
-    result = forge.check(args.chain_name)
+    ao = get_orchestrator()
+    result = ao.check(args.chain_name)
     return 0 if result.get("valid") else 1
 
 
 def cmd_list(args: argparse.Namespace) -> int:
     """List all definitions."""
-    forge = get_orchestrator()
-    forge.list_defs()
+    ao = get_orchestrator()
+    ao.list_defs()
     return 0
 
 
@@ -670,8 +670,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down {pascal_name} API server")
-    forge = get_orchestrator()
-    await forge.cleanup_resources()
+    ao = get_orchestrator()
+    await ao.cleanup_resources()
 
 
 app = FastAPI(
@@ -768,19 +768,19 @@ async def run_chain(chain_name: str, request: RunRequest):
     Returns:
         RunResponse with execution results
     """
-    forge = get_orchestrator()
+    ao = get_orchestrator()
     started_at = datetime.utcnow()
 
     try:
         if request.resumable:
-            result = await forge.launch_resumable(
+            result = await ao.launch_resumable(
                 chain_name,
                 request.data,
                 run_id=request.run_id,
             )
             run_id = result.get("run_id", "unknown")
         else:
-            result = await forge.launch(chain_name, request.data)
+            result = await ao.launch(chain_name, request.data)
             run_id = request.run_id or f"run_{{started_at.timestamp()}}"
 
         completed_at = datetime.utcnow()
@@ -816,10 +816,10 @@ async def get_run_status(run_id: str):
     Returns:
         RunStatusResponse with current status
     """
-    forge = get_orchestrator()
+    ao = get_orchestrator()
 
     try:
-        run = await forge.get_run(run_id)
+        run = await ao.get_run(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail=f"Run not found: {{run_id}}")
 
@@ -854,10 +854,10 @@ async def get_run_output(run_id: str):
     Returns:
         Dict with step outputs
     """
-    forge = get_orchestrator()
+    ao = get_orchestrator()
 
     try:
-        result = await forge.get_partial_output(run_id)
+        result = await ao.get_partial_output(run_id)
         if not result:
             raise HTTPException(status_code=404, detail=f"Run not found: {{run_id}}")
         return result
@@ -882,11 +882,11 @@ async def resume_run(run_id: str):
     Returns:
         RunResponse with execution results
     """
-    forge = get_orchestrator()
+    ao = get_orchestrator()
     started_at = datetime.utcnow()
 
     try:
-        result = await forge.resume(run_id)
+        result = await ao.resume(run_id)
         completed_at = datetime.utcnow()
         duration_ms = (completed_at - started_at).total_seconds() * 1000
 
@@ -917,17 +917,17 @@ async def resume_run(run_id: str):
 @app.get("/chains", tags=["Chains"])
 async def list_chains():
     """List all registered chains."""
-    forge = get_orchestrator()
-    chains = list(forge._chain_registry.keys())
+    ao = get_orchestrator()
+    chains = list(ao._chain_registry.keys())
     return {{"chains": chains, "count": len(chains)}}
 
 
 @app.get("/chains/{{chain_name}}/validate", tags=["Chains"])
 async def validate_chain(chain_name: str):
     """Validate a chain definition."""
-    forge = get_orchestrator()
+    ao = get_orchestrator()
     try:
-        result = forge.check(chain_name)
+        result = ao.check(chain_name)
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -936,9 +936,9 @@ async def validate_chain(chain_name: str):
 @app.get("/chains/{{chain_name}}/graph", tags=["Chains"])
 async def get_chain_graph(chain_name: str, format: str = "mermaid"):
     """Get chain DAG visualization."""
-    forge = get_orchestrator()
+    ao = get_orchestrator()
     try:
-        graph = forge.graph(chain_name, format=format)
+        graph = ao.graph(chain_name, format=format)
         return {{"chain_name": chain_name, "format": format, "graph": graph}}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -960,7 +960,7 @@ from pydantic import BaseModel
 
 # Get or create the global AgentOrchestrator instance
 from agentorchestrator import get_orchestrator
-forge = get_orchestrator()
+ao = get_orchestrator()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -985,7 +985,7 @@ class HelloOutput(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@forge.step(
+@ao.step(
     name="prepare_greeting",
     produces=["greeting_data"],
     description="Prepares the greeting message",
@@ -1014,7 +1014,7 @@ async def prepare_greeting(ctx: ChainContext):
     return result
 
 
-@forge.step(
+@ao.step(
     name="format_output",
     deps=[prepare_greeting],
     produces=["final_output"],
@@ -1040,7 +1040,7 @@ async def format_output(ctx: ChainContext):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@forge.chain(
+@ao.chain(
     name="hello_chain",
     description="A simple greeting chain",
 )
@@ -1056,7 +1056,7 @@ class HelloChain:
 
 async def run(message: str = "Hello", name: str = "World") -> dict:
     """Run the hello chain."""
-    return await forge.launch("hello_chain", {"message": message, "name": name})
+    return await ao.launch("hello_chain", {"message": message, "name": name})
 
 
 if __name__ == "__main__":
@@ -1496,7 +1496,7 @@ def event_loop():
 
 
 @pytest.fixture
-def forge():
+def ao():
     """Create isolated AgentOrchestrator instance for testing."""
     with AgentOrchestrator.temp_registries("test") as f:
         yield f
@@ -1527,7 +1527,7 @@ class TestHelloChain:
     """Tests for hello_chain."""
 
     @pytest.fixture
-    def forge(self):
+    def ao(self):
         """Create isolated AgentOrchestrator instance."""
         with AgentOrchestrator.temp_registries("test") as f:
             # Import and register chain
@@ -1535,23 +1535,23 @@ class TestHelloChain:
             yield f
 
     @pytest.mark.asyncio
-    async def test_hello_chain_success(self, forge, sample_input):
+    async def test_hello_chain_success(self, ao, sample_input):
         """Test successful chain execution."""
-        result = await forge.launch("hello_chain", sample_input)
+        result = await ao.launch("hello_chain", sample_input)
 
         assert result["success"]
         assert "final_output" in result.get("context", {{}}).get("data", {{}})
 
     @pytest.mark.asyncio
-    async def test_hello_chain_default_values(self, forge):
+    async def test_hello_chain_default_values(self, ao):
         """Test chain with default values."""
-        result = await forge.launch("hello_chain", {{}})
+        result = await ao.launch("hello_chain", {{}})
 
         assert result["success"]
 
-    def test_chain_validation(self, forge):
+    def test_chain_validation(self, ao):
         """Test chain definition is valid."""
-        result = forge.check("hello_chain")
+        result = ao.check("hello_chain")
         assert result.get("valid", False)
 '''
 

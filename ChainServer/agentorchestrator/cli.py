@@ -183,7 +183,7 @@ def _import_module_from_path(module_name: str, file_path: Path) -> None:
 
 def cmd_run(args: argparse.Namespace) -> int:
     """Run a chain with optional input data."""
-    forge = get_orchestrator()
+    ao = get_orchestrator()
 
     # Build input data
     data = {}
@@ -215,7 +215,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     # If --step is provided, run just that step in isolation
     if step_name:
-        return cmd_run_step(forge, args.chain_name, step_name, data, args.verbose)
+        return cmd_run_step(ao, args.chain_name, step_name, data, args.verbose)
 
     print(f"\n{'═' * 60}")
     print(f"  {'[DRY RUN] ' if dry_run else ''}Running: {args.chain_name}")
@@ -230,17 +230,17 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     # Dry run mode - simulate execution without running
     if dry_run:
-        return cmd_dry_run(forge, args.chain_name, data, args.verbose)
+        return cmd_dry_run(ao, args.chain_name, data, args.verbose)
 
     start_time = time.perf_counter()
 
     try:
         if resumable:
             # Run with checkpointing
-            result = asyncio.run(forge.launch_resumable(args.chain_name, data, run_id))
+            result = asyncio.run(ao.launch_resumable(args.chain_name, data, run_id))
             run_id = result.get("run_id", "unknown")
         else:
-            result = asyncio.run(forge.launch(args.chain_name, data))
+            result = asyncio.run(ao.launch(args.chain_name, data))
 
         duration = (time.perf_counter() - start_time) * 1000
 
@@ -270,7 +270,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 1
 
 
-def cmd_dry_run(forge, chain_name: str, data: dict, verbose: bool = False) -> int:
+def cmd_dry_run(ao, chain_name: str, data: dict, verbose: bool = False) -> int:
     """
     Simulate chain execution without actually running steps.
 
@@ -290,7 +290,7 @@ def cmd_dry_run(forge, chain_name: str, data: dict, verbose: bool = False) -> in
         plan = builder.build(chain_name)
 
         # Show chain info
-        chain_spec = forge._chain_registry.get_spec(chain_name)
+        chain_spec = ao._chain_registry.get_spec(chain_name)
         if chain_spec:
             print(f"  Chain: {chain_name}")
             print(f"  Version: {chain_spec.metadata.version}")
@@ -319,7 +319,7 @@ def cmd_dry_run(forge, chain_name: str, data: dict, verbose: bool = False) -> in
 
             for step_name in group:
                 node = plan.nodes.get(step_name)
-                step_spec = forge._step_registry.get_spec(step_name)
+                step_spec = ao._step_registry.get_spec(step_name)
 
                 # Step info
                 deps = list(node.dependencies) if node else []
@@ -347,7 +347,7 @@ def cmd_dry_run(forge, chain_name: str, data: dict, verbose: bool = False) -> in
 
         # Validation summary
         print("\n  Validation:")
-        check_result = forge.check(chain_name)
+        check_result = ao.check(chain_name)
         if check_result.get("valid"):
             print("    ✓ Chain definition is valid")
             print("    ✓ No circular dependencies")
@@ -384,7 +384,7 @@ def cmd_dry_run(forge, chain_name: str, data: dict, verbose: bool = False) -> in
 
 
 def cmd_run_step(
-    forge,
+    ao,
     chain_name: str,
     step_name: str,
     data: dict,
@@ -398,7 +398,7 @@ def cmd_run_step(
     the provided data is used directly as context.
 
     Args:
-        forge: AgentOrchestrator instance
+        ao: AgentOrchestrator instance
         chain_name: Name of the chain containing the step
         step_name: Name of the step to run
         data: Input data to provide as context
@@ -415,7 +415,7 @@ def cmd_run_step(
     print(f"{'═' * 60}\n")
 
     # Verify step exists in the chain
-    chain_spec = forge._chain_registry.get_spec(chain_name)
+    chain_spec = ao._chain_registry.get_spec(chain_name)
     if not chain_spec:
         print(f"  ✗ Chain '{chain_name}' not found")
         return 1
@@ -425,7 +425,7 @@ def cmd_run_step(
         print(f"  Available steps: {', '.join(chain_spec.steps)}")
         return 1
 
-    step_spec = forge._step_registry.get_spec(step_name)
+    step_spec = ao._step_registry.get_spec(step_name)
     if not step_spec:
         print(f"  ✗ Step handler not found for '{step_name}'")
         return 1
@@ -447,8 +447,8 @@ def cmd_run_step(
     start_time = time.perf_counter()
 
     try:
-        # Run the step in isolation using forge's run_step method
-        result = asyncio.run(forge.run_step(step_name, data))
+        # Run the step in isolation using ao's run_step method
+        result = asyncio.run(ao.run_step(step_name, data))
 
         duration = (time.perf_counter() - start_time) * 1000
 
@@ -521,7 +521,7 @@ def cmd_run_step(
 
 def cmd_resume(args: argparse.Namespace) -> int:
     """Resume a failed or partial chain run."""
-    forge = get_orchestrator()
+    ao = get_orchestrator()
 
     print(f"\n{'═' * 60}")
     print(f"  Resuming Run: {args.run_id}")
@@ -530,7 +530,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
     start_time = time.perf_counter()
 
     try:
-        result = asyncio.run(forge.resume(args.run_id, skip_completed=not args.rerun_all))
+        result = asyncio.run(ao.resume(args.run_id, skip_completed=not args.rerun_all))
         duration = (time.perf_counter() - start_time) * 1000
 
         print(f"\n{'═' * 60}")
@@ -561,14 +561,14 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
 def cmd_runs(args: argparse.Namespace) -> int:
     """List chain runs with optional filters."""
-    forge = get_orchestrator()
+    ao = get_orchestrator()
 
     chain_name = getattr(args, 'chain_name', None)
     status = getattr(args, 'status', None)
     limit = getattr(args, 'limit', 20)
 
     try:
-        runs = asyncio.run(forge.list_runs(
+        runs = asyncio.run(ao.list_runs(
             chain_name=chain_name,
             status=status,
             limit=limit,
@@ -622,10 +622,10 @@ def cmd_runs(args: argparse.Namespace) -> int:
 
 def cmd_run_info(args: argparse.Namespace) -> int:
     """Show detailed information about a specific run."""
-    forge = get_orchestrator()
+    ao = get_orchestrator()
 
     try:
-        run = asyncio.run(forge.get_run(args.run_id))
+        run = asyncio.run(ao.get_run(args.run_id))
 
         if run is None:
             print(f"\nRun not found: {args.run_id}\n")
@@ -675,10 +675,10 @@ def cmd_run_info(args: argparse.Namespace) -> int:
 
 def cmd_run_output(args: argparse.Namespace) -> int:
     """Get partial outputs from a run."""
-    forge = get_orchestrator()
+    ao = get_orchestrator()
 
     try:
-        result = asyncio.run(forge.get_partial_output(args.run_id))
+        result = asyncio.run(ao.get_partial_output(args.run_id))
 
         if not result:
             print(f"\nNo outputs found for run: {args.run_id}\n")
@@ -723,28 +723,28 @@ def cmd_run_output(args: argparse.Namespace) -> int:
 
 def cmd_check(args: argparse.Namespace) -> int:
     """Validate chain definitions."""
-    forge = get_orchestrator()
+    ao = get_orchestrator()
 
-    result = forge.check(args.chain_name)
+    result = ao.check(args.chain_name)
 
     return 0 if result.get("valid") else 1
 
 
 def cmd_list(args: argparse.Namespace) -> int:
     """List all definitions."""
-    forge = get_orchestrator()
+    ao = get_orchestrator()
 
-    forge.list_defs()
+    ao.list_defs()
 
     return 0
 
 
 def cmd_graph(args: argparse.Namespace) -> int:
     """Show DAG visualization."""
-    forge = get_orchestrator()
+    ao = get_orchestrator()
 
     try:
-        forge.graph(args.chain_name, format=args.format)
+        ao.graph(args.chain_name, format=args.format)
         return 0
     except Exception as e:
         print(f"Error: {e}")
@@ -819,9 +819,9 @@ class {name}Agent(BaseAgent):
 
 
 # Register with AgentOrchestrator
-def register(forge):
+def register(ao):
     """Register this agent with AgentOrchestrator instance."""
-    forge.register_agent("{name.lower()}", {name}Agent)
+    ao.register_agent("{name.lower()}", {name}Agent)
 '''
 
     if agent_file.exists() and not args.force:
@@ -856,11 +856,11 @@ from agentorchestrator import AgentOrchestrator, ChainContext
 
 
 # Create AgentOrchestrator instance (isolated for this chain)
-forge = AgentOrchestrator(name="{name.lower()}", isolated=True)
+ao = AgentOrchestrator(name="{name.lower()}", isolated=True)
 
 
 # Define steps
-@forge.step
+@ao.step
 async def step_1(ctx: ChainContext) -> dict:
     """First step: Initialize and prepare data."""
     initial_data = ctx.initial_data or {{}}
@@ -875,7 +875,7 @@ async def step_1(ctx: ChainContext) -> dict:
     return result
 
 
-@forge.step(deps=[step_1])
+@ao.step(deps=[step_1])
 async def step_2(ctx: ChainContext) -> dict:
     """Second step: Process data from step 1."""
     step_1_result = ctx.get("step_1_result")
@@ -890,7 +890,7 @@ async def step_2(ctx: ChainContext) -> dict:
     return result
 
 
-@forge.step(deps=[step_2])
+@ao.step(deps=[step_2])
 async def step_3(ctx: ChainContext) -> dict:
     """Final step: Generate output."""
     step_2_result = ctx.get("step_2_result")
@@ -905,7 +905,7 @@ async def step_3(ctx: ChainContext) -> dict:
 
 
 # Define chain
-@forge.chain
+@ao.chain
 class {name}Chain:
     """Main chain for {name.lower()} workflow."""
     steps = [step_1, step_2, step_3]
@@ -914,17 +914,17 @@ class {name}Chain:
 # Convenience functions
 async def run(data: dict | None = None) -> dict:
     """Run the {name} chain."""
-    return await forge.launch("{name}Chain", data)
+    return await ao.launch("{name}Chain", data)
 
 
 def check() -> dict:
     """Validate chain definitions."""
-    return forge.check("{name}Chain")
+    return ao.check("{name}Chain")
 
 
 def graph(format: str = "ascii") -> str:
     """Show chain DAG visualization."""
-    return forge.graph("{name}Chain", format=format)
+    return ao.graph("{name}Chain", format=format)
 
 
 # CLI entry point
@@ -986,7 +986,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     print(f"  Mode: {'Dry Run' if dry_run else 'Full Validation'}")
     print(f"{'═' * 60}\n")
 
-    forge = get_orchestrator()
+    ao = get_orchestrator()
     errors = []
     warnings = []
     checks_passed = 0
@@ -994,7 +994,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
     # 1. Check chain exists
     checks_total += 1
-    chain_spec = forge._chain_registry.get_spec(chain_name)
+    chain_spec = ao._chain_registry.get_spec(chain_name)
     if not chain_spec:
         print(f"  ✗ Chain '{chain_name}' not found")
         errors.append(f"Chain '{chain_name}' not found")
@@ -1010,7 +1010,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     checks_total += 1
     missing_steps = []
     for step_name in chain_spec.steps:
-        step_spec = forge._step_registry.get_spec(step_name)
+        step_spec = ao._step_registry.get_spec(step_name)
         if not step_spec:
             missing_steps.append(step_name)
 
@@ -1040,7 +1040,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     checks_total += 1
     invalid_deps = []
     for step_name in chain_spec.steps:
-        step_spec = forge._step_registry.get_spec(step_name)
+        step_spec = ao._step_registry.get_spec(step_name)
         if step_spec:
             for dep in step_spec.dependencies:
                 if dep not in chain_spec.steps:
@@ -1057,7 +1057,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     checks_total += 1
     contract_issues = []
     for step_name in chain_spec.steps:
-        step_spec = forge._step_registry.get_spec(step_name)
+        step_spec = ao._step_registry.get_spec(step_name)
         if step_spec:
             if step_spec.input_model:
                 try:
@@ -1085,7 +1085,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     # 6. Check agents if requested
     if args.check_agents:
         checks_total += 1
-        agents = forge._agent_registry.list()
+        agents = ao._agent_registry.list()
         if agents:
             print(f"  ✓ {len(agents)} agents registered")
             checks_passed += 1
@@ -1096,7 +1096,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     # 7. Check resources if requested
     if args.check_resources:
         checks_total += 1
-        resources = list(forge._resource_manager._resources.keys())
+        resources = list(ao._resource_manager._resources.keys())
         if resources:
             print(f"  ✓ {len(resources)} resources registered: {', '.join(resources)}")
         else:
@@ -1109,7 +1109,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         # Find first step with input_model
         first_step_model = None
         for step_name in chain_spec.steps:
-            step_spec = forge._step_registry.get_spec(step_name)
+            step_spec = ao._step_registry.get_spec(step_name)
             if step_spec and step_spec.input_model:
                 first_step_model = (step_name, step_spec.input_model)
                 break
@@ -1491,13 +1491,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print("\n  Registered Chains:")
     checks_total += 1
     try:
-        forge = get_orchestrator()
-        chains = forge.list_chains()
+        ao = get_orchestrator()
+        chains = ao.list_chains()
         if chains:
             valid_count = 0
             for chain_name in chains:
                 try:
-                    result = forge.check(chain_name)
+                    result = ao.check(chain_name)
                     if result.get("valid"):
                         print(f"  ✅ {chain_name}: valid")
                         valid_count += 1
@@ -1595,12 +1595,12 @@ def cmd_dev(args: argparse.Namespace) -> int:
             print("Warning: watchdog not installed. Install with: pip install watchdog")
             print("Running without hot reload...")
 
-    forge = get_orchestrator()
+    ao = get_orchestrator()
 
     # Initial check
     print("\n--- Initial Validation ---")
-    forge.check()
-    forge.list_defs()
+    ao.check()
+    ao.list_defs()
 
     if not args.watch or not WATCHDOG_AVAILABLE:
         return 0
@@ -1624,7 +1624,7 @@ def cmd_dev(args: argparse.Namespace) -> int:
             print("Reloading definitions...")
 
             # Clear registries and reimport
-            forge.clear()
+            ao.clear()
 
             # Reimport modules
             cwd = Path.cwd()
@@ -1639,7 +1639,7 @@ def cmd_dev(args: argparse.Namespace) -> int:
 
             # Re-validate
             print("\n--- Validation ---")
-            forge.check()
+            ao.check()
 
     observer = Observer()
     observer.schedule(ReloadHandler(), str(Path.cwd()), recursive=True)
@@ -1672,7 +1672,7 @@ def cmd_debug(args: argparse.Namespace) -> int:
 
     from agentorchestrator.utils.config import get_config
 
-    forge = get_orchestrator()
+    ao = get_orchestrator()
     config = get_config()
 
     # Determine snapshot directory
@@ -1748,9 +1748,9 @@ def cmd_debug(args: argparse.Namespace) -> int:
     start_time = time.perf_counter()
 
     try:
-        # Run with debug callback - now fully wired through forge.launch -> runner -> executor
+        # Run with debug callback - now fully wired through ao.launch -> runner -> executor
         result = asyncio.run(
-            forge.launch(
+            ao.launch(
                 args.chain_name,
                 data,
                 debug_callback=snapshot_callback,

@@ -40,7 +40,7 @@ class CacheMiddleware(Middleware):
     - Cache statistics
 
     Usage:
-        forge.use_middleware(CacheMiddleware(
+        ao.use_middleware(CacheMiddleware(
             ttl_seconds=300,
             cache_key_fn=lambda ctx, step: f"{step}:{ctx.get('company_id')}",
         ))

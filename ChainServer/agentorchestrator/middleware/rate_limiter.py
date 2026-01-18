@@ -152,7 +152,7 @@ class RateLimiterMiddleware(Middleware):
                 max_concurrent=5,
             ),
         })
-        forge.use(rate_limiter)
+        ao.use(rate_limiter)
 
         # Or with defaults for all data fetch steps
         rate_limiter = RateLimiterMiddleware(
@@ -351,7 +351,7 @@ class CircuitBreakerMiddleware(Middleware):
                 recovery_timeout_seconds=60,
             ),
         })
-        forge.use(circuit_breaker)
+        ao.use(circuit_breaker)
     """
 
     def __init__(
@@ -544,7 +544,7 @@ class RateLimitAndCircuitBreakerMiddleware(Middleware):
                 "fetch_news_data": CircuitBreakerConfig(failure_threshold=5),
             },
         )
-        forge.use(protection)
+        ao.use(protection)
     """
 
     def __init__(

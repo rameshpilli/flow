@@ -525,7 +525,7 @@ def create_isolated_registries() -> tuple[AgentRegistry, StepRegistry, ChainRegi
 
     Example:
         agent_reg, step_reg, chain_reg = create_isolated_registries()
-        forge = AgentOrchestrator(
+        ao = AgentOrchestrator(
             agent_registry=agent_reg,
             step_registry=step_reg,
             chain_registry=chain_reg,

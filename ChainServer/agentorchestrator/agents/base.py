@@ -112,7 +112,7 @@ class BaseAgent(ABC):
     They should be stateless and idempotent.
 
     Usage:
-        @forge.agent(name="news_agent")
+        @ao.agent(name="news_agent")
         class NewsAgent(BaseAgent):
             async def fetch(self, query: str, **kwargs) -> AgentResult:
                 # Fetch news data

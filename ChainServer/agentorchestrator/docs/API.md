@@ -9,7 +9,7 @@ The main entry point for creating pipelines.
 ```python
 from agentorchestrator import AgentOrchestrator
 
-forge = AgentOrchestrator(
+ao = AgentOrchestrator(
     name="my_app",           # Required: Unique name for this instance
     isolated=True,           # Default: Use isolated registries
 )
@@ -19,10 +19,10 @@ forge = AgentOrchestrator(
 
 | Decorator | Description |
 |-----------|-------------|
-| `@forge.step(name, deps, produces)` | Register a processing step |
-| `@forge.chain(name, steps)` | Register a chain of steps |
-| `@forge.agent(name, capabilities)` | Register a data agent |
-| `@forge.middleware(name, priority)` | Register middleware |
+| `@ao.step(name, deps, produces)` | Register a processing step |
+| `@ao.chain(name, steps)` | Register a chain of steps |
+| `@ao.agent(name, capabilities)` | Register a data agent |
+| `@ao.middleware(name, priority)` | Register middleware |
 
 #### Methods
 
@@ -41,8 +41,8 @@ forge = AgentOrchestrator(
 #### Context Manager
 
 ```python
-async with forge:
-    result = await forge.launch("my_chain", data)
+async with ao:
+    result = await ao.launch("my_chain", data)
 # Resources cleaned up automatically
 ```
 
@@ -56,7 +56,7 @@ Shared state across steps in a chain execution.
 from agentorchestrator import ChainContext
 
 # Access in steps
-@forge.step(name="my_step")
+@ao.step(name="my_step")
 async def my_step(ctx: ChainContext):
     # Read values
     value = ctx.get("key", default=None)
@@ -100,12 +100,12 @@ ctx.set("config", value, scope=ContextScope.GLOBAL)
 
 ## Decorators
 
-### @forge.step
+### @ao.step
 
 Register a processing step.
 
 ```python
-@forge.step(
+@ao.step(
     name="process_data",              # Required: Unique step name
     deps=["fetch_data"],              # Optional: Dependencies (run after these)
     produces=["processed_data"],      # Optional: Keys this step produces
@@ -118,12 +118,12 @@ async def process_data(ctx: ChainContext):
     return {"result": "done"}
 ```
 
-### @forge.chain
+### @ao.chain
 
 Register a chain of steps.
 
 ```python
-@forge.chain(
+@ao.chain(
     name="my_pipeline",               # Required: Unique chain name
     error_handling="fail_fast",       # Optional: "fail_fast" or "continue"
 )
@@ -137,14 +137,14 @@ class MyPipeline:
     ]
 ```
 
-### @forge.agent
+### @ao.agent
 
 Register a data fetching agent.
 
 ```python
 from agentorchestrator.agents import BaseAgent, AgentResult
 
-@forge.agent(
+@ao.agent(
     name="news_agent",
     capabilities=["search", "sentiment"],
 )
@@ -178,28 +178,28 @@ from agentorchestrator.middleware import (
 )
 
 # Logging
-forge.use(LoggerMiddleware(level="INFO"))
+ao.use(LoggerMiddleware(level="INFO"))
 
 # Caching
-forge.use(CacheMiddleware(ttl_seconds=300))
+ao.use(CacheMiddleware(ttl_seconds=300))
 
 # Summarization (requires LLM)
 from agentorchestrator import create_openai_summarizer
 summarizer = create_openai_summarizer(api_key="sk-...")
-forge.use(SummarizerMiddleware(summarizer=summarizer, max_tokens=4000))
+ao.use(SummarizerMiddleware(summarizer=summarizer, max_tokens=4000))
 
 # Token management
-forge.use(TokenManagerMiddleware(max_total_tokens=100000))
+ao.use(TokenManagerMiddleware(max_total_tokens=100000))
 
 # Rate limiting
-forge.use(RateLimiterMiddleware({
+ao.use(RateLimiterMiddleware({
     "fetch_data": {"requests_per_second": 10},
 }))
 
 # Large payload offloading
 from agentorchestrator.core.context_store import RedisContextStore
 store = RedisContextStore(host="localhost", port=6380)
-forge.use(OffloadMiddleware(store=store, threshold_bytes=100000))
+ao.use(OffloadMiddleware(store=store, threshold_bytes=100000))
 ```
 
 ### Custom Middleware
@@ -224,7 +224,7 @@ class MyMiddleware(Middleware):
         """Called when step fails."""
         print(f"Failed: {step_name} - {error}")
 
-forge.use(MyMiddleware(priority=50))
+ao.use(MyMiddleware(priority=50))
 ```
 
 ---
@@ -348,16 +348,16 @@ from agentorchestrator.testing import (
 
 # Isolated testing
 async def test_my_chain():
-    async with IsolatedOrchestrator() as forge:
-        @forge.step(name="test_step")
+    async with IsolatedOrchestrator() as ao:
+        @ao.step(name="test_step")
         async def test_step(ctx):
             return {"done": True}
 
-        @forge.chain(name="test_chain")
+        @ao.chain(name="test_chain")
         class TestChain:
             steps = ["test_step"]
 
-        result = await forge.launch("test_chain", {})
+        result = await ao.launch("test_chain", {})
         assert result["success"]
 
 # Mock agent
@@ -370,7 +370,7 @@ mock = MockAgent(
 # Mock step decorator
 @mock_step("fetch_data", returns={"data": "mocked"})
 async def test_with_mock():
-    result = await forge.launch("my_chain", {})
+    result = await ao.launch("my_chain", {})
     assert_step_completed(result, "fetch_data")
 ```
 

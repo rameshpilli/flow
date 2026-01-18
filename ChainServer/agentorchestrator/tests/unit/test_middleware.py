@@ -239,57 +239,57 @@ class TestMiddlewareIntegration:
     """Tests for middleware integration with AgentOrchestrator."""
 
     @pytest.fixture
-    def forge(self):
-        """Create an isolated forge for testing."""
+    def ao(self):
+        """Create an isolated ao for testing."""
         return AgentOrchestrator.temp_registries("middleware_test")
 
     @pytest.mark.asyncio
-    async def test_middleware_called_during_execution(self, forge):
+    async def test_middleware_called_during_execution(self, ao):
         """Test middleware is called during chain execution."""
         tracker = TrackingMiddleware()
-        forge.use(tracker)
+        ao.use(tracker)
 
-        @forge.step(name="step1")
+        @ao.step(name="step1")
         async def step1(ctx):
             return {"step": 1}
 
-        @forge.step(name="step2", deps=["step1"])
+        @ao.step(name="step2", deps=["step1"])
         async def step2(ctx):
             return {"step": 2}
 
-        @forge.chain(name="test_chain")
+        @ao.chain(name="test_chain")
         class TestChain:
             steps = ["step1", "step2"]
 
-        result = await forge.launch("test_chain")
+        result = await ao.launch("test_chain")
 
         assert result["success"] is True
         assert tracker.before_calls == ["step1", "step2"]
         assert len(tracker.after_calls) == 2
 
     @pytest.mark.asyncio
-    async def test_middleware_modifies_context(self, forge):
+    async def test_middleware_modifies_context(self, ao):
         """Test middleware can modify context during execution."""
         modifier = ModifyingMiddleware("middleware", "was_here")
-        forge.use(modifier)
+        ao.use(modifier)
 
-        @forge.step(name="check_context")
+        @ao.step(name="check_context")
         async def check_context(ctx):
             before_value = ctx.get("before_middleware")
             return {"before_value": before_value}
 
-        @forge.chain(name="modifier_chain")
+        @ao.chain(name="modifier_chain")
         class ModifierChain:
             steps = ["check_context"]
 
-        result = await forge.launch("modifier_chain")
+        result = await ao.launch("modifier_chain")
 
         assert result["success"] is True
         # The step should have seen the before value
         assert result["results"][0]["output"]["before_value"] == "was_here"
 
     @pytest.mark.asyncio
-    async def test_middleware_priority_order(self, forge):
+    async def test_middleware_priority_order(self, ao):
         """Test middleware executes in priority order."""
         execution_order = []
 
@@ -305,19 +305,19 @@ class TestMiddlewareIntegration:
                 execution_order.append(f"after_{self.name}")
 
         # Add middleware with different priorities
-        forge.use(OrderedMiddleware("low", priority=10))
-        forge.use(OrderedMiddleware("high", priority=90))
-        forge.use(OrderedMiddleware("medium", priority=50))
+        ao.use(OrderedMiddleware("low", priority=10))
+        ao.use(OrderedMiddleware("high", priority=90))
+        ao.use(OrderedMiddleware("medium", priority=50))
 
-        @forge.step(name="step")
+        @ao.step(name="step")
         async def step(ctx):
             return {}
 
-        @forge.chain(name="order_chain")
+        @ao.chain(name="order_chain")
         class OrderChain:
             steps = ["step"]
 
-        await forge.launch("order_chain")
+        await ao.launch("order_chain")
 
         # Before: low -> medium -> high
         # After: high -> medium -> low (reversed)
@@ -326,50 +326,50 @@ class TestMiddlewareIntegration:
         assert before_order == ["before_low", "before_medium", "before_high"]
 
     @pytest.mark.asyncio
-    async def test_middleware_applies_to_filter(self, forge):
+    async def test_middleware_applies_to_filter(self, ao):
         """Test middleware applies_to filter works."""
         tracker_all = TrackingMiddleware("all")
         tracker_step1 = TrackingMiddleware("step1_only", applies_to=["step1"])
 
-        forge.use(tracker_all)
-        forge.use(tracker_step1)
+        ao.use(tracker_all)
+        ao.use(tracker_step1)
 
-        @forge.step(name="step1")
+        @ao.step(name="step1")
         async def step1(ctx):
             return 1
 
-        @forge.step(name="step2", deps=["step1"])
+        @ao.step(name="step2", deps=["step1"])
         async def step2(ctx):
             return 2
 
-        @forge.chain(name="filter_chain")
+        @ao.chain(name="filter_chain")
         class FilterChain:
             steps = ["step1", "step2"]
 
-        await forge.launch("filter_chain")
+        await ao.launch("filter_chain")
 
         assert tracker_all.before_calls == ["step1", "step2"]
         assert tracker_step1.before_calls == ["step1"]  # Only step1
 
     @pytest.mark.asyncio
-    async def test_middleware_error_isolation(self, forge):
+    async def test_middleware_error_isolation(self, ao):
         """Test middleware errors don't crash step execution."""
         class FailingMiddleware(Middleware):
             async def before(self, ctx, step_name):
                 raise RuntimeError("Middleware exploded")
 
-        forge.use(FailingMiddleware())
+        ao.use(FailingMiddleware())
 
-        @forge.step(name="step")
+        @ao.step(name="step")
         async def step(ctx):
             return {"executed": True}
 
-        @forge.chain(name="isolation_chain")
+        @ao.chain(name="isolation_chain")
         class IsolationChain:
             steps = ["step"]
 
         # Should succeed despite middleware failure
-        result = await forge.launch("isolation_chain")
+        result = await ao.launch("isolation_chain")
 
         assert result["success"] is True
         assert result["results"][0]["output"]["executed"] is True
@@ -388,18 +388,18 @@ class TestMiddlewareErrorHandling:
         """Test on_error is called when step fails."""
         tracker = TrackingMiddleware()
 
-        forge = AgentOrchestrator.temp_registries("error_test")
-        forge.use(tracker)
+        ao = AgentOrchestrator.temp_registries("error_test")
+        ao.use(tracker)
 
-        @forge.step(name="failing_step")
+        @ao.step(name="failing_step")
         async def failing_step(ctx):
             raise ValueError("Intentional failure")
 
-        @forge.chain(name="fail_chain")
+        @ao.chain(name="fail_chain")
         class FailChain:
             steps = ["failing_step"]
 
-        result = await forge.launch("fail_chain")
+        result = await ao.launch("fail_chain")
 
         assert result["success"] is False
         # Note: on_error is called by the executor for middleware
@@ -408,7 +408,7 @@ class TestMiddlewareErrorHandling:
     @pytest.mark.asyncio
     async def test_after_called_even_on_failure(self):
         """Test after middleware is called even when step fails."""
-        forge = AgentOrchestrator.temp_registries("after_error_test")
+        ao = AgentOrchestrator.temp_registries("after_error_test")
 
         after_results = []
 
@@ -420,17 +420,17 @@ class TestMiddlewareErrorHandling:
                     "error": str(result.error) if result.error else None,
                 })
 
-        forge.use(AfterTracker())
+        ao.use(AfterTracker())
 
-        @forge.step(name="fail_step")
+        @ao.step(name="fail_step")
         async def fail_step(ctx):
             raise RuntimeError("Failed!")
 
-        @forge.chain(name="fail_chain")
+        @ao.chain(name="fail_chain")
         class FailChain:
             steps = ["fail_step"]
 
-        result = await forge.launch("fail_chain")
+        result = await ao.launch("fail_chain")
 
         assert result["success"] is False
         assert len(after_results) == 1
@@ -449,7 +449,7 @@ class TestMultipleMiddleware:
     @pytest.mark.asyncio
     async def test_chained_context_modifications(self):
         """Test multiple middleware can chain modifications."""
-        forge = AgentOrchestrator.temp_registries("chained_mw")
+        ao = AgentOrchestrator.temp_registries("chained_mw")
 
         class Middleware1(Middleware):
             async def before(self, ctx, step_name):
@@ -463,21 +463,21 @@ class TestMultipleMiddleware:
                 mw1_value = ctx.get("mw1")
                 ctx.set("mw2", f"from_mw1:{mw1_value}", scope=ContextScope.CHAIN)
 
-        forge.use(Middleware1())
-        forge.use(Middleware2())
+        ao.use(Middleware1())
+        ao.use(Middleware2())
 
-        @forge.step(name="check")
+        @ao.step(name="check")
         async def check(ctx):
             return {
                 "mw1": ctx.get("mw1"),
                 "mw2": ctx.get("mw2"),
             }
 
-        @forge.chain(name="chained")
+        @ao.chain(name="chained")
         class Chained:
             steps = ["check"]
 
-        result = await forge.launch("chained")
+        result = await ao.launch("chained")
 
         output = result["results"][0]["output"]
         assert output["mw1"] == "value1"
@@ -486,7 +486,7 @@ class TestMultipleMiddleware:
     @pytest.mark.asyncio
     async def test_middleware_can_short_circuit(self):
         """Test middleware pattern for caching/short-circuit."""
-        forge = AgentOrchestrator.temp_registries("cache_test")
+        ao = AgentOrchestrator.temp_registries("cache_test")
 
         cache = {}
         cache_hits = []
@@ -503,11 +503,11 @@ class TestMultipleMiddleware:
                     cache_key = f"{step_name}:{ctx.get('query', 'default')}"
                     cache[cache_key] = result.output
 
-        forge.use(SimpleCacheMiddleware())
+        ao.use(SimpleCacheMiddleware())
 
         call_count = 0
 
-        @forge.step(name="expensive_step")
+        @ao.step(name="expensive_step")
         async def expensive_step(ctx):
             nonlocal call_count
             call_count += 1
@@ -517,15 +517,15 @@ class TestMultipleMiddleware:
                 return cached
             return {"computed": True, "count": call_count}
 
-        @forge.chain(name="cache_chain")
+        @ao.chain(name="cache_chain")
         class CacheChain:
             steps = ["expensive_step"]
 
         # First call - should compute
-        result1 = await forge.launch("cache_chain", data={"query": "test"})
+        result1 = await ao.launch("cache_chain", data={"query": "test"})
         assert result1["results"][0]["output"]["count"] == 1
 
         # Second call - should use cache
-        await forge.launch("cache_chain", data={"query": "test"})
+        await ao.launch("cache_chain", data={"query": "test"})
         # The step still runs but can use cached data
         assert "expensive_step" in cache_hits

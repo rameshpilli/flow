@@ -141,30 +141,30 @@ class TestDAGBuilder:
     """Tests for DAGBuilder class."""
 
     @pytest.fixture
-    def forge(self):
-        """Create an isolated forge for testing."""
+    def ao(self):
+        """Create an isolated ao for testing."""
         return AgentOrchestrator.temp_registries("dag_builder_test")
 
-    def test_build_simple_chain(self, forge):
+    def test_build_simple_chain(self, ao):
         """Test building a simple linear chain."""
-        @forge.step(name="step1")
+        @ao.step(name="step1")
         async def step1(ctx):
             return {"step": 1}
 
-        @forge.step(name="step2", deps=["step1"])
+        @ao.step(name="step2", deps=["step1"])
         async def step2(ctx):
             return {"step": 2}
 
-        @forge.step(name="step3", deps=["step2"])
+        @ao.step(name="step3", deps=["step2"])
         async def step3(ctx):
             return {"step": 3}
 
-        @forge.chain(name="linear_chain")
+        @ao.chain(name="linear_chain")
         class LinearChain:
             steps = ["step1", "step2", "step3"]
 
         # Build execution plan
-        builder = forge._executor.builder
+        builder = ao._executor.builder
         plan = builder.build("linear_chain")
 
         assert plan.chain_name == "linear_chain"
@@ -174,29 +174,29 @@ class TestDAGBuilder:
         assert plan.execution_order[1] == ["step2"]
         assert plan.execution_order[2] == ["step3"]
 
-    def test_build_parallel_chain(self, forge):
+    def test_build_parallel_chain(self, ao):
         """Test building a chain with parallel steps."""
-        @forge.step(name="fetch_a")
+        @ao.step(name="fetch_a")
         async def fetch_a(ctx):
             return {"source": "a"}
 
-        @forge.step(name="fetch_b")
+        @ao.step(name="fetch_b")
         async def fetch_b(ctx):
             return {"source": "b"}
 
-        @forge.step(name="fetch_c")
+        @ao.step(name="fetch_c")
         async def fetch_c(ctx):
             return {"source": "c"}
 
-        @forge.step(name="combine", deps=["fetch_a", "fetch_b", "fetch_c"])
+        @ao.step(name="combine", deps=["fetch_a", "fetch_b", "fetch_c"])
         async def combine(ctx):
             return {"combined": True}
 
-        @forge.chain(name="parallel_chain")
+        @ao.chain(name="parallel_chain")
         class ParallelChain:
             steps = ["fetch_a", "fetch_b", "fetch_c", "combine"]
 
-        builder = forge._executor.builder
+        builder = ao._executor.builder
         plan = builder.build("parallel_chain")
 
         assert plan.total_steps == 4
@@ -205,70 +205,70 @@ class TestDAGBuilder:
         # Second group should have combine
         assert plan.execution_order[1] == ["combine"]
 
-    def test_build_with_explicit_parallel_groups(self, forge):
+    def test_build_with_explicit_parallel_groups(self, ao):
         """Test building with explicit parallel_groups."""
-        @forge.step(name="s1")
+        @ao.step(name="s1")
         async def s1(ctx):
             return 1
 
-        @forge.step(name="s2")
+        @ao.step(name="s2")
         async def s2(ctx):
             return 2
 
-        @forge.step(name="s3", deps=["s1", "s2"])
+        @ao.step(name="s3", deps=["s1", "s2"])
         async def s3(ctx):
             return 3
 
-        @forge.chain(name="explicit_groups")
+        @ao.chain(name="explicit_groups")
         class ExplicitGroups:
             steps = ["s1", "s2", "s3"]
             parallel_groups = [["s1", "s2"], ["s3"]]
 
-        builder = forge._executor.builder
+        builder = ao._executor.builder
         plan = builder.build("explicit_groups")
 
         assert plan.uses_explicit_groups is True
         assert plan.execution_order[0] == ["s1", "s2"]
         assert plan.execution_order[1] == ["s3"]
 
-    def test_build_chain_not_found(self, forge):
+    def test_build_chain_not_found(self, ao):
         """Test error when chain doesn't exist."""
-        builder = forge._executor.builder
+        builder = ao._executor.builder
 
         with pytest.raises(ValueError, match="Chain not found"):
             builder.build("nonexistent_chain")
 
-    def test_build_step_not_found(self, forge):
+    def test_build_step_not_found(self, ao):
         """Test error when step doesn't exist."""
-        forge._chain_registry.register_chain(
+        ao._chain_registry.register_chain(
             name="broken_chain",
             steps=["nonexistent_step"],
         )
 
-        builder = forge._executor.builder
+        builder = ao._executor.builder
 
         with pytest.raises(ValueError, match="Step not found"):
             builder.build("broken_chain")
 
-    def test_build_circular_dependency(self, forge):
+    def test_build_circular_dependency(self, ao):
         """Test detection of circular dependencies."""
-        @forge.step(name="a", deps=["c"])
+        @ao.step(name="a", deps=["c"])
         async def a(ctx):
             return "a"
 
-        @forge.step(name="b", deps=["a"])
+        @ao.step(name="b", deps=["a"])
         async def b(ctx):
             return "b"
 
-        @forge.step(name="c", deps=["b"])
+        @ao.step(name="c", deps=["b"])
         async def c(ctx):
             return "c"
 
-        @forge.chain(name="circular_chain")
+        @ao.chain(name="circular_chain")
         class CircularChain:
             steps = ["a", "b", "c"]
 
-        builder = forge._executor.builder
+        builder = ao._executor.builder
 
         with pytest.raises(ValueError, match="Circular dependency"):
             builder.build("circular_chain")
@@ -283,69 +283,69 @@ class TestDAGExecutor:
     """Tests for DAGExecutor class."""
 
     @pytest.fixture
-    def forge(self):
-        """Create an isolated forge for testing."""
+    def ao(self):
+        """Create an isolated ao for testing."""
         return AgentOrchestrator.temp_registries("dag_executor_test")
 
     @pytest.mark.asyncio
-    async def test_execute_simple_chain(self, forge):
+    async def test_execute_simple_chain(self, ao):
         """Test executing a simple chain."""
         execution_order = []
 
-        @forge.step(name="step1")
+        @ao.step(name="step1")
         async def step1(ctx):
             execution_order.append("step1")
             ctx.set("step1_data", "value1", scope=ContextScope.CHAIN)
             return {"step": 1}
 
-        @forge.step(name="step2", deps=["step1"])
+        @ao.step(name="step2", deps=["step1"])
         async def step2(ctx):
             execution_order.append("step2")
             data = ctx.get("step1_data")
             return {"step": 2, "from_step1": data}
 
-        @forge.chain(name="test_chain")
+        @ao.chain(name="test_chain")
         class TestChain:
             steps = ["step1", "step2"]
 
-        result = await forge.launch("test_chain")
+        result = await ao.launch("test_chain")
 
         assert result["success"] is True
         assert execution_order == ["step1", "step2"]
         assert len(result["results"]) == 2
 
     @pytest.mark.asyncio
-    async def test_execute_parallel_steps(self, forge):
+    async def test_execute_parallel_steps(self, ao):
         """Test that independent steps run in parallel."""
         start_times = {}
         end_times = {}
 
-        @forge.step(name="slow1")
+        @ao.step(name="slow1")
         async def slow1(ctx):
             start_times["slow1"] = asyncio.get_event_loop().time()
             await asyncio.sleep(0.1)
             end_times["slow1"] = asyncio.get_event_loop().time()
             return 1
 
-        @forge.step(name="slow2")
+        @ao.step(name="slow2")
         async def slow2(ctx):
             start_times["slow2"] = asyncio.get_event_loop().time()
             await asyncio.sleep(0.1)
             end_times["slow2"] = asyncio.get_event_loop().time()
             return 2
 
-        @forge.step(name="slow3")
+        @ao.step(name="slow3")
         async def slow3(ctx):
             start_times["slow3"] = asyncio.get_event_loop().time()
             await asyncio.sleep(0.1)
             end_times["slow3"] = asyncio.get_event_loop().time()
             return 3
 
-        @forge.chain(name="parallel_test")
+        @ao.chain(name="parallel_test")
         class ParallelTest:
             steps = ["slow1", "slow2", "slow3"]
 
-        result = await forge.launch("parallel_test")
+        result = await ao.launch("parallel_test")
 
         assert result["success"] is True
 
@@ -355,31 +355,31 @@ class TestDAGExecutor:
         assert max_start_diff < 0.05  # Should start within 50ms of each other
 
     @pytest.mark.asyncio
-    async def test_execute_with_fail_fast(self, forge):
+    async def test_execute_with_fail_fast(self, ao):
         """Test fail_fast error handling stops on first error."""
         executed = []
 
-        @forge.step(name="ok1")
+        @ao.step(name="ok1")
         async def ok1(ctx):
             executed.append("ok1")
             return 1
 
-        @forge.step(name="fail", deps=["ok1"])
+        @ao.step(name="fail", deps=["ok1"])
         async def fail(ctx):
             executed.append("fail")
             raise RuntimeError("Intentional failure")
 
-        @forge.step(name="ok2", deps=["fail"])
+        @ao.step(name="ok2", deps=["fail"])
         async def ok2(ctx):
             executed.append("ok2")
             return 2
 
-        @forge.chain(name="fail_fast_chain")
+        @ao.chain(name="fail_fast_chain")
         class FailFastChain:
             steps = ["ok1", "fail", "ok2"]
             error_handling = "fail_fast"
 
-        result = await forge.launch("fail_fast_chain")
+        result = await ao.launch("fail_fast_chain")
 
         assert result["success"] is False
         assert "ok1" in executed
@@ -387,31 +387,31 @@ class TestDAGExecutor:
         assert "ok2" not in executed  # Should not execute after failure
 
     @pytest.mark.asyncio
-    async def test_execute_with_continue(self, forge):
+    async def test_execute_with_continue(self, ao):
         """Test continue error handling executes all possible steps."""
         executed = []
 
-        @forge.step(name="ok1")
+        @ao.step(name="ok1")
         async def ok1(ctx):
             executed.append("ok1")
             return 1
 
-        @forge.step(name="fail", deps=["ok1"])
+        @ao.step(name="fail", deps=["ok1"])
         async def fail(ctx):
             executed.append("fail")
             raise RuntimeError("Intentional failure")
 
-        @forge.step(name="independent")
+        @ao.step(name="independent")
         async def independent(ctx):
             executed.append("independent")
             return "independent result"
 
-        @forge.chain(name="continue_chain")
+        @ao.chain(name="continue_chain")
         class ContinueChain:
             steps = ["ok1", "fail", "independent"]
             error_handling = "continue"
 
-        result = await forge.launch("continue_chain")
+        result = await ao.launch("continue_chain")
 
         assert result["success"] is False
         assert "ok1" in executed
@@ -419,11 +419,11 @@ class TestDAGExecutor:
         assert "independent" in executed  # Should still execute
 
     @pytest.mark.asyncio
-    async def test_execute_with_retry(self, forge):
+    async def test_execute_with_retry(self, ao):
         """Test retry error handling retries failed steps."""
         attempt_count = 0
 
-        @forge.step(name="flaky", retry=2)
+        @ao.step(name="flaky", retry=2)
         async def flaky(ctx):
             nonlocal attempt_count
             attempt_count += 1
@@ -431,57 +431,57 @@ class TestDAGExecutor:
                 raise RuntimeError(f"Attempt {attempt_count} failed")
             return {"attempts": attempt_count}
 
-        @forge.chain(name="retry_chain")
+        @ao.chain(name="retry_chain")
         class RetryChain:
             steps = ["flaky"]
             error_handling = "retry"
 
-        result = await forge.launch("retry_chain")
+        result = await ao.launch("retry_chain")
 
         assert result["success"] is True
         assert attempt_count == 3  # Original + 2 retries
 
     @pytest.mark.asyncio
-    async def test_execute_with_timeout(self, forge):
+    async def test_execute_with_timeout(self, ao):
         """Test step timeout handling."""
-        @forge.step(name="slow_step", timeout_ms=100)
+        @ao.step(name="slow_step", timeout_ms=100)
         async def slow_step(ctx):
             await asyncio.sleep(1.0)  # Will timeout
             return "should not reach"
 
-        @forge.chain(name="timeout_chain")
+        @ao.chain(name="timeout_chain")
         class TimeoutChain:
             steps = ["slow_step"]
 
-        result = await forge.launch("timeout_chain")
+        result = await ao.launch("timeout_chain")
 
         assert result["success"] is False
         assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_execute_with_initial_data(self, forge):
+    async def test_execute_with_initial_data(self, ao):
         """Test passing initial data to chain."""
-        @forge.step(name="read_data")
+        @ao.step(name="read_data")
         async def read_data(ctx):
             company = ctx.get("company")
             return {"company": company}
 
-        @forge.chain(name="data_chain")
+        @ao.chain(name="data_chain")
         class DataChain:
             steps = ["read_data"]
 
-        result = await forge.launch("data_chain", data={"company": "Apple Inc"})
+        result = await ao.launch("data_chain", data={"company": "Apple Inc"})
 
         assert result["success"] is True
         assert result["results"][0]["output"]["company"] == "Apple Inc"
 
     @pytest.mark.asyncio
-    async def test_execute_with_max_concurrency(self, forge):
+    async def test_execute_with_max_concurrency(self, ao):
         """Test per-step concurrency limits."""
         concurrent_count = 0
         max_concurrent = 0
 
-        @forge.step(name="limited", max_concurrency=2)
+        @ao.step(name="limited", max_concurrency=2)
         async def limited(ctx):
             nonlocal concurrent_count, max_concurrent
             concurrent_count += 1
@@ -490,18 +490,18 @@ class TestDAGExecutor:
             concurrent_count -= 1
             return True
 
-        @forge.chain(name="concurrency_chain")
+        @ao.chain(name="concurrency_chain")
         class ConcurrencyChain:
             steps = ["limited"]
 
-        result = await forge.launch("concurrency_chain")
+        result = await ao.launch("concurrency_chain")
 
         assert result["success"] is True
         # With single step, max concurrent should be 1
         assert max_concurrent <= 2
 
     @pytest.mark.asyncio
-    async def test_execute_with_debug_callback(self, forge):
+    async def test_execute_with_debug_callback(self, ao):
         """Test debug callback is invoked after each step."""
         callbacks = []
 
@@ -511,19 +511,19 @@ class TestDAGExecutor:
                 "success": result["success"],
             })
 
-        @forge.step(name="s1")
+        @ao.step(name="s1")
         async def s1(ctx):
             return 1
 
-        @forge.step(name="s2", deps=["s1"])
+        @ao.step(name="s2", deps=["s1"])
         async def s2(ctx):
             return 2
 
-        @forge.chain(name="debug_chain")
+        @ao.chain(name="debug_chain")
         class DebugChain:
             steps = ["s1", "s2"]
 
-        result = await forge.launch("debug_chain", debug_callback=debug_callback)
+        result = await ao.launch("debug_chain", debug_callback=debug_callback)
 
         assert result["success"] is True
         assert len(callbacks) == 2
@@ -616,67 +616,67 @@ class TestDAGEdgeCases:
     """Tests for edge cases and error handling."""
 
     @pytest.fixture
-    def forge(self):
+    def ao(self):
         return AgentOrchestrator.temp_registries("dag_edge_cases")
 
     @pytest.mark.asyncio
-    async def test_empty_chain(self, forge):
+    async def test_empty_chain(self, ao):
         """Test executing a chain with no steps."""
-        @forge.chain(name="empty_chain")
+        @ao.chain(name="empty_chain")
         class EmptyChain:
             steps = []
 
-        result = await forge.launch("empty_chain")
+        result = await ao.launch("empty_chain")
 
         assert result["success"] is True
         assert result["results"] == []
 
     @pytest.mark.asyncio
-    async def test_single_step_chain(self, forge):
+    async def test_single_step_chain(self, ao):
         """Test executing a chain with single step."""
-        @forge.step(name="only_step")
+        @ao.step(name="only_step")
         async def only_step(ctx):
             return "only result"
 
-        @forge.chain(name="single_chain")
+        @ao.chain(name="single_chain")
         class SingleChain:
             steps = ["only_step"]
 
-        result = await forge.launch("single_chain")
+        result = await ao.launch("single_chain")
 
         assert result["success"] is True
         assert len(result["results"]) == 1
 
     @pytest.mark.asyncio
-    async def test_diamond_dependency(self, forge):
+    async def test_diamond_dependency(self, ao):
         """Test diamond-shaped dependency graph (A -> B,C -> D)."""
         order = []
 
-        @forge.step(name="top")
+        @ao.step(name="top")
         async def top(ctx):
             order.append("top")
             return "top"
 
-        @forge.step(name="left", deps=["top"])
+        @ao.step(name="left", deps=["top"])
         async def left(ctx):
             order.append("left")
             return "left"
 
-        @forge.step(name="right", deps=["top"])
+        @ao.step(name="right", deps=["top"])
         async def right(ctx):
             order.append("right")
             return "right"
 
-        @forge.step(name="bottom", deps=["left", "right"])
+        @ao.step(name="bottom", deps=["left", "right"])
         async def bottom(ctx):
             order.append("bottom")
             return "bottom"
 
-        @forge.chain(name="diamond_chain")
+        @ao.chain(name="diamond_chain")
         class DiamondChain:
             steps = ["top", "left", "right", "bottom"]
 
-        result = await forge.launch("diamond_chain")
+        result = await ao.launch("diamond_chain")
 
         assert result["success"] is True
         assert order[0] == "top"
@@ -684,22 +684,22 @@ class TestDAGEdgeCases:
         assert order[3] == "bottom"
 
     @pytest.mark.asyncio
-    async def test_step_output_preserved_on_error(self, forge):
+    async def test_step_output_preserved_on_error(self, ao):
         """Test that step outputs are preserved even when chain fails."""
-        @forge.step(name="success_step")
+        @ao.step(name="success_step")
         async def success_step(ctx):
             ctx.set("preserved", "data", scope=ContextScope.CHAIN)
             return {"status": "ok"}
 
-        @forge.step(name="fail_step", deps=["success_step"])
+        @ao.step(name="fail_step", deps=["success_step"])
         async def fail_step(ctx):
             raise RuntimeError("Intentional failure")
 
-        @forge.chain(name="partial_chain")
+        @ao.chain(name="partial_chain")
         class PartialChain:
             steps = ["success_step", "fail_step"]
 
-        result = await forge.launch("partial_chain")
+        result = await ao.launch("partial_chain")
 
         assert result["success"] is False
         # First step should have succeeded

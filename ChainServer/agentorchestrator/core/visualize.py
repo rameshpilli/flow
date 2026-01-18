@@ -27,10 +27,10 @@ class DAGVisualizer:
         print(viz.to_ascii("meeting_prep_chain"))
         print(viz.to_mermaid("meeting_prep_chain"))
 
-        # With custom registries (for isolated forge instances)
+        # With custom registries (for isolated ao instances)
         viz = DAGVisualizer(
-            step_registry=forge._step_registry,
-            chain_registry=forge._chain_registry
+            step_registry=ao._step_registry,
+            chain_registry=ao._chain_registry
         )
     """
 

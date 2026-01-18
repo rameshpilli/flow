@@ -5,7 +5,7 @@ Provides testing helpers for AgentOrchestrator chains, steps, and agents:
 - MockAgent: Create mock agents with predefined responses
 - mock_step: Decorator to mock step functions
 - mock_chain: Context manager for mocking entire chains
-- IsolatedOrchestrator: Pre-configured forge with test isolation
+- IsolatedOrchestrator: Pre-configured ao with test isolation
 - Fixtures: Common pytest fixtures for AgentOrchestrator testing
 
 Usage:
@@ -20,13 +20,13 @@ Usage:
     # Mock a step
     @mock_step("fetch_data", returns={"data": "mocked"})
     async def test_pipeline():
-        result = await forge.launch("pipeline", {})
+        result = await ao.launch("pipeline", {})
         assert result["success"]
 
-    # Use isolated forge in tests
+    # Use isolated ao in tests
     async def test_with_isolation():
-        async with IsolatedOrchestrator() as forge:
-            @forge.step(name="my_step")
+        async with IsolatedOrchestrator() as ao:
+            @ao.step(name="my_step")
             async def my_step(ctx):
                 return {"result": True}
             ...
@@ -41,7 +41,7 @@ from agentorchestrator.testing.assertions import (
 from agentorchestrator.testing.fixtures import (
     IsolatedOrchestrator,
     create_test_context,
-    create_test_forge,
+    create_test_ao,
     sample_chain_request,
 )
 from agentorchestrator.testing.mocks import (
@@ -69,7 +69,7 @@ __all__ = [
     # Fixtures
     "IsolatedOrchestrator",
     "create_test_context",
-    "create_test_forge",
+    "create_test_ao",
     "sample_chain_request",
     # Assertions
     "assert_step_completed",

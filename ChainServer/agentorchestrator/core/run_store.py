@@ -493,7 +493,7 @@ class ResumableChainRunner:
             checkpoint.add_step_checkpoint(step_cp)
             checkpoint.update_from_context(ctx)
 
-            # Schedule async save without blocking (fire-and-forget)
+            # Schedule async save without blocking (fire-and-aot)
             if self._auto_checkpoint:
                 asyncio.create_task(self._store.save_checkpoint(checkpoint))
 

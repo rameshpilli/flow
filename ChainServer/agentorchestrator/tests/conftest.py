@@ -42,7 +42,7 @@ def isolated_registries() -> tuple[AgentRegistry, StepRegistry, ChainRegistry]:
 
 
 @pytest.fixture
-def forge(isolated_registries) -> Generator[AgentOrchestrator, None, None]:
+def ao(isolated_registries) -> Generator[AgentOrchestrator, None, None]:
     """
     Create an isolated AgentOrchestrator instance for testing.
 
@@ -50,7 +50,7 @@ def forge(isolated_registries) -> Generator[AgentOrchestrator, None, None]:
     """
     agent_reg, step_reg, chain_reg = isolated_registries
     fg = AgentOrchestrator(
-        name="test_forge",
+        name="test_ao",
         version="1.0.0",
         agent_registry=agent_reg,
         step_registry=step_reg,

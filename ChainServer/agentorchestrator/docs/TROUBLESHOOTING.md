@@ -38,7 +38,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
    ```
 3. Verify chain decorator:
    ```python
-   @forge.chain(name="my_chain")  # Name must match
+   @ao.chain(name="my_chain")  # Name must match
    class MyChain:
        steps = [...]
    ```
@@ -55,17 +55,17 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
 2. Remove circular dependencies:
    ```python
    # BAD: Circular dependency
-   @forge.step(deps=[step_b])
+   @ao.step(deps=[step_b])
    async def step_a(ctx): ...
 
-   @forge.step(deps=[step_a])
+   @ao.step(deps=[step_a])
    async def step_b(ctx): ...
 
    # GOOD: Linear dependency
-   @forge.step()
+   @ao.step()
    async def step_a(ctx): ...
 
-   @forge.step(deps=[step_a])
+   @ao.step(deps=[step_a])
    async def step_b(ctx): ...
    ```
 
@@ -76,7 +76,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
 **Solutions:**
 1. Increase timeout:
    ```python
-   @forge.step(timeout_ms=60000)  # 60 seconds
+   @ao.step(timeout_ms=60000)  # 60 seconds
    async def my_step(ctx): ...
    ```
 2. Add progress logging to identify bottleneck
@@ -89,12 +89,12 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
 **Solutions:**
 1. Check step dependency order:
    ```python
-   @forge.step(name="producer", produces=["my_data"])
+   @ao.step(name="producer", produces=["my_data"])
    async def producer(ctx):
        ctx.set("my_data", {...})  # Must set the data
        return {...}
 
-   @forge.step(deps=[producer])  # Must depend on producer
+   @ao.step(deps=[producer])  # Must depend on producer
    async def consumer(ctx):
        data = ctx.get("my_data")  # Now available
    ```
@@ -114,7 +114,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
 **Solutions:**
 1. Check agent configuration:
    ```python
-   agent = forge.get_agent("news_agent")
+   agent = ao.get_agent("news_agent")
    print(agent.config)  # Verify settings
    ```
 2. Test agent directly:
@@ -217,7 +217,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
    from agentorchestrator.middleware import OffloadMiddleware
    from agentorchestrator.core import RedisContextStore
 
-   forge.use_middleware(OffloadMiddleware(
+   ao.use_middleware(OffloadMiddleware(
        store=RedisContextStore(),
        default_threshold_bytes=100_000,  # 100KB
    ))
@@ -249,11 +249,11 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
    ```
 2. Verify checkpoint directory:
    ```python
-   forge = AgentOrchestrator(checkpoint_dir="./checkpoints")
+   ao = AgentOrchestrator(checkpoint_dir="./checkpoints")
    ```
 3. Check run status:
    ```python
-   run = await forge.get_run(run_id)
+   run = await ao.get_run(run_id)
    print(run.status)  # Must be "partial" or "failed"
    ```
 
@@ -268,7 +268,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
    ```
 2. Start fresh run:
    ```python
-   result = await forge.launch_resumable(chain_name, data, run_id=None)
+   result = await ao.launch_resumable(chain_name, data, run_id=None)
    ```
 
 ---
@@ -282,7 +282,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
 **Solutions:**
 1. Provide required fields:
    ```python
-   await forge.launch("my_chain", {
+   await ao.launch("my_chain", {
        "company_name": "Apple Inc",  # Required field
    })
    ```
@@ -339,15 +339,15 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
 1. Add caching:
    ```python
    from agentorchestrator.middleware import CacheMiddleware
-   forge.use_middleware(CacheMiddleware(ttl_seconds=300))
+   ao.use_middleware(CacheMiddleware(ttl_seconds=300))
    ```
 2. Increase parallelism:
    ```python
-   forge = AgentOrchestrator(max_parallel=20)  # Default is 10
+   ao = AgentOrchestrator(max_parallel=20)  # Default is 10
    ```
 3. Use parallel groups:
    ```python
-   @forge.chain(
+   @ao.chain(
        parallel_groups=[
            ["extract"],
            ["fetch_news", "fetch_sec", "fetch_earnings"],  # Parallel
@@ -364,7 +364,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
 1. Use context offloading (see Large Payload Error above)
 2. Enable auto-summarization:
    ```python
-   forge.use_middleware(TokenManagerMiddleware(
+   ao.use_middleware(TokenManagerMiddleware(
        max_total_tokens=100000,
        auto_summarize=True,
        auto_offload=True,

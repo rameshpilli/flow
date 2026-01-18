@@ -30,7 +30,7 @@ class MCPConnector(BaseConnector):
         ))
 
         # Or register as an agent
-        @forge.agent(name="my_mcp_agent")
+        @ao.agent(name="my_mcp_agent")
         class MyMCPAgent(MCPAgent):
             connector_config = MCPConfig(...)
     """
@@ -102,7 +102,7 @@ class MCPAgent(BaseAgent):
     Allows users to easily create agents that wrap MCP servers.
 
     Usage:
-        @forge.agent(name="my_data_source")
+        @ao.agent(name="my_data_source")
         class MyDataAgent(MCPAgent):
             connector_config = ConnectorConfig(
                 name="my_mcp",

@@ -14,7 +14,7 @@ Usage:
 
     # Basic usage with in-memory storage
     analytics = UsageAnalyticsMiddleware()
-    forge.use(analytics)
+    ao.use(analytics)
 
     # Get usage report
     report = analytics.get_usage_report(user_id="user123")
@@ -278,10 +278,10 @@ class UsageAnalyticsMiddleware(Middleware):
 
     Usage:
         analytics = UsageAnalyticsMiddleware()
-        forge.use(analytics)
+        ao.use(analytics)
 
         # Run chains...
-        await forge.run("my_chain", context={"user_id": "user123"})
+        await ao.run("my_chain", context={"user_id": "user123"})
 
         # Get report
         report = analytics.get_usage_report(user_id="user123")
