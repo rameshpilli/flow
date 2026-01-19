@@ -133,6 +133,32 @@ async def test_my_chain():
         assert result["success"]
 ```
 
+## Optional RAG + Chat History (quick peek)
+
+```python
+from agentorchestrator import AgentOrchestrator
+from agentorchestrator.services import VectorStoreService, VectorDocument
+from agentorchestrator.squad.storage.memory import InMemoryChatStorage
+
+vs = VectorStoreService()
+chat = InMemoryChatStorage()
+await vs.upsert([VectorDocument(id="d1", text="Use async/await for I/O")])
+
+ao = AgentOrchestrator(name="rag_demo")
+
+@ao.step(name="retrieve")
+async def retrieve(ctx):
+    ctx.set("rag_context", await vs.query(ctx.get("query", "")))
+
+@ao.step(name="answer", deps=["retrieve"])
+async def answer(ctx):
+    return {"answer": f"Using {len(ctx.get('rag_context', []))} snippets"}
+
+@ao.chain(name="rag_chain")
+class RAGChain:
+    steps = ["retrieve", "answer"]
+```
+
 ## CLI
 
 ```bash
