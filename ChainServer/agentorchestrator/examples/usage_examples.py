@@ -18,7 +18,10 @@ from agentorchestrator.services import (
     VectorStoreService,
 )
 from agentorchestrator.squad.storage.memory import InMemoryChatStorage
-from agentorchestrator.examples.supervisor_chain import create_supervisor_orchestrator
+from agentorchestrator.examples.supervisor_chain import (
+    create_supervisor_orchestrator,
+    create_squad_supervisor_orchestrator,
+)
 
 try:  # Optional Redis chat storage
     from agentorchestrator.squad.storage.redis import RedisChatStorage
@@ -133,6 +136,39 @@ async def run_supervisor_example():
     print("Supervisor chain result:", result)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#                     MULTI-AGENT SUPERVISOR (SQUAD/GATEWAY PATH)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+async def run_squad_supervisor_example():
+    """
+    Run the Squad-based supervisor chain.
+
+    This uses the squad module’s SupervisorAgent with validation/guardrails and
+    LLMGateway agents. Provide a real llm_client for live calls; None uses stub.
+    """
+    vector_store = VectorStoreService()
+    await vector_store.upsert([
+        VectorDocument(id="api", text="Use async/await for API I/O."),
+        VectorDocument(id="finance", text="Consider moving averages for stocks."),
+    ])
+
+    ao = create_squad_supervisor_orchestrator(llm_client=None)
+
+    # The squad_chain defined in supervisor_chain.py only routes; context is
+    # passed via additional_params. RAG is not wired here by default; include it
+    # in ctx if desired.
+    result = await ao.launch("squad_chain", {
+        "query": "How do I optimize my Python API for market data?",
+        "user_id": "user-123",
+        "session_id": "session-xyz",
+    })
+
+    print("Squad supervisor result:", result)
+
+
 if __name__ == "__main__":
     asyncio.run(run_simple_chain_example())
     asyncio.run(run_supervisor_example())
+    asyncio.run(run_squad_supervisor_example())
