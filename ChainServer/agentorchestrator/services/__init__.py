@@ -40,6 +40,15 @@ except ImportError:
     init_redis_client = None  # type: ignore
     set_redis_client = None  # type: ignore
 
+# Vector store (optional - httpx for remote, no deps for in-memory)
+from agentorchestrator.services.vector_store import (
+    InMemoryVectorStore,
+    VectorDocument,
+    VectorMatch,
+    VectorStoreConfig,
+    VectorStoreService,
+)
+
 __all__ = [
     # LLM Gateway
     "LLMGatewayClient",
@@ -58,4 +67,10 @@ __all__ = [
     "get_redis_client",
     "init_redis_client",
     "set_redis_client",
+    # Vector Store
+    "VectorStoreConfig",
+    "VectorStoreService",
+    "VectorDocument",
+    "VectorMatch",
+    "InMemoryVectorStore",
 ]

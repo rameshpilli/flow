@@ -61,6 +61,7 @@ import logging
 from typing import Any
 
 from agentorchestrator import AgentOrchestrator, Context
+from agentorchestrator.services.vector_store import VectorStoreService
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,8 @@ logger = logging.getLogger(__name__)
 def create_supervisor_orchestrator(
     llm_client: Any = None,
     use_mock: bool = True,
+    vector_store: VectorStoreService | None = None,
+    agent_timeout_seconds: float = 30.0,
 ) -> AgentOrchestrator:
     """
     Create an AgentOrchestrator instance with supervisor pattern agents.
@@ -246,7 +249,42 @@ Based on input from: {contributors}
     # ═══════════════════════════════════════════════════════════════════════════
 
     @ao.step(
+        name="retrieve_context",
+        description="Optionally retrieve RAG context for the query",
+        produces=["rag_context"],
+    )
+    async def retrieve_context(ctx: Context) -> dict[str, Any]:
+        """
+        Retrieve relevant context using an optional vector store.
+        """
+        query = ctx.get("query", "")
+        if not query or not vector_store:
+            ctx.set("rag_context", [])
+            return {"rag_context": []}
+
+        try:
+            matches = await vector_store.query(query, top_k=3)
+        except Exception as exc:  # Defensive: retrieval should not break the chain
+            logger.warning(f"Vector store query failed: {exc}")
+            ctx.set("rag_context", [])
+            return {"rag_context": []}
+
+        rag_context = [
+            {
+                "id": match.id,
+                "text": match.text,
+                "score": match.score,
+                "metadata": match.metadata,
+            }
+            for match in matches
+        ]
+
+        ctx.set("rag_context", rag_context)
+        return {"rag_context": rag_context}
+
+    @ao.step(
         name="classify_intent",
+        deps=["retrieve_context"],
         description="Classify user query to determine which specialists to involve",
         produces=["classification"],
     )
@@ -313,6 +351,11 @@ Based on input from: {contributors}
         classification = ctx.get("classification", {})
         selected_agents = classification.get("selected_agents", ["tech_agent"])
         query = classification.get("query", ctx.get("query", ""))
+        context_payload = {
+            "rag_context": ctx.get("rag_context", []),
+            "history": ctx.get("history"),
+            "metadata": ctx.metadata,
+        }
 
         # Get agent instances
         agent_instances = {}
@@ -325,8 +368,14 @@ Based on input from: {contributors}
         # Run agents in parallel
         async def run_agent(name: str, agent: Any) -> tuple[str, str]:
             try:
-                response = await agent.process(query)
+                response = await asyncio.wait_for(
+                    agent.process(query, context=context_payload),
+                    timeout=agent_timeout_seconds,
+                )
                 return name, response
+            except asyncio.TimeoutError:
+                logger.error(f"Agent {name} timed out after {agent_timeout_seconds}s")
+                return name, f"[Error from {name}]: request timed out after {agent_timeout_seconds}s"
             except Exception as e:
                 logger.error(f"Agent {name} failed: {e}")
                 return name, f"[Error from {name}]: {str(e)}"
@@ -422,6 +471,7 @@ Based on input from: {contributors}
         4. Format and return
         """
         steps = [
+            "retrieve_context",
             "classify_intent",
             "delegate_to_specialists",
             "supervisor_synthesize",
