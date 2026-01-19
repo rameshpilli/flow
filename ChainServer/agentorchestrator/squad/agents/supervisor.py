@@ -310,6 +310,8 @@ Team Memory (previous interactions):
                 "calls": 0,
                 "errors": 0,
                 "total_latency_ms": 0.0,
+                "last_response": "",
+                "last_error": "",
             }
 
         self._agent_metrics[agent.id]["calls"] += 1
@@ -377,9 +379,11 @@ Team Memory (previous interactions):
                         [user_message, assistant_message]
                     )
 
-                # Track metrics
+                # Track metrics and store response for validator
                 latency_ms = (time.perf_counter() - start_time) * 1000
                 self._agent_metrics[agent.id]["total_latency_ms"] += latency_ms
+                self._agent_metrics[agent.id]["last_response"] = response_text
+                self._agent_metrics[agent.id]["last_error"] = ""
 
                 if self.trace:
                     logger.info(f"[Supervisor] ← {agent.name}: {response_text[:100]}... ({latency_ms:.1f}ms)")
@@ -388,12 +392,18 @@ Team Memory (previous interactions):
 
         except asyncio.TimeoutError:
             self._agent_metrics[agent.id]["errors"] += 1
+            error_msg = f"Request timed out after {self.agent_timeout_seconds} seconds"
+            self._agent_metrics[agent.id]["last_error"] = error_msg
+            self._agent_metrics[agent.id]["last_response"] = ""
             logger.error(f"Agent {agent.name} timed out after {self.agent_timeout_seconds}s")
-            return f"{agent.name}: Error - Request timed out after {self.agent_timeout_seconds} seconds"
+            return f"{agent.name}: Error - {error_msg}"
         except Exception as e:
             self._agent_metrics[agent.id]["errors"] += 1
+            error_msg = str(e)
+            self._agent_metrics[agent.id]["last_error"] = error_msg
+            self._agent_metrics[agent.id]["last_response"] = ""
             logger.error(f"Error sending to {agent.name}: {e}")
-            return f"{agent.name}: Error - {str(e)}"
+            return f"{agent.name}: Error - {error_msg}"
 
     async def _send_messages(self, messages: list[dict[str, str]]) -> str:
         """
