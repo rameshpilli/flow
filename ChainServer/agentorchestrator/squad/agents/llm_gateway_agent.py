@@ -31,7 +31,7 @@ from agentorchestrator.services.llm_gateway import (
     LLMGatewayClient,
     get_default_llm_client,
 )
-from agentorchestrator.utils.tracing import trace_span
+from agentorchestrator.utils.tracing import trace_span, noop_context
 
 logger = logging.getLogger(__name__)
 
@@ -277,7 +277,7 @@ If you don't know something, say so rather than making up information.
         self._log_debug(f"Processing request: {input_text[:100]}...")
 
         try:
-            with trace_span(f"agent.{self.id}.process", attributes=trace_attrs) if self.enable_tracing else _noop_context():
+            with trace_span(f"agent.{self.id}.process", attributes=trace_attrs) if self.enable_tracing else noop_context():
                 # Build context-enriched prompt
                 full_prompt = self._build_context_prompt(
                     input_text, chat_history, additional_params
@@ -466,11 +466,8 @@ If you don't know something, say so rather than making up information.
 
         return response
 
-
-# Helper for optional tracing
-from contextlib import contextmanager
-
-@contextmanager
-def _noop_context():
-    """No-op context manager when tracing is disabled."""
-    yield None
+    def reset_metrics(self) -> None:
+        """Reset all metrics counters."""
+        self._request_count = 0
+        self._total_latency_ms = 0.0
+        self._error_count = 0

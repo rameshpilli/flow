@@ -137,7 +137,8 @@ confidence: <0.0-1.0>
     async def classify(
         self,
         input_text: str,
-        chat_history: list[ConversationMessage]
+        chat_history: list[ConversationMessage],
+        additional_params: Optional[dict[str, Any]] = None,
     ) -> ClassifierResult:
         """
         Classify user input and select appropriate agent.
@@ -145,19 +146,21 @@ confidence: <0.0-1.0>
         Args:
             input_text: User's input text
             chat_history: Conversation history
+            additional_params: Optional context (user profile, RAG results, etc.)
 
         Returns:
             ClassifierResult with selected agent and confidence
         """
         self.set_history(chat_history)
         self.update_system_prompt()
-        return await self.process_request(input_text, chat_history)
+        return await self.process_request(input_text, chat_history, additional_params)
 
     @abstractmethod
     async def process_request(
         self,
         input_text: str,
-        chat_history: list[ConversationMessage]
+        chat_history: list[ConversationMessage],
+        additional_params: Optional[dict[str, Any]] = None,
     ) -> ClassifierResult:
         """
         Process the classification request.
@@ -167,6 +170,7 @@ confidence: <0.0-1.0>
         Args:
             input_text: User's input text
             chat_history: Conversation history
+            additional_params: Optional context (user profile, RAG results, etc.)
 
         Returns:
             ClassifierResult with selected agent and confidence

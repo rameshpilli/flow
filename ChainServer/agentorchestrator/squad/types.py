@@ -7,8 +7,11 @@ data structures and type safety.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, TYPE_CHECKING, Union
 from datetime import datetime
+
+if TYPE_CHECKING:
+    from agentorchestrator.squad.agents.base import Agent
 
 
 class ParticipantRole(str, Enum):
@@ -60,7 +63,7 @@ class ClassifierResult:
         selected_agent: The agent selected to handle the request (or None)
         confidence: Confidence score (0.0 to 1.0)
     """
-    selected_agent: Optional[Any] = None  # Will be Agent type
+    selected_agent: Optional["Agent"] = None
     confidence: float = 0.0
 
 
@@ -143,7 +146,7 @@ class AgentTool:
     description: str
     properties: dict[str, Any] = field(default_factory=dict)
     required: list[str] = field(default_factory=list)
-    func: Optional[Any] = None  # Callable
+    func: Optional[Callable[..., Any]] = None
 
     @property
     def func_description(self) -> str:

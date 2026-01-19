@@ -16,8 +16,8 @@ Features:
 """
 
 import asyncio
-import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional, Any, Union, AsyncIterable, Callable
@@ -33,7 +33,7 @@ from agentorchestrator.squad.types import (
     AgentTools,
     AgentTool,
 )
-from agentorchestrator.utils.tracing import trace_span
+from agentorchestrator.utils.tracing import trace_span, noop_context
 
 logger = logging.getLogger(__name__)
 
@@ -324,7 +324,7 @@ Team Memory (previous interactions):
         }
 
         try:
-            with trace_span(f"supervisor.delegate.{agent.id}", attributes=trace_attrs) if self.enable_tracing else _noop_context():
+            with trace_span(f"supervisor.delegate.{agent.id}", attributes=trace_attrs) if self.enable_tracing else noop_context():
                 if self.trace:
                     logger.info(f"[Supervisor] → {agent.name}: {content[:100]}...")
 
@@ -544,7 +544,7 @@ Team Memory (previous interactions):
         }
 
         try:
-            with trace_span(f"supervisor.{self.id}.process", attributes=trace_attrs) if self.enable_tracing else _noop_context():
+            with trace_span(f"supervisor.{self.id}.process", attributes=trace_attrs) if self.enable_tracing else noop_context():
                 # Fetch team memory
                 agents_history = await self.storage.fetch_all_chats(user_id, session_id)
                 agents_memory = self._format_agents_memory(agents_history)
@@ -632,7 +632,6 @@ Team Memory (previous interactions):
         for guardrail in self.guardrails:
             if guardrail == "no_pii":
                 # Basic PII check (would use a proper library in production)
-                import re
                 # Check for SSN pattern
                 if re.search(r'\b\d{3}-\d{2}-\d{4}\b', response_text):
                     return False, "Response may contain sensitive personal information."
@@ -737,12 +736,3 @@ Team Memory (previous interactions):
         self._total_latency_ms = 0.0
         self._agent_metrics = {}
         self._validation_failures = 0
-
-
-# Helper for optional tracing
-from contextlib import contextmanager
-
-@contextmanager
-def _noop_context():
-    """No-op context manager when tracing is disabled."""
-    yield None

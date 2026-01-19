@@ -198,6 +198,18 @@ def _is_async(func: Callable) -> bool:
 
 
 # Chain-specific tracing utilities
+@contextmanager
+def noop_context():
+    """
+    No-op context manager when tracing is disabled.
+
+    Use this as a fallback when enable_tracing=False:
+        with trace_span(...) if enable_tracing else noop_context():
+            ...
+    """
+    yield None
+
+
 class ChainTracer:
     """
     Specialized tracer for chain execution.

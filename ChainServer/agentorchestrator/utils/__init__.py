@@ -71,6 +71,7 @@ from agentorchestrator.utils.tracing import (
     ChainTracer,
     configure_tracing,
     get_tracer,
+    noop_context,
     trace_function,
     trace_span,
 )
@@ -102,6 +103,7 @@ __all__ = [
     "get_tracer",
     "trace_span",
     "trace_function",
+    "noop_context",
     "ChainTracer",
     # Configuration
     "AgentOrchestratorConfig",

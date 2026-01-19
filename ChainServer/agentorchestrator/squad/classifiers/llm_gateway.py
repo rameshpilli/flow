@@ -13,6 +13,7 @@ Features:
     - OTEL tracing integration
 """
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -29,7 +30,7 @@ from agentorchestrator.services.llm_gateway import (
     get_default_llm_client,
 )
 # Import tracing for observability
-from agentorchestrator.utils.tracing import trace_span
+from agentorchestrator.utils.tracing import trace_span, noop_context
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class LLMGatewayClassifierOptions:
     max_history_messages: int = 5  # Max history messages for context
     user_context_key: str = "user_profile"  # Key for user context
     enable_tracing: bool = True  # Enable OTEL tracing
+    timeout_seconds: float = 30.0  # Timeout for LLM classification call
 
 
 class LLMGatewayClassifier(Classifier):
@@ -129,10 +131,12 @@ class LLMGatewayClassifier(Classifier):
         self.max_history_messages = options.max_history_messages
         self.user_context_key = options.user_context_key
         self.enable_tracing = options.enable_tracing
+        self.timeout_seconds = options.timeout_seconds
 
         # Metrics tracking
         self._classification_count = 0
         self._total_latency_ms = 0.0
+        self._error_count = 0
 
     def _build_context_prompt(
         self,
@@ -209,17 +213,20 @@ class LLMGatewayClassifier(Classifier):
         }
 
         try:
-            with trace_span("classifier.classify", attributes=trace_attrs) if self.enable_tracing else _noop_context():
+            with trace_span("classifier.classify", attributes=trace_attrs) if self.enable_tracing else noop_context():
                 # Build context-aware prompt
                 enriched_prompt = self._build_context_prompt(
                     input_text, chat_history, additional_params
                 )
 
-                # Call LLM for classification using existing LLMGatewayClient
-                response = await self.llm_client.generate_async(
-                    prompt=enriched_prompt,
-                    system_prompt=self.system_prompt,
-                    max_tokens=self.max_tokens,
+                # Call LLM for classification with timeout
+                response = await asyncio.wait_for(
+                    self.llm_client.generate_async(
+                        prompt=enriched_prompt,
+                        system_prompt=self.system_prompt,
+                        max_tokens=self.max_tokens,
+                    ),
+                    timeout=self.timeout_seconds
                 )
 
                 logger.debug(f"Classifier raw response: {response}")
@@ -247,9 +254,13 @@ class LLMGatewayClassifier(Classifier):
 
                 return result
 
+        except asyncio.TimeoutError:
+            self._error_count += 1
+            logger.error(f"Classification timed out after {self.timeout_seconds}s")
+            return ClassifierResult(selected_agent=None, confidence=0.0)
         except Exception as e:
+            self._error_count += 1
             logger.error(f"Classification failed: {e}")
-            # Return empty result on error
             return ClassifierResult(selected_agent=None, confidence=0.0)
 
     async def classify(
@@ -270,7 +281,7 @@ class LLMGatewayClassifier(Classifier):
         Get classifier metrics.
 
         Returns:
-            Dict with classification count, avg latency, etc.
+            Dict with classification count, avg latency, error count, etc.
         """
         avg_latency = (
             self._total_latency_ms / self._classification_count
@@ -278,10 +289,17 @@ class LLMGatewayClassifier(Classifier):
         )
         return {
             "classification_count": self._classification_count,
+            "error_count": self._error_count,
             "total_latency_ms": self._total_latency_ms,
             "avg_latency_ms": avg_latency,
             "confidence_threshold": self.confidence_threshold,
         }
+
+    def reset_metrics(self) -> None:
+        """Reset all metrics counters."""
+        self._classification_count = 0
+        self._total_latency_ms = 0.0
+        self._error_count = 0
 
     def set_llm_client(self, client: LLMGatewayClient) -> None:
         """
@@ -291,12 +309,3 @@ class LLMGatewayClassifier(Classifier):
             client: LLMGatewayClient instance from services/llm_gateway.py
         """
         self.llm_client = client
-
-
-# Helper for optional tracing
-from contextlib import contextmanager
-
-@contextmanager
-def _noop_context():
-    """No-op context manager when tracing is disabled."""
-    yield None
