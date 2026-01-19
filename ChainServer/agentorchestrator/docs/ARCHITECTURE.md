@@ -352,9 +352,238 @@ agentorchestrator/
 
 ---
 
+## Multi-Agent Squad Module
+
+The Squad module provides native multi-agent orchestration that works with corporate LLM Gateway (OAuth-enabled).
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      Multi-Agent Squad Module                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                  MultiAgentOrchestrator                          │    │
+│  │  • Agent registration                                            │    │
+│  │  • Request routing                                               │    │
+│  │  • Session management                                            │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                              │                                           │
+│                              ▼                                           │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                    LLMGatewayClassifier                          │    │
+│  │  • Intent classification                                         │    │
+│  │  • Agent selection                                               │    │
+│  │  • Confidence scoring                                            │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                              │                                           │
+│         ┌────────────────────┼────────────────────┐                     │
+│         │                    │                    │                      │
+│         ▼                    ▼                    ▼                      │
+│  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐             │
+│  │ LLMGateway  │      │ LLMGateway  │      │ Supervisor  │             │
+│  │   Agent 1   │      │   Agent 2   │      │   Agent     │             │
+│  └─────────────┘      └─────────────┘      └──────┬──────┘             │
+│                                                   │                      │
+│                                            ┌──────┴──────┐              │
+│                                            │  Team of    │              │
+│                                            │  Agents     │              │
+│                                            └─────────────┘              │
+│                              │                                           │
+│                              ▼                                           │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                      ChatStorage                                 │    │
+│  │  • InMemoryChatStorage (development)                            │    │
+│  │  • RedisChatStorage (production)                                │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Components
+
+| Component | Purpose | Location |
+|-----------|---------|----------|
+| `MultiAgentOrchestrator` | Main orchestrator for agent routing | `squad/orchestrator.py` |
+| `LLMGatewayAgent` | Agent using LLMGatewayClient | `squad/agents/llm_gateway_agent.py` |
+| `SupervisorAgent` | Coordinates team of specialist agents | `squad/agents/supervisor.py` |
+| `LLMGatewayClassifier` | Intent classification | `squad/classifiers/llm_gateway.py` |
+| `ChatStorage` | Conversation persistence | `squad/storage/` |
+
+### Usage Example
+
+```python
+from agentorchestrator.squad import (
+    MultiAgentOrchestrator,
+    LLMGatewayAgent,
+    LLMGatewayAgentOptions,
+    SupervisorAgent,
+    SupervisorAgentOptions,
+    LLMGatewayClassifier,
+    LLMGatewayClassifierOptions,
+    InMemoryChatStorage,
+)
+
+# Create specialist agents
+tech_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="TechAgent",
+    description="Handles technical questions",
+    system_prompt="You are a helpful technical assistant.",
+))
+
+finance_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="FinanceAgent",
+    description="Handles financial queries",
+    system_prompt="You are a helpful financial analyst.",
+))
+
+# Create orchestrator
+orchestrator = MultiAgentOrchestrator(
+    classifier=LLMGatewayClassifier(LLMGatewayClassifierOptions()),
+    storage=InMemoryChatStorage(),
+)
+orchestrator.add_agent(tech_agent)
+orchestrator.add_agent(finance_agent)
+
+# Route request
+response = await orchestrator.route_request(
+    user_input="How do I optimize Python code?",
+    user_id="user-123",
+    session_id="session-456",
+)
+```
+
+### Supervisor Pattern
+
+The SupervisorAgent coordinates a team of specialists:
+
+```
+                    User Query
+                         │
+                         ▼
+                ┌─────────────────┐
+                │   Supervisor    │
+                │   Lead Agent    │
+                └────────┬────────┘
+                         │
+            ┌────────────┼────────────┐
+            │            │            │
+            ▼            ▼            ▼
+     ┌──────────┐ ┌──────────┐ ┌──────────┐
+     │ Agent 1  │ │ Agent 2  │ │ Agent N  │
+     │(Parallel)│ │(Parallel)│ │(Parallel)│
+     └────┬─────┘ └────┬─────┘ └────┬─────┘
+          │            │            │
+          └────────────┼────────────┘
+                       │
+                       ▼
+              ┌─────────────────┐
+              │   Synthesize    │
+              │   Responses     │
+              └────────┬────────┘
+                       │
+                       ▼
+              ┌─────────────────┐
+              │  Final Response │
+              └─────────────────┘
+```
+
+---
+
+## Separation of Concerns (6-Layer Model)
+
+For complex deployments, consider organizing code into these layers:
+
+### Layer 1: Orchestration Core
+```
+core/
+├── orchestrator.py      # Main class
+├── dag.py               # DAG execution
+├── context.py           # Context management
+├── registry.py          # Component registration
+└── resources.py         # Resource lifecycle
+```
+
+### Layer 2: Routing & Intent
+```
+routing/
+├── classifier.py        # Intent classification
+├── router.py            # Request routing
+└── planner.py           # Execution planning
+```
+
+### Layer 3: Tool & Agent Execution
+```
+execution/
+├── agent_executor.py    # Agent execution
+├── tool_executor.py     # Tool execution
+└── parallel.py          # Parallel execution
+```
+
+### Layer 4: Memory & Storage
+```
+memory/
+├── context_store.py     # Context persistence
+├── chat_storage.py      # Conversation storage
+└── run_store.py         # Checkpoint storage
+```
+
+### Layer 5: Response Formatting
+```
+response/
+├── formatter.py         # Output formatting
+├── citation.py          # Citation handling
+└── streaming.py         # Streaming support
+```
+
+### Layer 6: Observability
+```
+observability/
+├── metrics.py           # Metrics collection
+├── tracing.py           # Distributed tracing
+├── logging.py           # Structured logging
+└── health.py            # Health checks
+```
+
+---
+
+## Integration: @ao Decorators with Squad
+
+You can combine AgentOrchestrator's `@ao` decorators with the Squad module:
+
+```python
+from agentorchestrator import AgentOrchestrator
+from agentorchestrator.squad import MultiAgentOrchestrator as SquadOrchestrator
+
+ao = AgentOrchestrator(name="hybrid_app")
+
+# Register squad as a resource
+@ao.resource("squad")
+def create_squad():
+    squad = SquadOrchestrator(...)
+    squad.add_agent(...)
+    return squad
+
+# Use in a step
+@ao.step(resources=["squad"])
+async def route_query(ctx, squad):
+    response = await squad.route_request(ctx.get("query"), ...)
+    return {"response": response.output.get_text()}
+
+@ao.chain(name="hybrid_chain")
+class HybridChain:
+    steps = ["route_query"]
+```
+
+See [examples/supervisor_chain.py](../examples/supervisor_chain.py) for a complete example.
+
+---
+
 ## See Also
 
 - [QUICKSTART.md](QUICKSTART.md) - Get started in 5 minutes
 - [API.md](API.md) - Full API reference
 - [REQUIREMENTS.md](REQUIREMENTS.md) - Dependencies & setup
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues
+- [examples/supervisor_chain.py](../examples/supervisor_chain.py) - Multi-agent example
