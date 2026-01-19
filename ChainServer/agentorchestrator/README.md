@@ -87,6 +87,28 @@ agentorchestrator/
 └── examples/       # Example chains
 ```
 
+## Environment (example)
+
+```
+# LLM Gateway
+LLM_GATEWAY_SERVER_URL=https://llm-gateway/api/chat
+LLM_GATEWAY_MODEL=claude-sonnet-4
+LLM_GATEWAY_API_KEY=your_api_key_or_oauth_token
+
+# Redis (optional, for chat/memory)
+REDIS_HOST=redis.corp.local
+REDIS_PORT=6379
+REDIS_USERNAME=svc_user
+REDIS_PASSWORD=secret
+REDIS_SSL=true
+
+# Vector store (optional, for RAG)
+VECTOR_PROVIDER=memory          # or remote provider
+VECTOR_HOST=https://vector/api  # required if using remote
+VECTOR_API_KEY=vector_api_key
+VECTOR_NAMESPACE=docs
+```
+
 ## Optional RAG / Retrieval
 
 You can inject retrieved context into chains using the pluggable vector store service:
@@ -115,6 +137,67 @@ async def answer(ctx):
 class RAGChain:
     steps = ["retrieve", "answer"]
 ```
+
+## Usage Patterns
+
+### 1) Simple chain (with optional RAG + chat history)
+
+```python
+from agentorchestrator import AgentOrchestrator
+from agentorchestrator.services import VectorStoreService
+from agentorchestrator.squad.storage.redis import RedisChatStorage
+
+vs = VectorStoreService()           # in-memory unless VECTOR_* env set
+chat = RedisChatStorage()           # use InMemoryChatStorage() if Redis is not set
+
+ao = AgentOrchestrator(name="demo")
+
+@ao.step(name="retrieve")
+async def retrieve(ctx):
+    ctx.set("rag_context", await vs.query(ctx.get("query", "")))
+
+@ao.step(name="answer", deps=["retrieve"])
+async def answer(ctx):
+    snippets = ctx.get("rag_context", [])
+    return {"answer": f"Answer with {len(snippets)} snippets"}
+
+@ao.chain(name="demo_chain")
+class DemoChain:
+    steps = ["retrieve", "answer"]
+```
+
+- If you do not pass a vector store, `rag_context` is empty and the chain behaves as a non-RAG flow.
+- If you do not pass chat storage, history is in-memory only.
+
+### 2) Multi-agent supervisor (decorator path)
+
+```python
+from agentorchestrator.examples.supervisor_chain import create_supervisor_orchestrator
+from agentorchestrator.services import VectorStoreService
+from agentorchestrator.squad.storage.redis import RedisChatStorage
+from agentorchestrator.services.llm_gateway import LLMGatewayClient
+
+llm = LLMGatewayClient(server_url="https://llm-gateway/api/chat", api_key="api-key")
+vs = VectorStoreService()
+chat = RedisChatStorage()  # optional; defaults to in-memory if omitted
+
+ao = create_supervisor_orchestrator(
+    llm_client=llm,
+    vector_store=vs,
+    chat_storage=chat,
+    agent_timeout_seconds=30.0,
+)
+
+result = await ao.launch("supervisor_chain", {
+    "query": "How do I optimize my Python API?",
+    "user_id": "u-123",
+    "session_id": "s-456",
+})
+```
+
+- If `vector_store` is omitted, retrieval is skipped.
+- If `chat_storage` is omitted, history is stored in-memory.
+- Agents receive `rag_context`, per-agent history, and metadata in `context` and are protected by per-agent timeouts.
 
 ## License
 
