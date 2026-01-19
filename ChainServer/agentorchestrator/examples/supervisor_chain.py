@@ -489,10 +489,20 @@ def create_squad_supervisor_orchestrator(
     llm_client: Any = None,
 ) -> AgentOrchestrator:
     """
-    Create a supervisor orchestrator using the Squad module.
+    Create a supervisor orchestrator using the Squad module with all enhancements.
 
     This shows how to integrate @ao decorators with the Squad's
-    MultiAgentOrchestrator for more sophisticated routing.
+    MultiAgentOrchestrator for production-ready multi-agent routing.
+
+    Features demonstrated:
+        - Context-aware LLM-based classification
+        - Full chat history propagation to agents
+        - RAG context injection
+        - Supervisor with validation/judge
+        - Guardrails for safety
+        - OTEL tracing
+        - Metrics collection
+        - Dynamic team composition
 
     Args:
         llm_client: LLM client for the squad agents
@@ -513,49 +523,152 @@ def create_squad_supervisor_orchestrator(
 
     ao = AgentOrchestrator(
         name="squad_supervisor",
-        version="1.0.0",
+        version="2.0.0",
         isolated=True,
     )
+
+    # Custom validator function for response quality
+    def validate_response(
+        query: str,
+        response: str,
+        agent_responses: dict[str, str]
+    ) -> tuple[bool, str]:
+        """
+        Validate the synthesized response for quality.
+
+        Args:
+            query: Original user query
+            response: Synthesized response from supervisor
+            agent_responses: Individual agent responses
+
+        Returns:
+            Tuple of (is_valid, feedback)
+        """
+        # Check minimum response length
+        if len(response) < 50:
+            return False, "Response is too short. Please provide more detail."
+
+        # Check that response addresses the query
+        query_words = set(query.lower().split())
+        response_words = set(response.lower().split())
+        overlap = len(query_words & response_words)
+        if overlap < 2:
+            return False, "Response doesn't seem to address the query."
+
+        # Check that agent contributions are synthesized
+        if agent_responses:
+            # Response should incorporate info from agents, not ignore them
+            agent_keywords = set()
+            for agent_response in agent_responses.values():
+                agent_keywords.update(agent_response.lower().split()[:20])
+            synthesis_overlap = len(agent_keywords & response_words)
+            if synthesis_overlap < 3:
+                return False, "Response should better incorporate specialist insights."
+
+        return True, ""
 
     # Register the squad orchestrator as a resource
     @ao.resource("squad_orchestrator")
     def create_squad():
-        """Create the squad orchestrator with agents."""
-        # Create specialist agents using Squad
+        """Create the squad orchestrator with enhanced agents."""
+        # Create specialist agents using Squad with context support
         tech_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
             name="TechAgent",
             description="Handles technical programming questions",
             llm_client=llm_client,
-            system_prompt="You are a senior software engineer...",
+            system_prompt="""You are a senior software engineer specializing in:
+- Python development and best practices
+- API design and optimization
+- Code review and debugging
+- Performance optimization
+
+Provide concise, actionable technical guidance.
+Consider the conversation history and any RAG context provided.""",
+            enable_tracing=True,
+            max_history_messages=10,
+            context_keys=["rag_context", "user_profile"],
+            timeout_seconds=30.0,
         ))
 
         finance_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
             name="FinanceAgent",
             description="Handles financial queries",
             llm_client=llm_client,
-            system_prompt="You are a financial analyst...",
+            system_prompt="""You are a financial analyst specializing in:
+- Stock market analysis
+- Financial data interpretation
+- Trading strategies
+- Risk assessment
+
+Provide data-driven financial insights.
+Consider the conversation history and any RAG context provided.""",
+            enable_tracing=True,
+            max_history_messages=10,
+            context_keys=["rag_context", "user_profile"],
+            timeout_seconds=30.0,
+        ))
+
+        data_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+            name="DataAgent",
+            description="Handles data analysis and SQL queries",
+            llm_client=llm_client,
+            system_prompt="""You are a data engineer specializing in:
+- SQL optimization and query design
+- Data pipeline architecture
+- ETL processes
+- Data modeling
+
+Provide efficient data solutions.
+Consider the conversation history and any RAG context provided.""",
+            enable_tracing=True,
+            max_history_messages=10,
+            context_keys=["rag_context", "user_profile"],
+            timeout_seconds=30.0,
         ))
 
         # Create supervisor lead agent
         lead_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
             name="SupervisorLead",
-            description="Coordinates the team",
+            description="Coordinates the team to answer complex questions",
             llm_client=llm_client,
-            system_prompt="You are a team coordinator...",
+            system_prompt="""You are a team coordinator that synthesizes responses
+from specialist agents into a coherent, comprehensive answer.
+
+Your job is to:
+1. Analyze the user's question and delegate to appropriate specialists
+2. Combine insights from different specialists
+3. Resolve any contradictions
+4. Present a unified, actionable response
+5. Never make up information - only use what specialists provide""",
+            enable_tracing=True,
+            max_history_messages=10,
         ))
 
-        # Create supervisor with team
+        # Create supervisor with validation and guardrails
         supervisor = SupervisorAgent(SupervisorAgentOptions(
             name="Supervisor",
-            description="Coordinates specialist agents",
+            description="Coordinates specialist agents with validation",
             lead_agent=lead_agent,
-            team=[tech_agent, finance_agent],
+            team=[tech_agent, finance_agent, data_agent],
             trace=True,
+            enable_tracing=True,
+            enable_validation=True,
+            validator=validate_response,
+            max_validation_retries=2,
+            max_concurrent_agents=5,
+            agent_timeout_seconds=30.0,
+            guardrails=["no_pii", "max_length"],  # Safety guardrails
         ))
 
-        # Create orchestrator
+        # Create context-aware classifier
         classifier = LLMGatewayClassifier(
-            LLMGatewayClassifierOptions(llm_client=llm_client)
+            LLMGatewayClassifierOptions(
+                llm_client=llm_client,
+                confidence_threshold=0.6,
+                include_history=True,
+                max_history_messages=5,
+                enable_tracing=True,
+            )
         )
         storage = InMemoryChatStorage()
 
@@ -568,23 +681,34 @@ def create_squad_supervisor_orchestrator(
 
         return squad
 
-    # Step that uses the squad orchestrator
+    # Step that uses the squad orchestrator with full context
     @ao.step(
         name="route_to_squad",
         resources=["squad_orchestrator"],
-        description="Route query through squad multi-agent system",
+        description="Route query through squad multi-agent system with context",
         produces=["squad_response"],
     )
     async def route_to_squad(ctx: Context, squad_orchestrator) -> dict[str, Any]:
-        """Route the query through the squad orchestrator."""
+        """Route the query through the squad orchestrator with full context."""
         query = ctx.get("query", "")
         user_id = ctx.get("user_id", "default_user")
         session_id = ctx.get("session_id", ctx.request_id)
+
+        # Build additional params with RAG context and user profile
+        additional_params = {
+            "rag_context": ctx.get("rag_context", ""),  # Retrieved docs
+            "user_profile": ctx.get("user_profile", {}),  # User preferences
+            "session_data": {
+                "request_id": ctx.request_id,
+                "metadata": ctx.metadata,
+            },
+        }
 
         response = await squad_orchestrator.route_request(
             user_input=query,
             user_id=user_id,
             session_id=session_id,
+            additional_params=additional_params,
         )
 
         result = {
@@ -596,11 +720,81 @@ def create_squad_supervisor_orchestrator(
         ctx.set("squad_response", result)
         return result
 
-    @ao.chain(name="squad_chain", description="Squad-based multi-agent routing")
+    @ao.step(
+        name="collect_metrics",
+        deps=["route_to_squad"],
+        resources=["squad_orchestrator"],
+        description="Collect and log metrics from the squad",
+        produces=["metrics"],
+    )
+    async def collect_metrics(ctx: Context, squad_orchestrator) -> dict[str, Any]:
+        """Collect metrics from the squad orchestrator."""
+        # Get supervisor from squad
+        supervisor = squad_orchestrator.get_agent("supervisor")
+        if supervisor and hasattr(supervisor, 'get_metrics'):
+            metrics = supervisor.get_metrics()
+            ctx.set("metrics", metrics)
+            logger.info(f"Squad metrics: {metrics}")
+            return {"metrics": metrics}
+        return {"metrics": {}}
+
+    @ao.chain(name="squad_chain", description="Squad-based multi-agent routing with metrics")
     class SquadChain:
-        steps = ["route_to_squad"]
+        steps = ["route_to_squad", "collect_metrics"]
 
     return ao
+
+
+async def run_squad_example():
+    """Run the enhanced squad supervisor example."""
+    print("\n" + "=" * 70)
+    print("  Enhanced Squad Supervisor Example")
+    print("=" * 70 + "\n")
+
+    # Create orchestrator (will use mock LLM in stub mode)
+    ao = create_squad_supervisor_orchestrator(llm_client=None)
+
+    # Run example query with context
+    test_query = {
+        "query": "How do I optimize my Python API for handling stock data?",
+        "user_id": "developer-123",
+        "session_id": "session-456",
+        "user_profile": {
+            "role": "developer",
+            "expertise": ["python", "backend"],
+            "preference": "detailed_explanations",
+        },
+        "rag_context": """
+        Retrieved documentation snippets:
+        1. Use async/await for I/O-bound operations
+        2. Implement connection pooling for database access
+        3. Consider using Redis for caching frequently accessed data
+        """,
+    }
+
+    print(f"Query: {test_query['query']}")
+    print(f"User Profile: {test_query['user_profile']}")
+    print(f"RAG Context provided: Yes")
+    print("─" * 70)
+
+    result = await ao.launch("squad_chain", test_query)
+
+    if result.get("success"):
+        squad_response = result.get("context", {}).get("data", {}).get("squad_response", {})
+        metrics = result.get("context", {}).get("data", {}).get("metrics", {})
+
+        print(f"\nResponse: {squad_response.get('response', 'No response')[:300]}...")
+        print(f"\nAgent ID: {squad_response.get('agent_id', 'N/A')}")
+
+        if metrics:
+            print(f"\nMetrics:")
+            print(f"  - Requests: {metrics.get('request_count', 0)}")
+            print(f"  - Avg Latency: {metrics.get('avg_latency_ms', 0):.1f}ms")
+            print(f"  - Validation Failures: {metrics.get('validation_failures', 0)}")
+    else:
+        print(f"\nError: {result.get('error', {}).get('message', 'Unknown error')}")
+
+    print("\n" + "=" * 70 + "\n")
 
 
 if __name__ == "__main__":

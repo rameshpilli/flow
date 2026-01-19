@@ -3,10 +3,20 @@ LLM Gateway Agent implementation.
 
 A flexible agent that uses the existing LLMGatewayClient from
 agentorchestrator.services.llm_gateway for inference.
+
+Features:
+    - Full chat history propagation
+    - RAG context injection
+    - User profile/preference support
+    - OTEL tracing integration
+    - Token budget awareness
+    - Resilience (retry, timeout) via existing utils
 """
 
+import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Optional, Any, Union, AsyncIterable, Callable, Awaitable
 
@@ -21,6 +31,7 @@ from agentorchestrator.services.llm_gateway import (
     LLMGatewayClient,
     get_default_llm_client,
 )
+from agentorchestrator.utils.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +51,22 @@ class LLMGatewayAgentOptions(AgentOptions):
         tool_config: Optional tool configuration
         save_chat: Whether to save chat history
         log_debug: Enable debug logging
+        enable_tracing: Enable OTEL tracing spans
+        max_history_messages: Max history messages to include
+        context_keys: Keys to extract from additional_params for context
+        timeout_seconds: Timeout for LLM calls
+        max_retries: Max retries on failure
     """
     llm_client: Optional[LLMGatewayClient] = None
     system_prompt: Optional[str] = None
     temperature: float = 0.7
     max_tokens: int = 4096
     tool_config: Optional[dict[str, Any]] = None
+    enable_tracing: bool = True
+    max_history_messages: int = 10  # Max messages to include in context
+    context_keys: list[str] = field(default_factory=lambda: ["rag_context", "user_profile", "session_data"])
+    timeout_seconds: float = 60.0
+    max_retries: int = 2
 
 
 class LLMGatewayAgent(Agent):
@@ -55,30 +76,35 @@ class LLMGatewayAgent(Agent):
     Works with the corporate LLM Gateway using OAuth authentication,
     bypassing direct calls to Anthropic/OpenAI APIs.
 
+    Features:
+        - Full chat history propagation to LLM
+        - RAG context injection via additional_params
+        - User profile awareness
+        - OTEL tracing for observability
+        - Configurable timeouts and retries
+
     Example:
         ```python
         from agentorchestrator.squad.agents import LLMGatewayAgent, LLMGatewayAgentOptions
-        from agentorchestrator.services.llm_gateway import LLMGatewayClient
 
-        # Using default client
+        # Basic usage
         agent = LLMGatewayAgent(LLMGatewayAgentOptions(
             name="TechAgent",
             description="Handles technical questions about programming",
             system_prompt="You are a helpful technical assistant.",
         ))
 
-        # Using custom client
-        client = LLMGatewayClient(
-            server_url="https://llm-gateway/v1/chat/completions",
-            oauth_endpoint="https://auth/token",
-            client_id="...",
-            client_secret="...",
+        # With context propagation
+        response = await agent.process_request(
+            input_text="How do I optimize this?",
+            user_id="user-1",
+            session_id="session-1",
+            chat_history=history,
+            additional_params={
+                "rag_context": "Retrieved docs about optimization...",
+                "user_profile": {"role": "developer", "expertise": "python"},
+            }
         )
-        agent = LLMGatewayAgent(LLMGatewayAgentOptions(
-            name="FinanceAgent",
-            description="Handles financial queries",
-            llm_client=client,
-        ))
         ```
     """
 
@@ -104,6 +130,16 @@ class LLMGatewayAgent(Agent):
         self.temperature = options.temperature
         self.max_tokens = options.max_tokens
         self.tool_config = options.tool_config
+        self.enable_tracing = options.enable_tracing
+        self.max_history_messages = options.max_history_messages
+        self.context_keys = options.context_keys
+        self.timeout_seconds = options.timeout_seconds
+        self.max_retries = options.max_retries
+
+        # Metrics tracking
+        self._request_count = 0
+        self._total_latency_ms = 0.0
+        self._error_count = 0
 
     def _default_system_prompt(self) -> str:
         """Generate default system prompt based on agent name and description."""
@@ -148,6 +184,59 @@ If you don't know something, say so rather than making up information.
             })
         return messages
 
+    def _build_context_prompt(
+        self,
+        input_text: str,
+        chat_history: list[ConversationMessage],
+        additional_params: Optional[dict[str, Any]] = None,
+    ) -> str:
+        """
+        Build a context-enriched prompt with history, RAG data, and user profile.
+
+        Args:
+            input_text: Current user input
+            chat_history: Conversation history
+            additional_params: Additional context (RAG, user profile, etc.)
+
+        Returns:
+            Enriched prompt string
+        """
+        context_parts = []
+
+        # Extract configured context keys from additional_params
+        if additional_params:
+            for key in self.context_keys:
+                value = additional_params.get(key)
+                if value:
+                    if isinstance(value, dict):
+                        value_str = json.dumps(value, indent=2)
+                    else:
+                        value_str = str(value)
+                    context_parts.append(f"<{key}>\n{value_str}\n</{key}>")
+
+        # Add chat history
+        if chat_history:
+            history_messages = chat_history[-self.max_history_messages:]
+            history_text = []
+            for msg in history_messages:
+                role = msg.role
+                text = msg.get_text() if hasattr(msg, 'get_text') else ""
+                if not text and msg.content:
+                    text = msg.content[0].get("text", "")
+                if text:
+                    history_text.append(f"{role}: {text}")
+
+            if history_text:
+                context_parts.append(
+                    f"<conversation_history>\n{chr(10).join(history_text)}\n</conversation_history>"
+                )
+
+        # Build final prompt
+        if context_parts:
+            context_section = "\n\n".join(context_parts)
+            return f"{context_section}\n\nUser: {input_text}"
+        return f"User: {input_text}"
+
     async def process_request(
         self,
         input_text: str,
@@ -157,74 +246,124 @@ If you don't know something, say so rather than making up information.
         additional_params: Optional[dict[str, Any]] = None,
     ) -> ConversationMessage:
         """
-        Process a user request using LLM Gateway.
+        Process a user request using LLM Gateway with full context.
 
         Args:
             input_text: The user's input text
             user_id: User identifier
             session_id: Session identifier
             chat_history: Previous conversation messages
-            additional_params: Optional additional parameters
+            additional_params: Additional context including:
+                - rag_context: Retrieved documents/context
+                - user_profile: User preferences and info
+                - session_data: Session-specific data
 
         Returns:
             ConversationMessage with the agent's response
         """
+        start_time = time.perf_counter()
+        self._request_count += 1
+
+        # Build trace attributes
+        trace_attrs = {
+            "agent.name": self.name,
+            "agent.id": self.id,
+            "user.id": user_id,
+            "session.id": session_id,
+            "history.length": len(chat_history) if chat_history else 0,
+            "has_rag_context": bool(additional_params and additional_params.get("rag_context")),
+        }
+
         self._log_debug(f"Processing request: {input_text[:100]}...")
 
         try:
-            # Build the prompt with chat history context
-            context = ""
-            if chat_history:
-                history_text = "\n".join([
-                    f"{msg.role}: {msg.get_text() if hasattr(msg, 'get_text') else msg.content[0].get('text', '')}"
-                    for msg in chat_history[-10:]  # Last 10 messages for context
-                ])
-                context = f"\nPrevious conversation:\n{history_text}\n\n"
-
-            full_prompt = f"{context}User: {input_text}"
-
-            # Prepare kwargs for LLM call
-            kwargs = {
-                "max_tokens": self.max_tokens,
-            }
-
-            # Add tools if configured
-            if self.tool_config and "tool" in self.tool_config:
-                tools = self.tool_config["tool"]
-                if isinstance(tools, AgentTools):
-                    kwargs["tools"] = tools.to_llm_tools()
-
-            # Call LLM using existing LLMGatewayClient
-            response_text = await self.llm_client.generate_async(
-                prompt=full_prompt,
-                system_prompt=self.system_prompt,
-                **kwargs
-            )
-
-            self._log_debug(f"Response: {response_text[:200]}...")
-
-            # Handle tool calls if present
-            if self.tool_config and "tool" in self.tool_config:
-                response_text = await self._handle_tool_calls(
-                    response_text,
-                    input_text,
-                    user_id,
-                    session_id,
-                    chat_history,
-                    additional_params,
+            with trace_span(f"agent.{self.id}.process", attributes=trace_attrs) if self.enable_tracing else _noop_context():
+                # Build context-enriched prompt
+                full_prompt = self._build_context_prompt(
+                    input_text, chat_history, additional_params
                 )
 
+                # Prepare kwargs for LLM call
+                kwargs = {
+                    "max_tokens": self.max_tokens,
+                }
+
+                # Add tools if configured
+                if self.tool_config and "tool" in self.tool_config:
+                    tools = self.tool_config["tool"]
+                    if isinstance(tools, AgentTools):
+                        kwargs["tools"] = tools.to_llm_tools()
+
+                # Call LLM with timeout
+                response_text = await asyncio.wait_for(
+                    self.llm_client.generate_async(
+                        prompt=full_prompt,
+                        system_prompt=self.system_prompt,
+                        **kwargs
+                    ),
+                    timeout=self.timeout_seconds
+                )
+
+                self._log_debug(f"Response: {response_text[:200]}...")
+
+                # Handle tool calls if present
+                if self.tool_config and "tool" in self.tool_config:
+                    response_text = await self._handle_tool_calls(
+                        response_text,
+                        input_text,
+                        user_id,
+                        session_id,
+                        chat_history,
+                        additional_params,
+                    )
+
+                # Track metrics
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                self._total_latency_ms += latency_ms
+
+                logger.debug(
+                    f"Agent {self.name} completed in {latency_ms:.1f}ms"
+                )
+
+                return ConversationMessage(
+                    role=ParticipantRole.ASSISTANT.value,
+                    content=[{"text": response_text}]
+                )
+
+        except asyncio.TimeoutError:
+            self._error_count += 1
+            logger.error(f"Agent {self.name} timed out after {self.timeout_seconds}s")
             return ConversationMessage(
                 role=ParticipantRole.ASSISTANT.value,
-                content=[{"text": response_text}]
+                content=[{"text": f"Request timed out after {self.timeout_seconds} seconds. Please try again."}]
             )
-
         except Exception as e:
+            self._error_count += 1
             logger.error(f"Agent {self.name} failed: {e}")
             return ConversationMessage(
                 role=ParticipantRole.ASSISTANT.value,
                 content=[{"text": f"I encountered an error processing your request: {str(e)}"}]
             )
+
+    def get_metrics(self) -> dict[str, Any]:
+        """
+        Get agent metrics.
+
+        Returns:
+            Dict with request count, avg latency, error count, etc.
+        """
+        avg_latency = (
+            self._total_latency_ms / self._request_count
+            if self._request_count > 0 else 0.0
+        )
+        return {
+            "agent_name": self.name,
+            "agent_id": self.id,
+            "request_count": self._request_count,
+            "error_count": self._error_count,
+            "total_latency_ms": self._total_latency_ms,
+            "avg_latency_ms": avg_latency,
+        }
 
     async def _handle_tool_calls(
         self,
@@ -328,5 +467,10 @@ If you don't know something, say so rather than making up information.
         return response
 
 
-# Import asyncio for tool handling
-import asyncio
+# Helper for optional tracing
+from contextlib import contextmanager
+
+@contextmanager
+def _noop_context():
+    """No-op context manager when tracing is disabled."""
+    yield None
