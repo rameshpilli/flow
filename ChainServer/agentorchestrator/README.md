@@ -9,7 +9,7 @@ AgentOrchestrator is a lightweight, decorator-driven framework for building data
 - **Decorator-Based**: Simple `@ao.step()`, `@ao.agent()`, `@ao.chain()` decorators
 - **DAG Execution**: Automatic dependency resolution with parallel execution
 - **Middleware**: Logging, caching, summarization, token management
-- **Context Management**: Scoped storage with Redis offloading for large payloads
+- **Context Management**: Scoped storage with Redis offloading for large payloads; optional RAG context via pluggable vector store
 - **Resilience**: Circuit breakers, retry with backoff, fail-fast cancellation
 - **Observability**: Structured logging, OpenTelemetry tracing
 - **CLI**: Run, validate, visualize chains from command line
@@ -80,11 +80,40 @@ agentorchestrator/
 ├── core/           # AgentOrchestrator, Context, DAG, Registry
 ├── middleware/     # Cache, Logger, Summarizer, Offload
 ├── agents/         # BaseAgent, ResilientAgent
-├── services/       # CMPT chain services
+├── services/       # Gateway, Redis, Vector store services
 ├── chains/         # Pre-built chains (CMPT)
 ├── utils/          # Logging, tracing, config
 ├── testing/        # Test utilities
 └── examples/       # Example chains
+```
+
+## Optional RAG / Retrieval
+
+You can inject retrieved context into chains using the pluggable vector store service:
+
+```python
+from agentorchestrator import AgentOrchestrator
+from agentorchestrator.services import VectorStoreService, VectorDocument
+
+vs = VectorStoreService()  # in-memory by default, or configure VectorStoreConfig.from_env()
+await vs.upsert([
+    VectorDocument(id="doc1", text="Use async/await for I/O in Python APIs.")
+])
+
+ao = AgentOrchestrator(name="my_app")
+
+@ao.step(name="retrieve")
+async def retrieve(ctx):
+    ctx.set("rag_context", await vs.query(ctx.get("query", "")))
+
+@ao.step(name="answer", deps=["retrieve"])
+async def answer(ctx):
+    context = ctx.get("rag_context", [])
+    return {"answer": f"Grounded answer with {len(context)} context snippets."}
+
+@ao.chain(name="rag_chain")
+class RAGChain:
+    steps = ["retrieve", "answer"]
 ```
 
 ## License
