@@ -62,6 +62,13 @@ from typing import Any
 
 from agentorchestrator import AgentOrchestrator, Context
 from agentorchestrator.services.vector_store import VectorStoreService
+from agentorchestrator.squad.storage.memory import InMemoryChatStorage
+from agentorchestrator.squad.types import ParticipantRole, TimestampedMessage
+
+try:  # Optional Redis chat storage (production)
+    from agentorchestrator.squad.storage.redis import RedisChatStorage
+except Exception:  # pragma: no cover - redis is optional
+    RedisChatStorage = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +83,7 @@ def create_supervisor_orchestrator(
     use_mock: bool = True,
     vector_store: VectorStoreService | None = None,
     agent_timeout_seconds: float = 30.0,
+    chat_storage: Any | None = None,
 ) -> AgentOrchestrator:
     """
     Create an AgentOrchestrator instance with supervisor pattern agents.
@@ -92,6 +100,10 @@ def create_supervisor_orchestrator(
         version="1.0.0",
         isolated=True,  # Isolated registries for this example
     )
+
+    # Chat storage for history (defaults to in-memory)
+    if chat_storage is None:
+        chat_storage = InMemoryChatStorage()
 
     # ═══════════════════════════════════════════════════════════════════════════
     #                         SPECIALIST AGENTS
@@ -351,7 +363,9 @@ Based on input from: {contributors}
         classification = ctx.get("classification", {})
         selected_agents = classification.get("selected_agents", ["tech_agent"])
         query = classification.get("query", ctx.get("query", ""))
-        context_payload = {
+        user_id = ctx.get("user_id", "default_user")
+        session_id = ctx.get("session_id", ctx.request_id)
+        base_context_payload = {
             "rag_context": ctx.get("rag_context", []),
             "history": ctx.get("history"),
             "metadata": ctx.metadata,
@@ -368,10 +382,43 @@ Based on input from: {contributors}
         # Run agents in parallel
         async def run_agent(name: str, agent: Any) -> tuple[str, str]:
             try:
+                # Fresh context per agent to avoid cross-agent contamination
+                context_payload = dict(base_context_payload)
+
+                # Fetch prior history for this agent (if storage available)
+                agent_history = []
+                try:
+                    agent_history = await chat_storage.fetch_chat(
+                        user_id, session_id, name
+                    )
+                    context_payload["history"] = agent_history
+                except Exception as exc:
+                    logger.debug(f"History fetch failed for {name}: {exc}")
+
                 response = await asyncio.wait_for(
                     agent.process(query, context=context_payload),
                     timeout=agent_timeout_seconds,
                 )
+
+                # Persist conversation for this agent (if storage available)
+                try:
+                    user_msg = TimestampedMessage(
+                        role=ParticipantRole.USER.value,
+                        content=[{"text": query}],
+                    )
+                    asst_msg = TimestampedMessage(
+                        role=ParticipantRole.ASSISTANT.value,
+                        content=[{"text": response}],
+                    )
+                    await chat_storage.save_chat_messages(
+                        user_id,
+                        session_id,
+                        name,
+                        [user_msg, asst_msg],
+                    )
+                except Exception as exc:
+                    logger.debug(f"History save failed for {name}: {exc}")
+
                 return name, response
             except asyncio.TimeoutError:
                 logger.error(f"Agent {name} timed out after {agent_timeout_seconds}s")
