@@ -87,6 +87,8 @@ agentorchestrator/
 └── examples/       # Example chains
 ```
 
+See `examples/usage_examples.py` for end-to-end samples.
+
 ## Environment (example)
 
 ```
