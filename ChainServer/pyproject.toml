@@ -62,6 +62,13 @@ dev = [
     "pytest-cov>=4.1.0",
     "ruff>=0.1.0",
 ]
+# Documentation (MkDocs Material)
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.5.0",
+    "mkdocs-minify-plugin>=0.7.0",
+    "pymdown-extensions>=10.0",
+]
 # All optional features
 all = [
     "agentorchestrator[summarization,openai,anthropic,llm,observability]",

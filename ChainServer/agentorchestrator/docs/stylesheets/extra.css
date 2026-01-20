@@ -1,0 +1,110 @@
+/* Hero section styling */
+.hero {
+  text-align: center;
+  padding: 2rem 0;
+}
+
+.hero p {
+  font-size: 1.2rem;
+  color: var(--md-default-fg-color--light);
+  margin-bottom: 1.5rem;
+}
+
+/* Button styling */
+.md-button {
+  margin: 0.5rem;
+}
+
+/* Feature grid cards */
+.grid.cards > ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.grid.cards > ul > li {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.grid.cards > ul > li:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Icon styling in cards */
+.grid.cards .lg {
+  font-size: 2rem;
+}
+
+.grid.cards .middle {
+  vertical-align: middle;
+}
+
+/* Code block improvements */
+.md-typeset pre > code {
+  font-size: 0.85rem;
+}
+
+/* Table improvements */
+.md-typeset table:not([class]) {
+  font-size: 0.85rem;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: var(--md-default-fg-color--lightest);
+}
+
+/* Admonition styling */
+.md-typeset .admonition {
+  border-radius: 0.5rem;
+}
+
+/* Navigation improvements */
+.md-nav__link {
+  font-size: 0.85rem;
+}
+
+/* Footer styling */
+.md-footer-meta {
+  background-color: var(--md-default-fg-color--lightest);
+}
+
+/* Search result styling */
+.md-search-result__title {
+  font-weight: 600;
+}
+
+/* Responsive adjustments */
+@media screen and (max-width: 76.25em) {
+  .grid.cards > ul {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Architecture diagram styling */
+.md-typeset pre:has(code) {
+  background-color: var(--md-code-bg-color);
+  border-radius: 0.5rem;
+}
+
+/* Inline code styling */
+.md-typeset code {
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.25rem;
+}
+
+/* Tab styling */
+.md-typeset .tabbed-set {
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+/* TOC styling */
+.md-sidebar__scrollwrap {
+  scrollbar-width: thin;
+}
