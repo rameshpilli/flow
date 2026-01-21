@@ -54,19 +54,23 @@ configuration:
   SERVICE_WORKERS: "'2'"  # Fewer workers in dev
   SERVICE_LOG_LEVEL: "DEBUG"  # More verbose logging in dev
   
-  # LLM Gateway Configuration (RBC internal - DEV)
-  LLM_GATEWAY_BASE_URL: "https://llm-gateway-dev.fg.rbc.com"  # Update with actual DEV URL
-  LLM_GATEWAY_AUTH_TYPE: "oauth"
-  # LLM_GATEWAY_CLIENT_ID and CLIENT_SECRET managed via Vault
+  # LLM Gateway Configuration (RBC internal - DEV) - PREFERRED for embeddings
+  LLM_SERVER_URL: "https://llm-gateway-dev.fg.rbc.com"  # Update with actual DEV URL
+  LLM_OAUTH_ENDPOINT: "https://llm-gateway-dev.fg.rbc.com/oauth/token"  # Update with actual OAuth endpoint
+  LLM_CLIENT_ID: ""  # Managed via Vault
+  LLM_CLIENT_SECRET: ""  # Managed via Vault
+  LLM_EMBEDDING_MODEL: "text-embedding-3-large"
+  LLM_EMBEDDING_DIMS: "'3072'"
   
-  # Cohere Configuration (DEV)
-  # COHERE_API_KEY managed via Vault
-  COHERE_MODEL: "embed-english-v3.0"
+  # Cohere Configuration (LEGACY - use LLM Gateway instead)
+  # COHERE_API_KEY: ""  # Managed via Vault
+  # COHERE_EMBEDDING_MODEL: "embed-english-v3.0"
   
   # Qdrant Configuration (internal service)
   QDRANT_HOST: "mem0-qdrant"
   QDRANT_PORT: "'6333'"
   QDRANT_COLLECTION_NAME: "agent_memories_dev"
+  QDRANT_VECTOR_SIZE: "'3072'"  # text-embedding-3-large dimensions
   
   # Memgraph Configuration (optional)
   MEMGRAPH_HOST: "mem0-memgraph"

@@ -43,18 +43,19 @@ services:
       # Qdrant (connect to qdrant service)
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_COLLECTION_NAME=memory_store
-      - QDRANT_VECTOR_SIZE=1024
+      - QDRANT_VECTOR_SIZE=3072  # text-embedding-3-large dimensions
       
-      # Cohere (REQUIRED - set in .env file)
-      - COHERE_API_KEY=${COHERE_API_KEY}
-      - COHERE_EMBEDDING_MODEL=embed-english-v3.0
-      
-      # LLM Gateway (OPTIONAL)
+      # LLM Gateway (PREFERRED - for embeddings via OpenAI-compatible API)
       - LLM_SERVER_URL=${LLM_SERVER_URL:-}
-      - LLM_MODEL_NAME=${LLM_MODEL_NAME:-gpt-4}
       - LLM_OAUTH_ENDPOINT=${LLM_OAUTH_ENDPOINT:-}
       - LLM_CLIENT_ID=${LLM_CLIENT_ID:-}
       - LLM_CLIENT_SECRET=${LLM_CLIENT_SECRET:-}
+      - LLM_EMBEDDING_MODEL=text-embedding-3-large
+      - LLM_EMBEDDING_DIMS=3072
+      
+      # Cohere (LEGACY - use LLM Gateway instead)
+      # - COHERE_API_KEY=${COHERE_API_KEY:-}
+      # - COHERE_EMBEDDING_MODEL=embed-english-v3.0
       
       # Mem0
       - MEM0_VERSION=v1.1

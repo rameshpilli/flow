@@ -5,25 +5,27 @@ Core service class for managing mem0 memory with multi-agent support.
 """
 
 import logging
+import os
 from typing import Any
 
 from mem0 import Memory
 
 from app.config import MemoryStoreConfig, get_config
+from app.oauth import OAuthTokenManager
 
 logger = logging.getLogger(__name__)
 
 
 class MemoryStoreService:
     """
-    Memory Store Service using mem0 with Cohere and Qdrant.
+    Memory Store Service using mem0 with LLM Gateway (OpenAI) or Cohere embeddings and Qdrant.
 
     Provides multi-agent memory isolation where each agent gets its own
     namespace/user_id in the memory system.
 
     Features:
     - Per-agent memory isolation
-    - Semantic search using Cohere embeddings
+    - Semantic search using LLM Gateway (text-embedding-3-large) or Cohere embeddings
     - Qdrant vector store backend
     - Optional Memgraph graph store
     - Kubernetes-ready
@@ -38,10 +40,11 @@ class MemoryStoreService:
         """
         self.config = config or get_config()
         self._memory_client = None
+        self._oauth_manager: OAuthTokenManager | None = None
         self._initialize_memory()
 
     def _initialize_memory(self):
-        """Initialize mem0 with Cohere and Qdrant."""
+        """Initialize mem0 with LLM Gateway (OpenAI) or Cohere and Qdrant."""
         try:
             # Build mem0 configuration
             mem0_config = {
@@ -60,16 +63,55 @@ class MemoryStoreService:
                         "on_disk": self.config.qdrant.on_disk,
                     },
                 },
-                # Embedder configuration (Cohere)
-                "embedder": {
+            }
+
+            # Configure embedder: Prefer LLM Gateway (OpenAI), fallback to Cohere
+            if self.config.llm_gateway.is_configured:
+                # Initialize OAuth token manager
+                self._oauth_manager = OAuthTokenManager(
+                    oauth_endpoint=self.config.llm_gateway.oauth_endpoint,
+                    client_id=self.config.llm_gateway.client_id,
+                    client_secret=self.config.llm_gateway.client_secret,
+                )
+
+                # Set environment variable for OpenAI SDK to use OAuth token
+                # We'll use a custom HTTP client that injects the token
+                # For now, set a dummy API key - we'll override in the HTTP client
+                os.environ["OPENAI_API_KEY"] = "dummy"  # Required but not used
+
+                # Configure OpenAI embedder with LLM Gateway
+                # Note: We'll patch the HTTP client after initialization to inject OAuth tokens
+                mem0_config["embedder"] = {
+                    "provider": "openai",
+                    "config": {
+                        "model": self.config.llm_gateway.embedding_model,
+                        "embedding_dims": self.config.llm_gateway.embedding_dims,
+                        "api_key": "dummy",  # Not used, OAuth token injected via HTTP client
+                        "openai_base_url": self.config.llm_gateway.server_url,
+                    },
+                }
+                logger.info(
+                    f"Using LLM Gateway embeddings: {self.config.llm_gateway.embedding_model} "
+                    f"({self.config.llm_gateway.embedding_dims} dims) via {self.config.llm_gateway.server_url}"
+                )
+            elif self.config.cohere.is_configured:
+                # Fallback to Cohere (legacy)
+                mem0_config["embedder"] = {
                     "provider": "cohere",
                     "config": {
                         "api_key": self.config.cohere.api_key,
                         "model": self.config.cohere.embedding_model,
                         "embedding_dims": self.config.qdrant.vector_size,
                     },
-                },
-            }
+                }
+                logger.info(
+                    f"Using Cohere embeddings: {self.config.cohere.embedding_model} "
+                    f"({self.config.qdrant.vector_size} dims)"
+                )
+            else:
+                raise ValueError(
+                    "No embedder configured. Set LLM Gateway or Cohere credentials."
+                )
 
             # Add graph store if enabled
             if self.config.mem0.graph_store_enabled:
@@ -90,11 +132,74 @@ class MemoryStoreService:
 
             # Initialize mem0 client
             self._memory_client = Memory.from_config(mem0_config)
+            
+            # Patch OpenAI client to use OAuth tokens if using LLM Gateway
+            if self.config.llm_gateway.is_configured and self._oauth_manager:
+                self._patch_openai_client_for_oauth()
+            
             logger.info("Mem0 memory client initialized successfully")
 
         except Exception as e:
             logger.error(f"Failed to initialize mem0 memory client: {e}")
             raise
+
+    def _patch_openai_client_for_oauth(self):
+        """
+        Patch the OpenAI client used by mem0 to inject OAuth tokens.
+        
+        This accesses mem0's internal embedder and patches its HTTP client
+        to add Authorization headers with OAuth tokens.
+        """
+        try:
+            # Access mem0's embedder
+            if hasattr(self._memory_client, "_embedder"):
+                embedder = self._memory_client._embedder
+                
+                # Check if it's an OpenAI embedder
+                if hasattr(embedder, "client") or hasattr(embedder, "_client"):
+                    # Get the OpenAI client
+                    openai_client = getattr(embedder, "client", None) or getattr(embedder, "_client", None)
+                    
+                    if openai_client:
+                        # Get the HTTP client
+                        http_client = getattr(openai_client, "_client", None) or getattr(openai_client, "http_client", None)
+                        
+                        if http_client:
+                            # Create a wrapper that injects OAuth tokens
+                            original_request = http_client.request
+                            
+                            def oauth_request_wrapper(method, url, **kwargs):
+                                """Wrapper that injects OAuth token into requests."""
+                                # Get fresh OAuth token
+                                token = self._oauth_manager.get_access_token()
+                                
+                                # Add Authorization header
+                                headers = kwargs.get("headers", {})
+                                if isinstance(headers, dict):
+                                    headers = headers.copy()
+                                else:
+                                    headers = dict(headers) if headers else {}
+                                
+                                headers["Authorization"] = f"Bearer {token}"
+                                kwargs["headers"] = headers
+                                
+                                # Make the request
+                                return original_request(method, url, **kwargs)
+                            
+                            # Patch the request method
+                            http_client.request = oauth_request_wrapper
+                            logger.info("Patched OpenAI HTTP client to use OAuth tokens")
+                        else:
+                            logger.warning("Could not find HTTP client in OpenAI embedder")
+                    else:
+                        logger.warning("Could not find OpenAI client in embedder")
+                else:
+                    logger.warning("Embedder does not appear to be OpenAI-based")
+            else:
+                logger.warning("Could not access mem0 embedder for OAuth patching")
+        except Exception as e:
+            logger.warning(f"Failed to patch OpenAI client for OAuth (may still work): {e}")
+            # Don't raise - the service might still work without the patch
 
     def add_memory(
         self,
@@ -280,11 +385,27 @@ class MemoryStoreService:
                 "url": self.config.qdrant.url,
             }
 
-            # Check Cohere API
-            status["components"]["cohere"] = {
-                "status": "healthy" if self.config.cohere.is_configured else "unconfigured",
-                "model": self.config.cohere.embedding_model,
-            }
+            # Check embedder (LLM Gateway or Cohere)
+            if self.config.llm_gateway.is_configured:
+                # Test OAuth token
+                try:
+                    token = self._oauth_manager.get_access_token() if self._oauth_manager else None
+                    status["components"]["llm_gateway"] = {
+                        "status": "healthy" if token else "unhealthy",
+                        "model": self.config.llm_gateway.embedding_model,
+                        "dims": self.config.llm_gateway.embedding_dims,
+                        "url": self.config.llm_gateway.server_url,
+                    }
+                except Exception as e:
+                    status["components"]["llm_gateway"] = {
+                        "status": "unhealthy",
+                        "error": str(e),
+                    }
+            else:
+                status["components"]["cohere"] = {
+                    "status": "healthy" if self.config.cohere.is_configured else "unconfigured",
+                    "model": self.config.cohere.embedding_model,
+                }
             
             # Check Memgraph (if enabled)
             if self.config.mem0.graph_store_enabled:

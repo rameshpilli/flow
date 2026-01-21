@@ -31,6 +31,7 @@ dependencies = [
     "httpx>=0.25.0",
     "python-dotenv>=1.0.0",
     "cohere>=5.0.0",
+    "openai>=1.0.0",  # For LLM Gateway OpenAI-compatible embeddings
     # For Cohere Compass vector store
     "qdrant-client>=1.7.0",
 ]

@@ -55,17 +55,23 @@ configuration:
   SERVICE_WORKERS: "'8'"  # More workers in production
   SERVICE_LOG_LEVEL: "INFO"
   
-  # LLM Gateway Configuration (RBC internal - PROD)
-  LLM_GATEWAY_BASE_URL: "https://llm-gateway.fg.rbc.com"  # Update with actual PROD URL
-  LLM_GATEWAY_AUTH_TYPE: "oauth"
+  # LLM Gateway Configuration (RBC internal - PROD) - PREFERRED for embeddings
+  LLM_SERVER_URL: "https://llm-gateway.fg.rbc.com"  # Update with actual PROD URL
+  LLM_OAUTH_ENDPOINT: "https://llm-gateway.fg.rbc.com/oauth/token"  # Update with actual OAuth endpoint
+  LLM_CLIENT_ID: ""  # Managed via Vault
+  LLM_CLIENT_SECRET: ""  # Managed via Vault
+  LLM_EMBEDDING_MODEL: "text-embedding-3-large"
+  LLM_EMBEDDING_DIMS: "'3072'"
   
-  # Cohere Configuration (PROD)
-  COHERE_MODEL: "embed-english-v3.0"
+  # Cohere Configuration (LEGACY - use LLM Gateway instead)
+  # COHERE_API_KEY: ""  # Managed via Vault
+  # COHERE_EMBEDDING_MODEL: "embed-english-v3.0"
   
   # Qdrant Configuration
   QDRANT_HOST: "mem0-qdrant"
   QDRANT_PORT: "'6333'"
   QDRANT_COLLECTION_NAME: "agent_memories_prod"
+  QDRANT_VECTOR_SIZE: "'3072'"  # text-embedding-3-large dimensions
   
   # Memgraph Configuration
   MEMGRAPH_HOST: "mem0-memgraph"

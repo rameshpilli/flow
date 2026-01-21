@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 class CohereConfig(BaseSettings):
-    """Cohere configuration for embeddings."""
+    """Cohere configuration for embeddings (deprecated - use LLM Gateway instead)."""
 
     model_config = SettingsConfigDict(env_prefix="COHERE_", case_sensitive=False)
 
@@ -47,6 +47,44 @@ class CohereConfig(BaseSettings):
         return bool(self.api_key)
 
 
+class LLMGatewayConfig(BaseSettings):
+    """LLM Gateway configuration for embeddings via OpenAI-compatible API."""
+
+    model_config = SettingsConfigDict(env_prefix="LLM_", case_sensitive=False)
+
+    # Gateway URL
+    server_url: str = Field(default="", description="LLM Gateway base URL")
+    
+    # OAuth configuration
+    oauth_endpoint: str = Field(default="", description="OAuth token endpoint URL")
+    client_id: str = Field(default="", description="OAuth client ID")
+    client_secret: str = Field(default="", description="OAuth client secret")
+    
+    # Embedding model configuration
+    embedding_model: str = Field(
+        default="text-embedding-3-large", description="OpenAI embedding model"
+    )
+    embedding_dims: int = Field(
+        default=3072, description="Embedding dimensions (3072 for text-embedding-3-large)"
+    )
+
+    @property
+    def is_configured(self) -> bool:
+        """Check if LLM Gateway is properly configured."""
+        return bool(
+            self.server_url
+            and self.oauth_endpoint
+            and self.client_id
+            and self.client_secret
+        )
+    
+    @property
+    def embeddings_url(self) -> str:
+        """Get the embeddings endpoint URL."""
+        base = self.server_url.rstrip("/")
+        return f"{base}/embeddings"
+
+
 class QdrantConfig(BaseSettings):
     """Qdrant vector store configuration."""
 
@@ -58,7 +96,7 @@ class QdrantConfig(BaseSettings):
     collection_name: str = Field(default="memory_store", description="Collection name")
 
     # Vector settings
-    vector_size: int = Field(default=1024, description="Cohere embed-v3 dimension")
+    vector_size: int = Field(default=3072, description="Embedding dimensions (3072 for text-embedding-3-large)")
     distance_metric: str = Field(default="cosine", description="Distance metric")
 
     # Performance settings
@@ -155,6 +193,7 @@ class MemoryStoreConfig(BaseSettings):
 
     # Sub-configurations
     cohere: CohereConfig = Field(default_factory=CohereConfig)
+    llm_gateway: LLMGatewayConfig = Field(default_factory=LLMGatewayConfig)
     qdrant: QdrantConfig = Field(default_factory=QdrantConfig)
     memgraph: MemgraphConfig = Field(default_factory=MemgraphConfig)
     mem0: Mem0Config = Field(default_factory=Mem0Config)
@@ -165,6 +204,7 @@ class MemoryStoreConfig(BaseSettings):
         super().__init__(**kwargs)
         # Load nested configs from environment
         self.cohere = CohereConfig()
+        self.llm_gateway = LLMGatewayConfig()
         self.qdrant = QdrantConfig()
         self.memgraph = MemgraphConfig()
         self.mem0 = Mem0Config()
@@ -179,8 +219,12 @@ class MemoryStoreConfig(BaseSettings):
         """
         errors = []
 
-        if not self.cohere.is_configured:
-            errors.append("Cohere API key is required (COHERE_API_KEY)")
+        # Require either LLM Gateway (preferred) or Cohere (legacy)
+        if not self.llm_gateway.is_configured and not self.cohere.is_configured:
+            errors.append(
+                "Either LLM Gateway (LLM_SERVER_URL, LLM_OAUTH_ENDPOINT, LLM_CLIENT_ID, LLM_CLIENT_SECRET) "
+                "or Cohere (COHERE_API_KEY) is required"
+            )
 
         if not self.qdrant.is_configured:
             errors.append("Qdrant URL is required (QDRANT_URL)")
@@ -193,6 +237,12 @@ class MemoryStoreConfig(BaseSettings):
             "cohere": {
                 "embedding_model": self.cohere.embedding_model,
                 "is_configured": self.cohere.is_configured,
+            },
+            "llm_gateway": {
+                "server_url": self.llm_gateway.server_url,
+                "embedding_model": self.llm_gateway.embedding_model,
+                "embedding_dims": self.llm_gateway.embedding_dims,
+                "is_configured": self.llm_gateway.is_configured,
             },
             "qdrant": {
                 "url": self.qdrant.url,
@@ -265,6 +315,7 @@ def set_config(config: MemoryStoreConfig) -> None:
 __all__ = [
     "MemoryStoreConfig",
     "CohereConfig",
+    "LLMGatewayConfig",
     "QdrantConfig",
     "MemgraphConfig",
     "Mem0Config",
