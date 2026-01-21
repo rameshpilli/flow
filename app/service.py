@@ -7,6 +7,7 @@ Core service class for managing mem0 memory with multi-agent support.
 import logging
 import os
 from typing import Any
+from urllib.parse import urlparse
 
 from mem0 import Memory
 
@@ -46,6 +47,11 @@ class MemoryStoreService:
     def _initialize_memory(self):
         """Initialize mem0 with LLM Gateway (OpenAI) or Cohere and Qdrant."""
         try:
+            # Parse Qdrant URL to extract host and port
+            parsed_url = urlparse(self.config.qdrant.url)
+            qdrant_host = parsed_url.hostname or "localhost"
+            qdrant_port = parsed_url.port or 6333  # Default Qdrant port
+
             # Build mem0 configuration
             mem0_config = {
                 "version": self.config.mem0.version,
@@ -53,10 +59,8 @@ class MemoryStoreService:
                 "vector_store": {
                     "provider": "qdrant",
                     "config": {
-                        "host": self.config.qdrant.url.replace("http://", "").replace(
-                            "https://", ""
-                        ),
-                        "port": 6333,  # Default Qdrant port
+                        "host": qdrant_host,
+                        "port": qdrant_port,
                         "collection_name": self.config.qdrant.collection_name,
                         "embedding_model_dims": self.config.qdrant.vector_size,
                         "api_key": self.config.qdrant.api_key,
