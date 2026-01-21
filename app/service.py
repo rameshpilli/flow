@@ -135,7 +135,33 @@ class MemoryStoreService:
                     logger.warning(f"Unknown graph store provider: {provider}, graph store disabled")
 
             # Initialize mem0 client
-            self._memory_client = Memory.from_config(mem0_config)
+            # Note: Collection creation may fail with 409 if multiple workers start simultaneously
+            # This is handled internally by mem0, but we catch and log it for clarity
+            try:
+                self._memory_client = Memory.from_config(mem0_config)
+            except Exception as e:
+                # Check if it's a collection already exists error (409)
+                error_str = str(e)
+                if "409" in error_str or "already exists" in error_str.lower():
+                    logger.warning(
+                        f"Collection '{self.config.qdrant.collection_name}' already exists "
+                        "(likely created by another worker). Retrying initialization..."
+                    )
+                    # Retry - mem0 should handle existing collections gracefully
+                    try:
+                        self._memory_client = Memory.from_config(mem0_config)
+                    except Exception as retry_error:
+                        # If retry also fails, check if it's still a 409
+                        if "409" in str(retry_error) or "already exists" in str(retry_error).lower():
+                            logger.info(
+                                "Collection exists, mem0 should handle this. "
+                                "If errors persist, check collection configuration."
+                            )
+                            # Re-raise to see the actual error
+                            raise
+                        raise
+                else:
+                    raise
             
             # Patch OpenAI client to use OAuth tokens if using LLM Gateway
             if self.config.llm_gateway.is_configured and self._oauth_manager:
@@ -155,54 +181,76 @@ class MemoryStoreService:
         to add Authorization headers with OAuth tokens.
         """
         try:
-            # Access mem0's embedder
+            # Try multiple ways to access the embedder
+            embedder = None
+            
+            # Method 1: Direct attribute
             if hasattr(self._memory_client, "_embedder"):
                 embedder = self._memory_client._embedder
-                
-                # Check if it's an OpenAI embedder
-                if hasattr(embedder, "client") or hasattr(embedder, "_client"):
-                    # Get the OpenAI client
-                    openai_client = getattr(embedder, "client", None) or getattr(embedder, "_client", None)
-                    
-                    if openai_client:
-                        # Get the HTTP client
-                        http_client = getattr(openai_client, "_client", None) or getattr(openai_client, "http_client", None)
-                        
-                        if http_client:
-                            # Create a wrapper that injects OAuth tokens
-                            original_request = http_client.request
-                            
-                            def oauth_request_wrapper(method, url, **kwargs):
-                                """Wrapper that injects OAuth token into requests."""
-                                # Get fresh OAuth token
-                                token = self._oauth_manager.get_access_token()
-                                
-                                # Add Authorization header
-                                headers = kwargs.get("headers", {})
-                                if isinstance(headers, dict):
-                                    headers = headers.copy()
-                                else:
-                                    headers = dict(headers) if headers else {}
-                                
-                                headers["Authorization"] = f"Bearer {token}"
-                                kwargs["headers"] = headers
-                                
-                                # Make the request
-                                return original_request(method, url, **kwargs)
-                            
-                            # Patch the request method
-                            http_client.request = oauth_request_wrapper
-                            logger.info("Patched OpenAI HTTP client to use OAuth tokens")
-                        else:
-                            logger.warning("Could not find HTTP client in OpenAI embedder")
-                    else:
-                        logger.warning("Could not find OpenAI client in embedder")
-                else:
-                    logger.warning("Embedder does not appear to be OpenAI-based")
-            else:
+            elif hasattr(self._memory_client, "embedder"):
+                embedder = self._memory_client.embedder
+            
+            if not embedder:
                 logger.warning("Could not access mem0 embedder for OAuth patching")
+                return
+            
+            # Try to get OpenAI client from embedder
+            openai_client = None
+            if hasattr(embedder, "client"):
+                openai_client = embedder.client
+            elif hasattr(embedder, "_client"):
+                openai_client = embedder._client
+            elif hasattr(embedder, "_openai_client"):
+                openai_client = embedder._openai_client
+            
+            if not openai_client:
+                logger.warning("Could not find OpenAI client in embedder")
+                return
+            
+            # Try to get HTTP client from OpenAI client
+            http_client = None
+            if hasattr(openai_client, "_client"):
+                http_client = openai_client._client
+            elif hasattr(openai_client, "http_client"):
+                http_client = openai_client.http_client
+            elif hasattr(openai_client, "_http_client"):
+                http_client = openai_client._http_client
+            
+            if not http_client:
+                logger.warning("Could not find HTTP client in OpenAI client")
+                return
+            
+            # Patch the request method to inject OAuth tokens
+            if hasattr(http_client, "request"):
+                original_request = http_client.request
+                
+                def oauth_request_wrapper(method, url, **kwargs):
+                    """Wrapper that injects OAuth token into requests."""
+                    # Get fresh OAuth token
+                    token = self._oauth_manager.get_access_token()
+                    
+                    # Add Authorization header
+                    headers = kwargs.get("headers", {})
+                    if isinstance(headers, dict):
+                        headers = headers.copy()
+                    else:
+                        headers = dict(headers) if headers else {}
+                    
+                    headers["Authorization"] = f"Bearer {token}"
+                    kwargs["headers"] = headers
+                    
+                    # Make the request
+                    return original_request(method, url, **kwargs)
+                
+                # Patch the request method
+                http_client.request = oauth_request_wrapper
+                logger.info("Successfully patched OpenAI HTTP client to use OAuth tokens")
+            else:
+                logger.warning("HTTP client does not have 'request' method")
+                
         except Exception as e:
-            logger.warning(f"Failed to patch OpenAI client for OAuth (may still work): {e}")
+            logger.warning(f"Failed to patch OpenAI client for OAuth: {e}")
+            logger.debug("OAuth patching failed, but service may still work if OpenAI SDK handles auth differently", exc_info=True)
             # Don't raise - the service might still work without the patch
 
     def add_memory(
