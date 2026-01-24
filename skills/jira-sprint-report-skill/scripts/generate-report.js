@@ -3,7 +3,11 @@
  * JIRA Sprint Report Generator
  * Generates a PowerPoint presentation from sprint data JSON
  *
- * Usage: node generate-report.js <input.json> [output.pptx]
+ * Usage: node generate-report.js <input.json> [output.pptx] [--template <template.pptx>]
+ *
+ * Template Support:
+ * - Pass --template to use a branded PowerPoint template as the base
+ * - The template's master slides and backgrounds will be applied
  */
 
 const fs = require('fs');
@@ -26,32 +30,90 @@ const C = {
   mutedLight: "94a3b8",
   story: "6366f1",
   bug: "ef4444",
-  rowAlt: "f8fafc"
+  rowAlt: "f8fafc",
+  // Template-specific colors (can be overridden)
+  templateBg: "f5f5f0",
+  templateAccent: "b5b5a0"
 };
 
 // Table column widths (sum = 9.6)
 const COL_WIDTHS = [0.9, 0.7, 4.0, 0.5, 1.7, 0.9, 0.9];
 const ISSUES_PER_PAGE = 20;
 
-function createTitleSlide(pptx, data) {
-  const slide = pptx.addSlide();
-  slide.background = { color: C.primary };
+/**
+ * Define custom slide masters for branded templates
+ */
+function defineSlideMasters(pptx, templateConfig) {
+  const cfg = templateConfig || {};
 
-  // Gradient overlay
-  slide.addShape(pptx.shapes.RECTANGLE, {
-    x: 0, y: 0, w: 10, h: 5.63,
-    fill: { type: "solid", color: C.primaryDark, transparency: 30 }
+  // Master 1: Title slide with geometric background
+  pptx.defineSlideMaster({
+    title: "TITLE_SLIDE",
+    background: { color: cfg.bgColor || C.templateBg },
+    objects: [
+      // Geometric lines pattern (similar to uploaded image)
+      { line: { x: 0.5, y: 0.3, w: 4, h: 0, line: { color: cfg.accentColor || C.templateAccent, width: 0.5, transparency: 60 } } },
+      { line: { x: 1, y: 0.8, w: 5, h: 0, line: { color: cfg.accentColor || C.templateAccent, width: 0.5, transparency: 60 } } },
+      { line: { x: 0.3, y: 1.5, w: 3.5, h: 0, line: { color: cfg.accentColor || C.templateAccent, width: 0.5, transparency: 60 } } },
+      // Footer branding
+      { text: { text: cfg.footerText || "XYZ – PIP ALPHA", options: { x: 7.5, y: 5.2, w: 2.3, h: 0.3, fontSize: 10, fontFace: "Arial", color: C.dark, align: "right" } } }
+    ]
   });
 
-  // Title
+  // Master 2: Content slide with subtle background
+  pptx.defineSlideMaster({
+    title: "CONTENT_SLIDE",
+    background: { color: cfg.bgColor || C.templateBg },
+    objects: [
+      // Subtle geometric accent
+      { line: { x: 0.2, y: 0.1, w: 2, h: 0, line: { color: cfg.accentColor || C.templateAccent, width: 0.5, transparency: 70 } } },
+      { line: { x: 0.5, y: 0.25, w: 1.5, h: 0, line: { color: cfg.accentColor || C.templateAccent, width: 0.5, transparency: 70 } } },
+      // Footer
+      { text: { text: cfg.footerText || "XYZ – PIP ALPHA", options: { x: 7.5, y: 5.2, w: 2.3, h: 0.3, fontSize: 10, fontFace: "Arial", color: C.dark, align: "right" } } }
+    ]
+  });
+
+  // Master 3: Dashboard slide
+  pptx.defineSlideMaster({
+    title: "DASHBOARD_SLIDE",
+    background: { color: cfg.bgColor || C.templateBg },
+    objects: [
+      // Footer
+      { text: { text: cfg.footerText || "XYZ – PIP ALPHA", options: { x: 7.5, y: 5.2, w: 2.3, h: 0.3, fontSize: 10, fontFace: "Arial", color: C.dark, align: "right" } } }
+    ]
+  });
+
+  return {
+    title: "TITLE_SLIDE",
+    content: "CONTENT_SLIDE",
+    dashboard: "DASHBOARD_SLIDE"
+  };
+}
+
+function createTitleSlide(pptx, data, masters) {
+  const slide = masters ? pptx.addSlide({ masterName: masters.title }) : pptx.addSlide();
+
+  if (!masters) {
+    slide.background = { color: C.primary };
+    // Gradient overlay
+    slide.addShape(pptx.shapes.RECTANGLE, {
+      x: 0, y: 0, w: 10, h: 5.63,
+      fill: { type: "solid", color: C.primaryDark, transparency: 30 }
+    });
+  }
+
+  // Title - adjust colors based on whether using template
+  const titleColor = masters ? C.dark : C.white;
+  const subtitleColor = masters ? C.muted : C.mutedLight;
+
   slide.addText(data.sprint.name, {
     x: 0.5, y: 1.8, w: 9, h: 0.8,
-    fontSize: 48, fontFace: "Arial", bold: true, color: C.white, align: "center"
+    fontSize: 48, fontFace: "Arial", bold: true, color: titleColor, align: "center"
   });
 
   slide.addText("Summary Report", {
     x: 0.5, y: 2.6, w: 9, h: 0.5,
-    fontSize: 20, fontFace: "Arial", color: C.mutedLight, align: "center"
+    fontSize: 20, fontFace: "Arial", color: subtitleColor, align: "center"
   });
 
   // Info cards
@@ -67,28 +129,33 @@ function createTitleSlide(pptx, data) {
     const x = startX + i * (cardW + cardGap);
     slide.addShape(pptx.shapes.ROUNDED_RECTANGLE, {
       x, y: cardY, w: cardW, h: cardH,
-      fill: { color: C.white, transparency: 85 }, rectRadius: 0.1
+      fill: { color: masters ? C.white : C.white, transparency: masters ? 0 : 85 },
+      rectRadius: 0.1,
+      line: masters ? { color: C.templateAccent, width: 0.5 } : null
     });
     slide.addText(card.label, {
       x, y: cardY + 0.08, w: cardW, h: 0.25,
-      fontSize: 9, fontFace: "Arial", color: C.mutedLight, align: "center"
+      fontSize: 9, fontFace: "Arial", color: C.muted, align: "center"
     });
     slide.addText(card.value, {
       x, y: cardY + 0.35, w: cardW, h: 0.35,
-      fontSize: 14, fontFace: "Arial", bold: true, color: C.white, align: "center"
+      fontSize: 14, fontFace: "Arial", bold: true, color: masters ? C.dark : C.white, align: "center"
     });
   });
 
   // Team name
   slide.addText(data.sprint.teamName || "Engineering Team", {
-    x: 0.5, y: 4.8, w: 9, h: 0.4,
-    fontSize: 12, fontFace: "Arial", color: C.mutedLight, align: "center"
+    x: 0.5, y: 4.5, w: 9, h: 0.4,
+    fontSize: 12, fontFace: "Arial", color: subtitleColor, align: "center"
   });
 }
 
-function createDashboardSlide(pptx, data) {
-  const slide = pptx.addSlide();
-  slide.background = { color: C.surface };
+function createDashboardSlide(pptx, data, masters) {
+  const slide = masters ? pptx.addSlide({ masterName: masters.dashboard }) : pptx.addSlide();
+
+  if (!masters) {
+    slide.background = { color: C.surface };
+  }
 
   // Header
   slide.addShape(pptx.shapes.RECTANGLE, { x: 0, y: 0, w: 10, h: 0.55, fill: { color: C.primary } });
@@ -129,7 +196,7 @@ function createDashboardSlide(pptx, data) {
   });
 
   // Charts
-  const chartY = 2.0, chartH = 3.3;
+  const chartY = 2.0, chartH = 3.0;
 
   // Velocity chart
   slide.addShape(pptx.shapes.RECTANGLE, { x: 0.2, y: chartY, w: 5.8, h: chartH, fill: { color: C.white } });
@@ -144,7 +211,7 @@ function createDashboardSlide(pptx, data) {
     { name: `Current Sprint (${currentTotal} pts)`, labels: data.velocity.labels, values: data.velocity.current },
     { name: `Previous Sprint (${prevTotal} pts)`, labels: data.velocity.labels, values: data.velocity.previous }
   ], {
-    x: 0.3, y: chartY + 0.5, w: 5.6, h: 2.6,
+    x: 0.3, y: chartY + 0.5, w: 5.6, h: 2.3,
     lineSize: 3, showMarkers: true, markerSize: 6,
     chartColors: [C.success, C.muted],
     showLegend: true, legendPos: "b", legendFontSize: 9,
@@ -168,15 +235,18 @@ function createDashboardSlide(pptx, data) {
     labels: [`Done (${statusCounts.Done})`, `In Progress (${statusCounts["In Progress"]})`, `Blocked (${statusCounts.Blocked})`],
     values: [statusCounts.Done, statusCounts["In Progress"], statusCounts.Blocked]
   }], {
-    x: 6.2, y: chartY + 0.5, w: 3.55, h: 2.6,
+    x: 6.2, y: chartY + 0.5, w: 3.55, h: 2.3,
     showPercent: true, showLegend: true, legendPos: "b", legendFontSize: 9,
     chartColors: [C.success, C.warning, C.danger]
   });
 }
 
-function createIssueSlide(pptx, issues, pageNum, totalPages, storyCount, bugCount) {
-  const slide = pptx.addSlide();
-  slide.background = { color: C.surface };
+function createIssueSlide(pptx, issues, pageNum, totalPages, storyCount, bugCount, masters) {
+  const slide = masters ? pptx.addSlide({ masterName: masters.content }) : pptx.addSlide();
+
+  if (!masters) {
+    slide.background = { color: C.surface };
+  }
 
   // Header
   slide.addShape(pptx.shapes.RECTANGLE, { x: 0, y: 0, w: 10, h: 0.5, fill: { color: C.primary } });
@@ -245,9 +315,12 @@ function createIssueSlide(pptx, issues, pageNum, totalPages, storyCount, bugCoun
   }
 }
 
-function createSummarySlide(pptx, data) {
-  const slide = pptx.addSlide();
-  slide.background = { color: C.surface };
+function createSummarySlide(pptx, data, masters) {
+  const slide = masters ? pptx.addSlide({ masterName: masters.content }) : pptx.addSlide();
+
+  if (!masters) {
+    slide.background = { color: C.surface };
+  }
 
   // Header
   slide.addShape(pptx.shapes.RECTANGLE, { x: 0, y: 0, w: 10, h: 0.5, fill: { color: C.primary } });
@@ -304,17 +377,46 @@ function createSummarySlide(pptx, data) {
   slide.addText(ns.goal || "TBD", { x: rightX + 0.2, y: 4.55, w: rightW - 0.4, h: 0.6, fontSize: 10, fontFace: "Arial", color: C.white, valign: "top" });
 }
 
-function generateReport(data, outputPath) {
+/**
+ * Load template configuration from JSON file or use defaults
+ */
+function loadTemplateConfig(templatePath) {
+  // If a template config JSON is provided, load it
+  if (templatePath && templatePath.endsWith('.json')) {
+    try {
+      return JSON.parse(fs.readFileSync(templatePath, 'utf8'));
+    } catch (e) {
+      console.warn(`Warning: Could not load template config: ${e.message}`);
+    }
+  }
+
+  // Default template configuration matching the uploaded image style
+  return {
+    bgColor: "f5f5f0",           // Light cream/beige background
+    accentColor: "b5b5a0",       // Subtle greenish-gray for lines
+    footerText: "XYZ – PIP ALPHA",
+    useGeometricPattern: true
+  };
+}
+
+function generateReport(data, outputPath, templateConfig) {
   const pptx = new pptxgen();
   pptx.layout = "LAYOUT_16x9";
   pptx.title = `${data.sprint.name} Summary Report`;
   pptx.author = data.sprint.teamName || "Engineering Team";
 
+  // Define slide masters if using template
+  let masters = null;
+  if (templateConfig) {
+    masters = defineSlideMasters(pptx, templateConfig);
+    console.log(`  Using template: ${templateConfig.footerText || 'Custom'}`);
+  }
+
   // Slide 1: Title
-  createTitleSlide(pptx, data);
+  createTitleSlide(pptx, data, masters);
 
   // Slide 2: Dashboard
-  createDashboardSlide(pptx, data);
+  createDashboardSlide(pptx, data, masters);
 
   // Slides 3-N: Issues
   const sortedIssues = [...data.issues].sort((a, b) => {
@@ -331,11 +433,11 @@ function generateReport(data, outputPath) {
   for (let page = 0; page < totalPages; page++) {
     const start = page * ISSUES_PER_PAGE;
     const pageIssues = sortedIssues.slice(start, start + ISSUES_PER_PAGE);
-    createIssueSlide(pptx, pageIssues, page + 1, totalPages, storyCount, bugCount);
+    createIssueSlide(pptx, pageIssues, page + 1, totalPages, storyCount, bugCount, masters);
   }
 
   // Last slide: Summary
-  createSummarySlide(pptx, data);
+  createSummarySlide(pptx, data, masters);
 
   // Save
   return pptx.writeFile({ fileName: outputPath });
@@ -345,19 +447,50 @@ function generateReport(data, outputPath) {
 async function main() {
   const args = process.argv.slice(2);
 
-  if (args.length < 1) {
-    console.log("Usage: node generate-report.js <input.json> [output.pptx]");
-    console.log("\nExample:");
-    console.log("  node generate-report.js sprint-data.json Sprint_Report.pptx");
+  // Parse arguments
+  let inputPath = null;
+  let outputPath = null;
+  let templatePath = null;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--template' && args[i + 1]) {
+      templatePath = args[++i];
+    } else if (!inputPath) {
+      inputPath = args[i];
+    } else if (!outputPath) {
+      outputPath = args[i];
+    }
+  }
+
+  if (!inputPath) {
+    console.log("JIRA Sprint Report Generator");
+    console.log("============================");
+    console.log("\nUsage: node generate-report.js <input.json> [output.pptx] [--template <config.json>]");
+    console.log("\nOptions:");
+    console.log("  --template <config.json>  Use a branded template configuration");
+    console.log("\nTemplate config format (JSON):");
+    console.log("  {");
+    console.log('    "bgColor": "f5f5f0",');
+    console.log('    "accentColor": "b5b5a0",');
+    console.log('    "footerText": "XYZ – PIP ALPHA"');
+    console.log("  }");
+    console.log("\nExamples:");
+    console.log("  node generate-report.js sprint-data.json");
+    console.log("  node generate-report.js sprint-data.json Report.pptx --template brand.json");
     process.exit(1);
   }
 
-  const inputPath = args[0];
-  const outputPath = args[1] || inputPath.replace(/\.json$/i, "_Report.pptx");
+  outputPath = outputPath || inputPath.replace(/\.json$/i, "_Report.pptx");
 
   if (!fs.existsSync(inputPath)) {
     console.error(`Error: Input file not found: ${inputPath}`);
     process.exit(1);
+  }
+
+  // Load template config if specified
+  let templateConfig = null;
+  if (templatePath) {
+    templateConfig = loadTemplateConfig(templatePath);
   }
 
   console.log(`Reading data from: ${inputPath}`);
@@ -368,7 +501,7 @@ async function main() {
   console.log(`  Team: ${data.sprint.teamName} (${data.sprint.teamSize} members)`);
   console.log(`  Issues: ${data.issues.length} (${data.issues.filter(i => i.type === "Story").length} Stories, ${data.issues.filter(i => i.type === "Bug").length} Bugs)`);
 
-  await generateReport(data, outputPath);
+  await generateReport(data, outputPath, templateConfig);
 
   console.log(`\n✅ Report saved: ${outputPath}`);
   console.log(`   Total slides: ${2 + Math.ceil(data.issues.length / ISSUES_PER_PAGE) + 1}`);
