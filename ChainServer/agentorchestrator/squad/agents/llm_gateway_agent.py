@@ -1,16 +1,68 @@
 """
-LLM Gateway Agent implementation.
+AgentOrchestrator LLM Gateway Agent
+====================================
 
-A flexible agent that uses the existing LLMGatewayClient from
-agentorchestrator.services.llm_gateway for inference.
+This module provides an LLM-powered agent implementation using the corporate
+LLM Gateway service for inference.
 
-Features:
-    - Full chat history propagation
-    - RAG context injection
-    - User profile/preference support
-    - OTEL tracing integration
-    - Token budget awareness
-    - Resilience (retry, timeout) via existing utils
+The LLMGatewayAgent is a fully-featured agent that handles chat history,
+RAG context injection, tool calling, and observability through OTEL tracing.
+It uses OAuth-authenticated access to the LLM Gateway, bypassing direct calls
+to Anthropic/OpenAI APIs.
+
+Classes:
+    LLMGatewayAgentOptions: Configuration dataclass extending AgentOptions.
+    LLMGatewayAgent: Full agent implementation using LLM Gateway.
+
+Usage:
+    from agentorchestrator.squad.agents import LLMGatewayAgent, LLMGatewayAgentOptions
+
+    agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+        name="TechAgent",
+        description="Handles technical questions",
+        system_prompt="You are a helpful technical assistant.",
+        temperature=0.7,
+    ))
+
+    response = await agent.process_request(
+        input_text="How do I optimize this query?",
+        user_id="user-1",
+        session_id="session-1",
+        chat_history=history,
+    )
+
+Example:
+    >>> from agentorchestrator.squad.agents import LLMGatewayAgent, LLMGatewayAgentOptions
+    >>> from agentorchestrator.services.llm_gateway import LLMGatewayClient
+    >>>
+    >>> # Create with custom LLM client
+    >>> client = LLMGatewayClient(base_url="https://llm.company.com")
+    >>> options = LLMGatewayAgentOptions(
+    ...     name="Research Assistant",
+    ...     description="Helps with research tasks",
+    ...     llm_client=client,
+    ...     system_prompt="You are a research assistant...",
+    ...     max_tokens=8192,
+    ...     temperature=0.3,
+    ... )
+    >>> agent = LLMGatewayAgent(options)
+    >>>
+    >>> # Process with RAG context
+    >>> response = await agent.process_request(
+    ...     input_text="Summarize the latest findings",
+    ...     user_id="researcher-1",
+    ...     session_id="research-session",
+    ...     chat_history=[],
+    ...     additional_params={
+    ...         "rag_context": "Retrieved research papers...",
+    ...         "user_profile": {"expertise": "ML"},
+    ...     }
+    ... )
+
+See Also:
+    - agentorchestrator.squad.agents.base: Base Agent class.
+    - agentorchestrator.services.llm_gateway: LLM Gateway client.
+    - agentorchestrator.utils.tracing: OTEL tracing utilities.
 """
 
 import asyncio
@@ -41,22 +93,48 @@ class LLMGatewayAgentOptions(AgentOptions):
     """
     Configuration options for LLMGatewayAgent.
 
+    Extends AgentOptions with LLM-specific settings including model
+    parameters, tool configuration, and context management.
+
     Attributes:
-        name: Display name of the agent
-        description: Description of the agent's capabilities
-        llm_client: Pre-configured LLMGatewayClient (uses default if None)
-        system_prompt: System prompt for the agent
-        temperature: LLM temperature (0.0-1.0)
-        max_tokens: Maximum tokens for response
-        tool_config: Optional tool configuration
-        save_chat: Whether to save chat history
-        log_debug: Enable debug logging
-        enable_tracing: Enable OTEL tracing spans
-        max_history_messages: Max history messages to include
-        context_keys: Keys to extract from additional_params for context
-        timeout_seconds: Timeout for LLM calls
-        max_retries: Max retries on failure
+        name (str): Display name of the agent.
+        description (str): Description of the agent's capabilities.
+        llm_client (LLMGatewayClient | None): Pre-configured LLM client.
+            If None, uses the default client from get_default_llm_client().
+        system_prompt (str | None): System prompt for the LLM.
+            If None, a default prompt is generated from name and description.
+        temperature (float): LLM temperature for response randomness.
+            Range: 0.0 (deterministic) to 1.0 (creative). Default: 0.7.
+        max_tokens (int): Maximum tokens for LLM response. Default: 4096.
+        tool_config (dict[str, Any] | None): Configuration for tool calling.
+            Should contain "tool" key with AgentTools instance.
+        save_chat (bool): Whether to persist chat history. Default: True.
+        log_debug (bool): Enable debug logging. Default: False.
+        enable_tracing (bool): Enable OTEL tracing spans. Default: True.
+        max_history_messages (int): Maximum chat history messages to include
+            in the LLM context. Default: 10.
+        context_keys (list[str]): Keys to extract from additional_params for
+            context injection. Default: ["rag_context", "user_profile", "session_data"].
+        timeout_seconds (float): Timeout for LLM API calls. Default: 60.0.
+        max_retries (int): Maximum retry attempts on failure. Default: 2.
+
+    Example:
+        >>> options = LLMGatewayAgentOptions(
+        ...     name="Code Assistant",
+        ...     description="Helps with coding tasks",
+        ...     system_prompt="You are an expert programmer...",
+        ...     temperature=0.2,  # More deterministic for code
+        ...     max_tokens=8192,
+        ...     max_history_messages=5,
+        ...     timeout_seconds=120.0,
+        ... )
+        >>> agent = LLMGatewayAgent(options)
+
+    See Also:
+        AgentOptions: Base configuration options.
+        LLMGatewayAgent: Agent that uses these options.
     """
+
     llm_client: Optional[LLMGatewayClient] = None
     system_prompt: Optional[str] = None
     temperature: float = 0.7
@@ -71,49 +149,101 @@ class LLMGatewayAgentOptions(AgentOptions):
 
 class LLMGatewayAgent(Agent):
     """
-    Agent that uses the existing LLMGatewayClient for inference.
+    Agent that uses the LLM Gateway service for inference.
 
-    Works with the corporate LLM Gateway using OAuth authentication,
-    bypassing direct calls to Anthropic/OpenAI APIs.
+    A production-ready agent implementation that integrates with
+    corporate LLM Gateway using OAuth authentication. Supports
+    full chat history, RAG context injection, tool calling,
+    and observability through OTEL tracing.
 
-    Features:
-        - Full chat history propagation to LLM
-        - RAG context injection via additional_params
-        - User profile awareness
-        - OTEL tracing for observability
-        - Configurable timeouts and retries
+    Attributes:
+        llm_client (LLMGatewayClient): The LLM Gateway client.
+        system_prompt (str): System prompt sent to the LLM.
+        temperature (float): LLM temperature setting.
+        max_tokens (int): Maximum response tokens.
+        tool_config (dict | None): Tool calling configuration.
+        enable_tracing (bool): Whether OTEL tracing is enabled.
+        max_history_messages (int): Max history messages in context.
+        context_keys (list[str]): Keys for context extraction.
+        timeout_seconds (float): LLM call timeout.
+        max_retries (int): Maximum retry attempts.
+
+    Methods:
+        process_request(): Process user input with LLM.
+        set_system_prompt(): Update the system prompt.
+        get_metrics(): Get performance metrics.
+        reset_metrics(): Reset all metrics counters.
 
     Example:
-        ```python
-        from agentorchestrator.squad.agents import LLMGatewayAgent, LLMGatewayAgentOptions
+        >>> from agentorchestrator.squad.agents import LLMGatewayAgent, LLMGatewayAgentOptions
+        >>>
+        >>> # Basic usage
+        >>> agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+        ...     name="Helper",
+        ...     description="General purpose assistant",
+        ... ))
+        >>>
+        >>> response = await agent.process_request(
+        ...     input_text="What's the capital of France?",
+        ...     user_id="user-1",
+        ...     session_id="session-1",
+        ...     chat_history=[],
+        ... )
+        >>> print(response.content[0]["text"])
 
-        # Basic usage
-        agent = LLMGatewayAgent(LLMGatewayAgentOptions(
-            name="TechAgent",
-            description="Handles technical questions about programming",
-            system_prompt="You are a helpful technical assistant.",
-        ))
+    With RAG Context:
+        >>> response = await agent.process_request(
+        ...     input_text="Summarize this document",
+        ...     user_id="user-1",
+        ...     session_id="session-1",
+        ...     chat_history=history,
+        ...     additional_params={
+        ...         "rag_context": "Document content here...",
+        ...         "user_profile": {"role": "analyst"},
+        ...     }
+        ... )
 
-        # With context propagation
-        response = await agent.process_request(
-            input_text="How do I optimize this?",
-            user_id="user-1",
-            session_id="session-1",
-            chat_history=history,
-            additional_params={
-                "rag_context": "Retrieved docs about optimization...",
-                "user_profile": {"role": "developer", "expertise": "python"},
-            }
-        )
-        ```
+    With Tools:
+        >>> from agentorchestrator.squad.types import AgentTools, AgentTool
+        >>>
+        >>> def search_db(query: str) -> str:
+        ...     return f"Results for: {query}"
+        >>>
+        >>> tools = AgentTools(tools=[
+        ...     AgentTool(
+        ...         name="search_db",
+        ...         description="Search the database",
+        ...         func=search_db,
+        ...     )
+        ... ])
+        >>>
+        >>> agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+        ...     name="DB Agent",
+        ...     description="Database query agent",
+        ...     tool_config={"tool": tools},
+        ... ))
+
+    See Also:
+        Agent: Base class for all agents.
+        LLMGatewayAgentOptions: Configuration options.
+        LLMGatewayClient: The underlying LLM client.
     """
 
     def __init__(self, options: LLMGatewayAgentOptions):
         """
-        Initialize the agent.
+        Initialize the LLM Gateway agent.
 
         Args:
-            options: Agent configuration options
+            options (LLMGatewayAgentOptions): Configuration options including
+                LLM client, system prompt, model parameters, and behavior settings.
+
+        Example:
+            >>> options = LLMGatewayAgentOptions(
+            ...     name="Assistant",
+            ...     description="Helpful assistant",
+            ...     temperature=0.7,
+            ... )
+            >>> agent = LLMGatewayAgent(options)
         """
         super().__init__(options)
 
@@ -142,7 +272,12 @@ class LLMGatewayAgent(Agent):
         self._error_count = 0
 
     def _default_system_prompt(self) -> str:
-        """Generate default system prompt based on agent name and description."""
+        """
+        Generate a default system prompt from agent name and description.
+
+        Returns:
+            str: Default system prompt text.
+        """
         return f"""You are {self.name}, an AI assistant.
 
 {self.description}
@@ -153,10 +288,17 @@ If you don't know something, say so rather than making up information.
 
     def set_system_prompt(self, prompt: str) -> None:
         """
-        Set the system prompt.
+        Update the system prompt for this agent.
 
         Args:
-            prompt: New system prompt
+            prompt (str): The new system prompt to use for all
+                subsequent LLM calls.
+
+        Example:
+            >>> agent.set_system_prompt(
+            ...     "You are an expert Python developer. "
+            ...     "Always provide code examples."
+            ... )
         """
         self.system_prompt = prompt
 
@@ -165,13 +307,13 @@ If you don't know something, say so rather than making up information.
         chat_history: list[ConversationMessage]
     ) -> list[dict[str, str]]:
         """
-        Format chat history for LLM API.
+        Format chat history for the LLM API.
 
         Args:
-            chat_history: List of conversation messages
+            chat_history (list[ConversationMessage]): Conversation messages.
 
         Returns:
-            List of message dicts for LLM API
+            list[dict[str, str]]: Formatted messages with role and content keys.
         """
         messages = []
         for msg in chat_history:
@@ -191,15 +333,21 @@ If you don't know something, say so rather than making up information.
         additional_params: Optional[dict[str, Any]] = None,
     ) -> str:
         """
-        Build a context-enriched prompt with history, RAG data, and user profile.
+        Build a context-enriched prompt with history and RAG data.
+
+        Constructs a prompt that includes:
+        - Context from additional_params (RAG, user profile, etc.)
+        - Relevant chat history
+        - The current user input
 
         Args:
-            input_text: Current user input
-            chat_history: Conversation history
-            additional_params: Additional context (RAG, user profile, etc.)
+            input_text (str): Current user input.
+            chat_history (list[ConversationMessage]): Conversation history.
+            additional_params (dict[str, Any] | None): Additional context including
+                rag_context, user_profile, session_data, etc.
 
         Returns:
-            Enriched prompt string
+            str: Context-enriched prompt for the LLM.
         """
         context_parts = []
 
@@ -248,18 +396,44 @@ If you don't know something, say so rather than making up information.
         """
         Process a user request using LLM Gateway with full context.
 
+        Sends the user's input to the LLM Gateway along with:
+        - System prompt
+        - Chat history (limited by max_history_messages)
+        - RAG context and user profile from additional_params
+        - Tool definitions if configured
+
         Args:
-            input_text: The user's input text
-            user_id: User identifier
-            session_id: Session identifier
-            chat_history: Previous conversation messages
-            additional_params: Additional context including:
-                - rag_context: Retrieved documents/context
-                - user_profile: User preferences and info
+            input_text (str): The user's input text to process.
+            user_id (str): Unique identifier for the user.
+            session_id (str): Unique identifier for the session.
+            chat_history (list[ConversationMessage]): Previous conversation messages.
+            additional_params (dict[str, Any] | None): Additional context:
+                - rag_context: Retrieved documents for RAG
+                - user_profile: User preferences and metadata
                 - session_data: Session-specific data
 
         Returns:
-            ConversationMessage with the agent's response
+            ConversationMessage: The agent's response with role ASSISTANT.
+
+        Raises:
+            asyncio.TimeoutError: If LLM call exceeds timeout_seconds.
+                Returns a timeout error message instead of raising.
+
+        Example:
+            >>> response = await agent.process_request(
+            ...     input_text="Explain quantum computing",
+            ...     user_id="user-123",
+            ...     session_id="session-456",
+            ...     chat_history=previous_messages,
+            ...     additional_params={
+            ...         "rag_context": "Quantum computing uses qubits...",
+            ...         "user_profile": {"expertise": "beginner"},
+            ...     }
+            ... )
+            >>> print(response.content[0]["text"])
+
+        See Also:
+            get_metrics(): Check performance after processing.
         """
         start_time = time.perf_counter()
         self._request_count += 1
@@ -347,10 +521,25 @@ If you don't know something, say so rather than making up information.
 
     def get_metrics(self) -> dict[str, Any]:
         """
-        Get agent metrics.
+        Get performance metrics for this agent.
 
         Returns:
-            Dict with request count, avg latency, error count, etc.
+            dict[str, Any]: Metrics dictionary containing:
+                - agent_name: Display name of the agent
+                - agent_id: URL-safe identifier
+                - request_count: Total requests processed
+                - error_count: Number of failed requests
+                - total_latency_ms: Cumulative latency in milliseconds
+                - avg_latency_ms: Average latency per request
+
+        Example:
+            >>> metrics = agent.get_metrics()
+            >>> print(f"Processed {metrics['request_count']} requests")
+            >>> print(f"Average latency: {metrics['avg_latency_ms']:.1f}ms")
+            >>> print(f"Error rate: {metrics['error_count']/metrics['request_count']*100:.1f}%")
+
+        See Also:
+            reset_metrics(): Reset all counters to zero.
         """
         avg_latency = (
             self._total_latency_ms / self._request_count
@@ -376,19 +565,26 @@ If you don't know something, say so rather than making up information.
         recursion_depth: int = 0,
     ) -> str:
         """
-        Handle tool calls in the response.
+        Handle tool calls in the LLM response.
+
+        If the LLM response contains tool call JSON, executes the
+        specified tools and continues the conversation with results.
 
         Args:
-            response: LLM response (may contain tool calls)
-            input_text: Original user input
-            user_id: User identifier
-            session_id: Session identifier
-            chat_history: Chat history
-            additional_params: Additional parameters
-            recursion_depth: Current recursion depth
+            response (str): LLM response (may contain tool calls as JSON).
+            input_text (str): Original user input.
+            user_id (str): User identifier.
+            session_id (str): Session identifier.
+            chat_history (list[ConversationMessage]): Chat history.
+            additional_params (dict[str, Any] | None): Additional parameters.
+            recursion_depth (int): Current recursion depth for tool chains.
 
         Returns:
-            Final response text after tool execution
+            str: Final response text after tool execution.
+
+        Note:
+            Tool recursion is limited by toolMaxRecursions in tool_config
+            (default: 10) to prevent infinite loops.
         """
         max_recursions = self.tool_config.get("toolMaxRecursions", 10)
 
@@ -467,7 +663,22 @@ If you don't know something, say so rather than making up information.
         return response
 
     def reset_metrics(self) -> None:
-        """Reset all metrics counters."""
+        """
+        Reset all metrics counters to zero.
+
+        Clears request_count, total_latency_ms, and error_count.
+        Useful for starting fresh metrics collection after
+        configuration changes or periodic reporting.
+
+        Example:
+            >>> # Report and reset hourly
+            >>> metrics = agent.get_metrics()
+            >>> send_to_monitoring(metrics)
+            >>> agent.reset_metrics()
+
+        See Also:
+            get_metrics(): Retrieve current metrics.
+        """
         self._request_count = 0
         self._total_latency_ms = 0.0
         self._error_count = 0

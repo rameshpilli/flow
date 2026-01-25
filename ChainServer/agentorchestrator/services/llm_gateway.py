@@ -1,11 +1,27 @@
 """
-LLM Gateway Client
+AgentOrchestrator LLM Gateway Client
+====================================
 
-Provides a thin wrapper around LLM providers (OpenAI, Anthropic, etc.)
-with OAuth token management and caching support.
+This module provides a client for interacting with LLM APIs through corporate
+gateways with OAuth token management and caching support.
 
-For corporate environments that require going through an LLM gateway
+The LLMGatewayClient handles authentication (OAuth or API key), request
+formatting, and response parsing for OpenAI-compatible chat completion APIs.
+Designed for corporate environments that require going through an LLM gateway
 with OAuth authentication.
+
+Classes:
+    LLMGatewayConfig: Configuration dataclass for LLM gateway settings.
+    OAuthTokenManager: Manages OAuth tokens with automatic refresh.
+    LLMGatewayClient: Main client for LLM API calls with OAuth/API key support.
+
+Functions:
+    get_llm_client: Get or create an LLM client instance.
+    get_default_llm_client: Get the default global LLM client.
+    set_default_llm_client: Set the default global LLM client.
+    init_default_llm_client: Initialize and set the default LLM client.
+    create_llm_client_from_env: Create client from environment variables.
+    create_managed_client: Create client with OAuth token management.
 
 Usage:
     from agentorchestrator.services import LLMGatewayClient, LLMGatewayConfig
@@ -23,7 +39,40 @@ Usage:
     config = LLMGatewayConfig.from_env()
     client = LLMGatewayClient.from_config(config)
 
+    # Generate text
     response = await client.generate_async("Hello, world!")
+
+Example:
+    >>> from agentorchestrator.services import LLMGatewayClient
+    >>>
+    >>> # Create client with OAuth
+    >>> client = LLMGatewayClient(
+    ...     server_url="https://llm-gateway/v1/chat/completions",
+    ...     oauth_endpoint="https://auth/token",
+    ...     client_id="my-app",
+    ...     client_secret="secret",
+    ...     model_name="gpt-4",
+    ... )
+    >>>
+    >>> # Simple generation
+    >>> response = await client.generate_async("What is 2+2?")
+    >>> print(response)  # "4"
+    >>>
+    >>> # Structured generation
+    >>> from pydantic import BaseModel
+    >>> class Answer(BaseModel):
+    ...     value: int
+    ...     explanation: str
+    >>>
+    >>> result = await client.generate_structured_async(
+    ...     prompt="What is 2+2?",
+    ...     response_model=Answer,
+    ... )
+    >>> print(result.value)  # 4
+
+See Also:
+    - agentorchestrator.utils.caching: Caching utilities for LLM responses.
+    - agentorchestrator.middleware: Middleware for rate limiting and offloading.
 """
 
 import asyncio
@@ -49,9 +98,25 @@ T = TypeVar("T")
 @dataclass
 class LLMGatewayConfig:
     """
-    LLM Gateway configuration.
+    Configuration for LLM Gateway client.
 
+    This dataclass holds all configuration needed to connect to an LLM gateway,
+    including server URL, model settings, and authentication credentials.
     Supports both direct configuration and environment variable loading.
+
+    Attributes:
+        server_url (str | None): LLM gateway endpoint URL.
+            Example: "https://llm-gateway.corp.com/v1/chat/completions"
+        model_name (str): Model to use for generation. Default: "gpt-4".
+        temperature (float): Sampling temperature (0.0-2.0). Default: 0.2.
+            Lower values = more deterministic, higher = more creative.
+        max_tokens (int): Maximum output tokens. Default: 4096.
+        timeout (float): Request timeout in seconds. Default: 120.0.
+        api_key (str | None): API key for authentication. Default: None.
+            Use this for simple API key auth, or OAuth credentials below.
+        oauth_endpoint (str | None): OAuth token endpoint URL. Default: None.
+        client_id (str | None): OAuth client ID. Default: None.
+        client_secret (str | None): OAuth client secret. Default: None.
 
     Environment Variables:
         LLM_SERVER_URL: LLM gateway endpoint URL
@@ -63,6 +128,28 @@ class LLMGatewayConfig:
         LLM_TEMPERATURE: Sampling temperature (default: 0.2)
         LLM_MAX_TOKENS: Max output tokens (default: 4096)
         LLM_TIMEOUT: Request timeout in seconds (default: 120)
+
+    Methods:
+        from_env(): Load configuration from environment variables.
+        is_valid(): Check if configuration has required fields.
+
+    Example:
+        >>> # Direct configuration
+        >>> config = LLMGatewayConfig(
+        ...     server_url="https://llm-gateway/v1/chat/completions",
+        ...     model_name="gpt-4",
+        ...     api_key="sk-xxx",
+        ...     temperature=0.5,
+        ... )
+        >>>
+        >>> # From environment variables
+        >>> config = LLMGatewayConfig.from_env()
+        >>> if config.is_valid():
+        ...     client = LLMGatewayClient.from_config(config)
+
+    See Also:
+        LLMGatewayClient: Client that uses this configuration.
+        OAuthTokenManager: OAuth token handling for corporate environments.
     """
 
     server_url: str | None = None
@@ -79,7 +166,23 @@ class LLMGatewayConfig:
 
     @classmethod
     def from_env(cls) -> "LLMGatewayConfig":
-        """Load configuration from environment variables."""
+        """
+        Load configuration from environment variables.
+
+        Reads LLM_* environment variables and creates a configuration
+        instance. This is the recommended way to configure the client
+        in production environments.
+
+        Returns:
+            LLMGatewayConfig: Configuration loaded from environment.
+
+        Example:
+            >>> import os
+            >>> os.environ["LLM_SERVER_URL"] = "https://llm-gateway/api"
+            >>> os.environ["LLM_API_KEY"] = "sk-xxx"
+            >>> config = LLMGatewayConfig.from_env()
+            >>> print(config.server_url)  # "https://llm-gateway/api"
+        """
         return cls(
             server_url=os.getenv("LLM_SERVER_URL"),
             model_name=os.getenv("LLM_MODEL_NAME", "gpt-4"),
@@ -93,7 +196,23 @@ class LLMGatewayConfig:
         )
 
     def is_valid(self) -> bool:
-        """Check if configuration has required fields."""
+        """
+        Check if configuration has required fields.
+
+        A valid configuration requires:
+        - server_url to be set
+        - Either api_key OR all OAuth credentials (endpoint, client_id, client_secret)
+
+        Returns:
+            bool: True if configuration is valid, False otherwise.
+
+        Example:
+            >>> config = LLMGatewayConfig(server_url="https://api", api_key="key")
+            >>> config.is_valid()  # True
+            >>>
+            >>> config = LLMGatewayConfig()  # No URL or auth
+            >>> config.is_valid()  # False
+        """
         has_auth = bool(self.api_key) or all([
             self.oauth_endpoint,
             self.client_id,
@@ -103,7 +222,42 @@ class LLMGatewayConfig:
 
 
 class OAuthTokenManager:
-    """Manages OAuth tokens with automatic refresh."""
+    """
+    Manages OAuth tokens with automatic refresh.
+
+    This class handles OAuth 2.0 client credentials flow for corporate
+    LLM gateways. It automatically refreshes tokens before expiry and
+    caches them to minimize token endpoint calls.
+
+    Attributes:
+        oauth_endpoint (str | None): OAuth token endpoint URL.
+        client_id (str | None): OAuth client ID.
+        client_secret (str | None): OAuth client secret.
+        grant_type (str): OAuth grant type. Default: "client_credentials".
+        scope (str): OAuth scope. Default: "read".
+        token_expiry_seconds (int): Token refresh threshold. Default: 3500.
+
+    Methods:
+        get_token(): Get a valid token, refreshing if necessary.
+        set_token(): Manually set a token with expiry.
+
+    Example:
+        >>> manager = OAuthTokenManager(
+        ...     oauth_endpoint="https://auth.corp.com/oauth/token",
+        ...     client_id="my-app",
+        ...     client_secret="secret",
+        ... )
+        >>>
+        >>> # Get token (fetches automatically if needed)
+        >>> token = await manager.get_token()
+        >>> print(token)  # "eyJ..."
+        >>>
+        >>> # Token is cached and reused until near expiry
+        >>> token2 = await manager.get_token()  # Returns cached token
+
+    See Also:
+        LLMGatewayClient: Uses this manager for OAuth authentication.
+    """
 
     def __init__(
         self,
@@ -114,6 +268,27 @@ class OAuthTokenManager:
         scope: str = "read",
         token_expiry_seconds: int = 3500,  # Refresh before actual expiry
     ):
+        """
+        Initialize OAuth token manager.
+
+        Args:
+            oauth_endpoint (str | None): OAuth token endpoint URL.
+                Example: "https://auth.corp.com/oauth/token"
+            client_id (str | None): OAuth client ID.
+            client_secret (str | None): OAuth client secret.
+            grant_type (str): OAuth grant type. Default: "client_credentials".
+            scope (str): OAuth scope to request. Default: "read".
+            token_expiry_seconds (int): Seconds before token refresh. Default: 3500.
+                Set lower than actual expiry to refresh proactively.
+
+        Example:
+            >>> manager = OAuthTokenManager(
+            ...     oauth_endpoint="https://auth/token",
+            ...     client_id="app-id",
+            ...     client_secret="app-secret",
+            ...     token_expiry_seconds=3000,  # Refresh 10 min before expiry
+            ... )
+        """
         self.oauth_endpoint = oauth_endpoint
         self.client_id = client_id
         self.client_secret = client_secret
@@ -125,7 +300,26 @@ class OAuthTokenManager:
         self._lock = asyncio.Lock()
 
     async def get_token(self) -> str | None:
-        """Get a valid token, refreshing if necessary."""
+        """
+        Get a valid OAuth token, refreshing if necessary.
+
+        This method is thread-safe and handles concurrent requests.
+        It will return a cached token if still valid, or fetch a new
+        one if expired or missing.
+
+        Returns:
+            str | None: Valid OAuth access token, or None if fetch fails.
+
+        Raises:
+            None: Errors are logged, None is returned on failure.
+
+        Example:
+            >>> token = await manager.get_token()
+            >>> if token:
+            ...     headers = {"Authorization": f"Bearer {token}"}
+            ... else:
+            ...     raise RuntimeError("Failed to get token")
+        """
         async with self._lock:
             if self._token and time.time() < self._expires_at:
                 return self._token
@@ -170,7 +364,18 @@ class OAuthTokenManager:
                 return None
 
     def set_token(self, token: str, expires_in: int = 3600):
-        """Manually set a token."""
+        """
+        Manually set a token with expiry time.
+
+        Use this to inject a pre-fetched token or for testing.
+
+        Args:
+            token (str): The OAuth access token.
+            expires_in (int): Seconds until token expires. Default: 3600.
+
+        Example:
+            >>> manager.set_token("eyJ...", expires_in=7200)
+        """
         self._token = token
         self._expires_at = time.time() + expires_in
 
@@ -179,18 +384,59 @@ class LLMGatewayClient:
     """
     Client for LLM API calls with OAuth support.
 
-    Uses OAuth token management to authenticate with LLM gateway.
-    Supports OpenAI-compatible chat completion API.
+    This is the main client for interacting with LLM gateways. It handles:
+    - OAuth token management for corporate environments
+    - API key authentication as alternative
+    - OpenAI-compatible chat completion API formatting
+    - Automatic prompt truncation for large inputs
+    - Structured output generation with JSON parsing
 
-    Usage:
-        client = LLMGatewayClient(
-            server_url="https://llm-gateway/v1/chat/completions",
-            oauth_endpoint="https://auth/token",
-            client_id="...",
-            client_secret="...",
-            model_name="claude-sonnet-4",
-        )
-        response = await client.generate_async("What is 2+2?")
+    Attributes:
+        server_url (str | None): LLM gateway endpoint URL.
+        model_name (str | None): Model name for generation.
+        temperature (float): Sampling temperature.
+        max_tokens (int): Maximum output tokens.
+        timeout (float): Request timeout in seconds.
+        api_key (str | None): API key if using key-based auth.
+
+    Methods:
+        from_env(): Create client from environment variables.
+        from_config(): Create client from LLMGatewayConfig.
+        generate_async(): Generate text from a prompt.
+        generate_structured_async(): Generate structured JSON output.
+
+    Example:
+        >>> # With OAuth authentication
+        >>> client = LLMGatewayClient(
+        ...     server_url="https://llm-gateway/v1/chat/completions",
+        ...     oauth_endpoint="https://auth/token",
+        ...     client_id="my-app",
+        ...     client_secret="secret",
+        ...     model_name="gpt-4",
+        ... )
+        >>>
+        >>> # Simple text generation
+        >>> response = await client.generate_async(
+        ...     prompt="Explain quantum computing",
+        ...     system_prompt="You are a helpful assistant.",
+        ... )
+        >>> print(response)
+        >>>
+        >>> # With API key authentication
+        >>> client = LLMGatewayClient(
+        ...     server_url="https://api.openai.com/v1/chat/completions",
+        ...     api_key="sk-xxx",
+        ...     model_name="gpt-4",
+        ... )
+
+    Note:
+        If neither OAuth nor API key is configured, the client operates
+        in "stub mode" and returns placeholder responses. This is useful
+        for testing without actual LLM calls.
+
+    See Also:
+        LLMGatewayConfig: Configuration class for this client.
+        OAuthTokenManager: OAuth token handling.
     """
 
     def __init__(
@@ -205,6 +451,39 @@ class LLMGatewayClient:
         client_secret: str | None = None,
         api_key: str | None = None,
     ):
+        """
+        Initialize LLM Gateway client.
+
+        Args:
+            server_url (str | None): LLM gateway endpoint URL.
+                Example: "https://llm-gateway/v1/chat/completions"
+            model_name (str | None): Model to use. Default: None.
+                Common values: "gpt-4", "gpt-3.5-turbo", "claude-sonnet-4"
+            temperature (float): Sampling temperature (0.0-2.0). Default: 0.2.
+            max_tokens (int): Maximum output tokens. Default: 4096.
+            timeout (float): Request timeout in seconds. Default: 120.0.
+            oauth_endpoint (str | None): OAuth token endpoint. Default: None.
+            client_id (str | None): OAuth client ID. Default: None.
+            client_secret (str | None): OAuth client secret. Default: None.
+            api_key (str | None): API key (alternative to OAuth). Default: None.
+
+        Example:
+            >>> # OAuth authentication
+            >>> client = LLMGatewayClient(
+            ...     server_url="https://llm-gateway/api",
+            ...     oauth_endpoint="https://auth/token",
+            ...     client_id="app",
+            ...     client_secret="secret",
+            ...     model_name="gpt-4",
+            ... )
+            >>>
+            >>> # API key authentication
+            >>> client = LLMGatewayClient(
+            ...     server_url="https://api.openai.com/v1/chat/completions",
+            ...     api_key="sk-xxx",
+            ...     model_name="gpt-4",
+            ... )
+        """
         self.server_url = server_url
         self.model_name = model_name
         self.temperature = temperature
@@ -233,13 +512,47 @@ class LLMGatewayClient:
 
     @classmethod
     def from_env(cls) -> "LLMGatewayClient":
-        """Create client from environment variables."""
+        """
+        Create client from environment variables.
+
+        Loads LLM_* environment variables and creates a configured client.
+        This is the recommended way to create the client in production.
+
+        Returns:
+            LLMGatewayClient: Client configured from environment.
+
+        Example:
+            >>> import os
+            >>> os.environ["LLM_SERVER_URL"] = "https://llm-gateway/api"
+            >>> os.environ["LLM_API_KEY"] = "sk-xxx"
+            >>> os.environ["LLM_MODEL_NAME"] = "gpt-4"
+            >>>
+            >>> client = LLMGatewayClient.from_env()
+            >>> response = await client.generate_async("Hello!")
+        """
         config = LLMGatewayConfig.from_env()
         return cls.from_config(config)
 
     @classmethod
     def from_config(cls, config: LLMGatewayConfig) -> "LLMGatewayClient":
-        """Create client from config object."""
+        """
+        Create client from configuration object.
+
+        Args:
+            config (LLMGatewayConfig): Configuration instance.
+
+        Returns:
+            LLMGatewayClient: Client configured from config object.
+
+        Example:
+            >>> config = LLMGatewayConfig(
+            ...     server_url="https://api/chat",
+            ...     api_key="sk-xxx",
+            ...     model_name="gpt-4",
+            ...     temperature=0.7,
+            ... )
+            >>> client = LLMGatewayClient.from_config(config)
+        """
         return cls(
             server_url=config.server_url,
             model_name=config.model_name,
@@ -351,13 +664,47 @@ class LLMGatewayClient:
         max_input_tokens: int = 100000,
         **kwargs,
     ) -> str:
-        """Generate text from a prompt.
+        """
+        Generate text from a prompt.
+
+        This is the main method for text generation. It handles:
+        - Building the message array with optional system prompt
+        - Truncating oversized prompts to prevent API errors
+        - Parsing the response into plain text
+        - Stub mode for unconfigured clients
 
         Args:
-            prompt: The user prompt
-            system_prompt: Optional system prompt
-            max_input_tokens: Max input tokens before truncation (default 100K)
-            **kwargs: Additional parameters for the LLM API
+            prompt (str): The user prompt to send to the LLM.
+            system_prompt (str | None): Optional system prompt for context.
+                Sets the behavior/persona of the assistant.
+            max_input_tokens (int): Max input tokens before truncation. Default: 100000.
+                Prompts exceeding this are truncated with a warning.
+            **kwargs: Additional parameters for the LLM API.
+                Common kwargs: tools, tool_choice, response_format.
+
+        Returns:
+            str: Generated text response from the LLM.
+
+        Raises:
+            RuntimeError: If HTTP client or auth token unavailable.
+            httpx.HTTPStatusError: If API returns error status.
+
+        Example:
+            >>> response = await client.generate_async(
+            ...     prompt="What is the capital of France?",
+            ...     system_prompt="Answer concisely.",
+            ... )
+            >>> print(response)  # "Paris"
+            >>>
+            >>> # With additional parameters
+            >>> response = await client.generate_async(
+            ...     prompt="List 3 colors",
+            ...     max_input_tokens=50000,
+            ... )
+
+        Note:
+            If client is not configured (no auth), returns a stub response
+            like "[LLM Response for: What is...]" for testing purposes.
         """
         # Check if configured for real API calls
         if not self._is_configured():
@@ -401,7 +748,54 @@ class LLMGatewayClient:
         response_model: type[T] | None = None,
         **kwargs,
     ) -> T | dict:
-        """Generate structured output from a prompt."""
+        """
+        Generate structured JSON output from a prompt.
+
+        This method asks the LLM to respond in JSON format and parses
+        the response into a Pydantic model or dictionary. Useful for
+        extracting structured data from LLM responses.
+
+        Args:
+            prompt (str): The user prompt to send to the LLM.
+            system_prompt (str | None): Optional system prompt.
+                "Respond with valid JSON only." is appended automatically.
+            response_model (type[T] | None): Pydantic model class to parse into.
+                If None, returns a plain dictionary.
+            **kwargs: Additional parameters for the LLM API.
+
+        Returns:
+            T | dict: Parsed response as model instance or dictionary.
+                On parse failure, returns {"raw_response": text} or empty model.
+
+        Raises:
+            RuntimeError: If HTTP client or auth token unavailable.
+            httpx.HTTPStatusError: If API returns error status.
+
+        Example:
+            >>> from pydantic import BaseModel
+            >>>
+            >>> class Entity(BaseModel):
+            ...     name: str
+            ...     type: str
+            ...     confidence: float
+            >>>
+            >>> result = await client.generate_structured_async(
+            ...     prompt="Extract the company name: 'Apple announced new products'",
+            ...     response_model=Entity,
+            ... )
+            >>> print(result.name)  # "Apple"
+            >>> print(result.type)  # "company"
+            >>>
+            >>> # Without model (returns dict)
+            >>> result = await client.generate_structured_async(
+            ...     prompt="Return {name, age} for 'John is 30 years old'",
+            ... )
+            >>> print(result)  # {"name": "John", "age": 30}
+
+        Note:
+            Handles markdown code blocks in responses (```json...```).
+            On JSON parse failure, attempts to return empty model instance.
+        """
         # Check if configured for real API calls
         if not self._is_configured():
             logger.info(f"LLM structured generate (stub): {prompt[:50]}...")
@@ -466,43 +860,119 @@ _default_client: LLMGatewayClient | None = None
 
 
 def get_default_llm_client() -> LLMGatewayClient | None:
-    """Get the default LLM client."""
+    """
+    Get the default global LLM client.
+
+    Returns the client set via set_default_llm_client() or init_default_llm_client().
+    Returns None if no default has been set.
+
+    Returns:
+        LLMGatewayClient | None: The default client, or None.
+
+    Example:
+        >>> client = get_default_llm_client()
+        >>> if client:
+        ...     response = await client.generate_async("Hello")
+    """
     return _default_client
 
 
 def set_default_llm_client(client: LLMGatewayClient):
-    """Set the default LLM client."""
+    """
+    Set the default global LLM client.
+
+    Use this to set a pre-configured client as the default for
+    the application.
+
+    Args:
+        client (LLMGatewayClient): Client instance to set as default.
+
+    Example:
+        >>> client = LLMGatewayClient(server_url="...", api_key="...")
+        >>> set_default_llm_client(client)
+        >>> # Now get_default_llm_client() returns this client
+    """
     global _default_client
     _default_client = client
 
 
 def init_default_llm_client(**kwargs) -> LLMGatewayClient:
-    """Initialize and set the default LLM client."""
+    """
+    Initialize and set the default LLM client.
+
+    Creates a new LLMGatewayClient with the provided arguments
+    and sets it as the global default.
+
+    Args:
+        **kwargs: Arguments passed to LLMGatewayClient constructor.
+
+    Returns:
+        LLMGatewayClient: The newly created and set default client.
+
+    Example:
+        >>> client = init_default_llm_client(
+        ...     server_url="https://llm-gateway/api",
+        ...     api_key="sk-xxx",
+        ...     model_name="gpt-4",
+        ... )
+        >>> # client is now the global default
+    """
     client = LLMGatewayClient(**kwargs)
     set_default_llm_client(client)
     return client
 
 
 def get_llm_client(**kwargs) -> LLMGatewayClient:
-    """Get or create an LLM client."""
+    """
+    Get or create an LLM client.
+
+    If kwargs are provided, creates a new client with those settings.
+    If no kwargs, returns the default client or creates a stub client.
+
+    Args:
+        **kwargs: Optional arguments for LLMGatewayClient constructor.
+
+    Returns:
+        LLMGatewayClient: Existing default or new client instance.
+
+    Example:
+        >>> # Get default client
+        >>> client = get_llm_client()
+        >>>
+        >>> # Create new client with custom settings
+        >>> client = get_llm_client(
+        ...     server_url="https://api/chat",
+        ...     api_key="key",
+        ... )
+    """
     if not kwargs:
         return get_default_llm_client() or LLMGatewayClient()
     return LLMGatewayClient(**kwargs)
 
 
 def create_llm_client_from_env() -> LLMGatewayClient:
-    """Create an LLM client from environment variables.
+    """
+    Create an LLM client from environment variables.
 
-    Required env vars:
-        LLM_SERVER_URL: The LLM API endpoint
+    Reads LLM_* environment variables to configure the client.
+    This is a convenience function equivalent to LLMGatewayClient.from_env().
+
+    Environment Variables:
+        LLM_SERVER_URL: The LLM API endpoint (required)
         LLM_OAUTH_ENDPOINT: OAuth token endpoint
         LLM_CLIENT_ID: OAuth client ID
         LLM_CLIENT_SECRET: OAuth client secret
-
-    Optional env vars:
+        LLM_API_KEY: API key (alternative to OAuth)
         LLM_MODEL_NAME: Model to use (default: gpt-4)
         LLM_MAX_TOKENS: Max tokens (default: 4096)
         LLM_TEMPERATURE: Temperature (default: 0.2)
+
+    Returns:
+        LLMGatewayClient: Client configured from environment.
+
+    Example:
+        >>> client = create_llm_client_from_env()
+        >>> response = await client.generate_async("Hello!")
     """
     return LLMGatewayClient(
         server_url=os.getenv("LLM_SERVER_URL"),
@@ -521,7 +991,29 @@ def create_managed_client(
     client_secret: str | None = None,
     **kwargs,
 ) -> LLMGatewayClient:
-    """Create an LLM client with OAuth token management."""
+    """
+    Create an LLM client with OAuth token management.
+
+    Convenience function for creating OAuth-authenticated clients.
+
+    Args:
+        token_url (str | None): OAuth token endpoint URL.
+        client_id (str | None): OAuth client ID.
+        client_secret (str | None): OAuth client secret.
+        **kwargs: Additional LLMGatewayClient arguments.
+
+    Returns:
+        LLMGatewayClient: Client with OAuth configuration.
+
+    Example:
+        >>> client = create_managed_client(
+        ...     token_url="https://auth.corp.com/oauth/token",
+        ...     client_id="my-app",
+        ...     client_secret="secret",
+        ...     server_url="https://llm-gateway/api",
+        ...     model_name="gpt-4",
+        ... )
+    """
     return LLMGatewayClient(
         oauth_endpoint=token_url,
         client_id=client_id,

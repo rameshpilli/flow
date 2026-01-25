@@ -1,13 +1,70 @@
 """
 AgentOrchestrator Context Management
+====================================
 
-Provides shared context across chain steps with memory management,
-token tracking, and automatic summarization support.
+This module provides the context management system for chain execution in AgentOrchestrator.
+
+ChainContext is the central data structure that flows through all steps in a chain,
+providing shared state, scoped storage, token tracking, and citation support.
+It enables data sharing between steps while maintaining isolation where needed.
+
+Classes:
+    ContextScope: Enum defining data lifetime scopes (STEP, CHAIN, GLOBAL).
+    ContextEntry: Dataclass representing a single context entry with metadata.
+    StepResult: Dataclass for step execution results with error tracking.
+    ExecutionSummary: Summary of chain execution with partial success tracking.
+    ChainContext: Main context class managing shared state between steps.
+    ContextManager: Singleton manager for multiple concurrent chain contexts.
+
+Usage:
+    from agentorchestrator.core.context import ChainContext, ContextScope
+
+    # Create a context for a chain execution
+    ctx = ChainContext(request_id="req_123")
+
+    # Store data with different scopes
+    ctx.set("user_query", "Who is the CEO?", scope=ContextScope.CHAIN)
+    ctx.set("temp_data", {...}, scope=ContextScope.STEP)  # Cleaned up after step
+
+    # Retrieve data
+    query = ctx.get("user_query")
+
+    # Use step scope for automatic cleanup
+    async with ctx.step_scope("my_step"):
+        ctx.set("local_var", value, scope=ContextScope.STEP)
+        # ... step logic ...
+    # local_var is automatically cleaned up here
+
+Example:
+    >>> from agentorchestrator.core.context import ChainContext, ContextScope, StepResult
+    >>>
+    >>> # Create context with initial data
+    >>> ctx = ChainContext(
+    ...     request_id="req_abc123",
+    ...     initial_data={"company": "Apple Inc"},
+    ...     max_tokens=100000,
+    ... )
+    >>>
+    >>> # Store step results
+    >>> ctx.add_result(StepResult(
+    ...     step_name="extract_company",
+    ...     output={"ticker": "AAPL"},
+    ...     duration_ms=150.5,
+    ... ))
+    >>>
+    >>> # Check results
+    >>> print(ctx.last_result.success)  # True
+    >>> print(ctx.total_tokens)  # Token count for LLM context management
 
 Thread-safety:
-- Uses asyncio.Lock for concurrent access protection
-- Uses contextvars for per-task step tracking (safe for parallel steps)
-- Step-scoped data is isolated per step using namespaced keys
+    - Uses asyncio.Lock for concurrent access protection
+    - Uses contextvars for per-task step tracking (safe for parallel steps)
+    - Step-scoped data is isolated per step using namespaced keys
+
+See Also:
+    - agentorchestrator.core.orchestrator: Uses ChainContext for execution.
+    - agentorchestrator.core.decorators: Step decorators that work with context.
+    - agentorchestrator.models.citation: Citation model for source tracking.
 """
 
 import asyncio
@@ -45,7 +102,34 @@ _current_step_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 
 
 class ContextScope(Enum):
-    """Defines the scope/lifetime of context data"""
+    """
+    Defines the scope/lifetime of context data.
+
+    Controls how long data persists and who can access it.
+    Choose the appropriate scope based on data lifecycle needs.
+
+    Attributes:
+        STEP: Data available only within current step execution.
+            Automatically cleaned up when step completes.
+            Ideal for temporary calculations or intermediate results.
+        CHAIN: Data available throughout the entire chain execution.
+            Persists from first step to last, then cleaned up.
+            Use for data that flows between steps.
+        GLOBAL: Data persists across multiple chain executions.
+            Use sparingly for truly global configuration.
+
+    Example:
+        >>> from agentorchestrator.core.context import ContextScope
+        >>>
+        >>> # Step-scoped data (cleaned up after step)
+        >>> ctx.set("temp_result", data, scope=ContextScope.STEP)
+        >>>
+        >>> # Chain-scoped data (available to all steps)
+        >>> ctx.set("company_info", info, scope=ContextScope.CHAIN)
+        >>>
+        >>> # Global data (persists across chains)
+        >>> ctx.set("config", config, scope=ContextScope.GLOBAL)
+    """
 
     STEP = "step"  # Available only within current step
     CHAIN = "chain"  # Available throughout the chain execution
@@ -54,7 +138,31 @@ class ContextScope(Enum):
 
 @dataclass
 class ContextEntry:
-    """A single entry in the context store"""
+    """
+    A single entry in the context store.
+
+    Wraps stored values with metadata for tracking, debugging,
+    and token management.
+
+    Attributes:
+        key (str): Unique identifier for this entry.
+        value (Any): The stored data value.
+        scope (ContextScope): Lifetime scope of this entry.
+        created_at (datetime): When the entry was first created.
+        updated_at (datetime): When the entry was last modified.
+        token_count (int): Estimated token count for LLM context tracking.
+        source_step (str | None): Name of step that created this entry.
+        metadata (dict[str, Any]): Additional entry metadata.
+
+    Example:
+        >>> entry = ContextEntry(
+        ...     key="company_data",
+        ...     value={"name": "Apple", "ticker": "AAPL"},
+        ...     scope=ContextScope.CHAIN,
+        ...     token_count=50,
+        ...     source_step="extract_company",
+        ... )
+    """
 
     key: str
     value: Any
@@ -71,17 +179,47 @@ class StepResult:
     """
     Result from a step execution with rich error metadata.
 
+    Captures comprehensive information about a step's execution,
+    including output, timing, errors, and retry information.
+    Used for debugging, logging, and partial success tracking.
+
     Attributes:
-        step_name: Name of the executed step
-        output: Output data from the step (None on failure)
-        duration_ms: Execution time in milliseconds
-        token_count: Token count for LLM calls
-        metadata: Additional step metadata
-        error: Exception if step failed
-        error_type: Type of error (for structured logging)
-        error_traceback: Full traceback string (for debugging)
-        retry_count: Number of retries attempted
-        skipped_reason: Reason if step was skipped
+        step_name (str): Name of the executed step.
+        output (Any): Output data from the step (None on failure).
+        duration_ms (float): Execution time in milliseconds.
+        token_count (int): Token count for LLM calls in this step.
+        metadata (dict[str, Any]): Additional step metadata.
+        error (Exception | None): Exception if step failed.
+        error_type (str | None): Type of error (for structured logging).
+        error_traceback (str | None): Full traceback string (for debugging).
+        retry_count (int): Number of retries attempted.
+        skipped_reason (str | None): Reason if step was skipped.
+
+    Properties:
+        success (bool): True if step completed without error or skip.
+        failed (bool): True if step raised an exception.
+        skipped (bool): True if step was skipped.
+
+    Methods:
+        to_dict(): Convert to dictionary for serialization.
+
+    Example:
+        >>> result = StepResult(
+        ...     step_name="fetch_data",
+        ...     output={"revenue": 394.3},
+        ...     duration_ms=1250.5,
+        ...     token_count=150,
+        ...     metadata={"source": "sec_api"},
+        ... )
+        >>>
+        >>> if result.success:
+        ...     print(f"Step completed in {result.duration_ms}ms")
+        ... elif result.failed:
+        ...     print(f"Error: {result.error_type}: {result.error}")
+
+    See Also:
+        ExecutionSummary: Aggregates StepResults for chain summary.
+        ChainContext.add_result(): Method to add results to context.
     """
 
     step_name: str
@@ -97,18 +235,57 @@ class StepResult:
 
     @property
     def success(self) -> bool:
+        """
+        Check if the step completed successfully.
+
+        Returns:
+            bool: True if no error occurred and step was not skipped.
+
+        Example:
+            >>> if result.success:
+            ...     process_output(result.output)
+        """
         return self.error is None and self.skipped_reason is None
 
     @property
     def failed(self) -> bool:
+        """
+        Check if the step failed with an exception.
+
+        Returns:
+            bool: True if an error occurred during execution.
+
+        Example:
+            >>> if result.failed:
+            ...     logger.error(f"{result.error_type}: {result.error}")
+        """
         return self.error is not None
 
     @property
     def skipped(self) -> bool:
+        """
+        Check if the step was skipped.
+
+        Returns:
+            bool: True if step was skipped (e.g., due to unmet conditions).
+
+        Example:
+            >>> if result.skipped:
+            ...     print(f"Skipped: {result.skipped_reason}")
+        """
         return self.skipped_reason is not None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization (errors as strings)."""
+        """
+        Convert to dictionary for serialization (errors as strings).
+
+        Returns:
+            dict[str, Any]: JSON-serializable dictionary representation.
+
+        Example:
+            >>> result_dict = result.to_dict()
+            >>> json.dumps(result_dict)  # Safe for JSON serialization
+        """
         return {
             "step_name": self.step_name,
             "success": self.success,
@@ -131,6 +308,54 @@ class ExecutionSummary:
 
     Enables graceful degradation - know exactly what succeeded,
     what failed, and what was skipped, even in continue mode.
+    Useful for reporting, debugging, and error recovery.
+
+    Attributes:
+        chain_name (str): Name of the executed chain.
+        request_id (str): Unique request identifier.
+        total_steps (int): Total number of steps in the chain.
+        completed_steps (int): Number of successfully completed steps.
+        failed_steps (int): Number of failed steps.
+        skipped_steps (int): Number of skipped steps.
+        total_duration_ms (float): Total execution time in milliseconds.
+        success (bool): True if all steps completed successfully.
+        partial_success (bool): True if some steps succeeded and some failed.
+        error (str | None): Error message if chain failed.
+        error_type (str | None): Type of error that caused failure.
+        error_traceback (str | None): Full traceback for debugging.
+        step_results (list[StepResult]): Detailed results for each step.
+
+    Properties:
+        completion_rate (float): Percentage of steps that completed.
+
+    Methods:
+        add_result(): Add a step result and update counters.
+        finalize(): Finalize the summary after execution.
+        to_dict(): Convert to dictionary for serialization.
+        get_failed_steps(): Get all failed step results.
+        get_skipped_steps(): Get all skipped step results.
+        get_successful_steps(): Get all successful step results.
+
+    Example:
+        >>> summary = ExecutionSummary(
+        ...     chain_name="data_pipeline",
+        ...     request_id="req_123",
+        ...     total_steps=5,
+        ... )
+        >>>
+        >>> # Add results as steps execute
+        >>> summary.add_result(StepResult(step_name="step1", output={}, duration_ms=100))
+        >>> summary.add_result(StepResult(step_name="step2", output={}, duration_ms=200))
+        >>>
+        >>> # Finalize and check status
+        >>> summary.finalize()
+        >>> print(f"Completion rate: {summary.completion_rate}%")
+        >>> if summary.partial_success:
+        ...     print("Some steps failed - check get_failed_steps()")
+
+    See Also:
+        StepResult: Individual step result dataclass.
+        ChainContext: Uses ExecutionSummary for chain tracking.
     """
 
     chain_name: str
@@ -151,13 +376,34 @@ class ExecutionSummary:
 
     @property
     def completion_rate(self) -> float:
-        """Percentage of steps that completed successfully."""
+        """
+        Percentage of steps that completed successfully.
+
+        Returns:
+            float: Completion rate as percentage (0.0 to 100.0).
+
+        Example:
+            >>> if summary.completion_rate < 50:
+            ...     logger.warning("Less than half of steps completed")
+        """
         if self.total_steps == 0:
             return 0.0
         return (self.completed_steps / self.total_steps) * 100
 
     def add_result(self, result: StepResult) -> None:
-        """Add a step result and update counters."""
+        """
+        Add a step result and update counters.
+
+        Args:
+            result (StepResult): The step result to add.
+
+        Example:
+            >>> summary.add_result(StepResult(
+            ...     step_name="fetch_data",
+            ...     output={"data": [...]},
+            ...     duration_ms=500,
+            ... ))
+        """
         self.step_results.append(result)
         self.total_duration_ms += result.duration_ms
 
@@ -169,7 +415,17 @@ class ExecutionSummary:
             self.failed_steps += 1
 
     def finalize(self) -> None:
-        """Finalize the summary after execution."""
+        """
+        Finalize the summary after execution.
+
+        Sets success and partial_success flags based on step results.
+        Call this after all steps have been added.
+
+        Example:
+            >>> summary.finalize()
+            >>> if summary.success:
+            ...     print("All steps completed successfully!")
+        """
         self.success = self.failed_steps == 0 and self.skipped_steps == 0
         self.partial_success = (
             self.completed_steps > 0 and
@@ -177,7 +433,15 @@ class ExecutionSummary:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
+        """
+        Convert to dictionary for JSON serialization.
+
+        Returns:
+            dict[str, Any]: JSON-serializable dictionary representation.
+
+        Example:
+            >>> summary_json = json.dumps(summary.to_dict(), indent=2)
+        """
         return {
             "chain_name": self.chain_name,
             "request_id": self.request_id,
@@ -195,15 +459,42 @@ class ExecutionSummary:
         }
 
     def get_failed_steps(self) -> list[StepResult]:
-        """Get all failed step results."""
+        """
+        Get all failed step results.
+
+        Returns:
+            list[StepResult]: List of results for failed steps.
+
+        Example:
+            >>> for failed in summary.get_failed_steps():
+            ...     print(f"{failed.step_name}: {failed.error}")
+        """
         return [r for r in self.step_results if r.failed]
 
     def get_skipped_steps(self) -> list[StepResult]:
-        """Get all skipped step results."""
+        """
+        Get all skipped step results.
+
+        Returns:
+            list[StepResult]: List of results for skipped steps.
+
+        Example:
+            >>> for skipped in summary.get_skipped_steps():
+            ...     print(f"{skipped.step_name}: {skipped.skipped_reason}")
+        """
         return [r for r in self.step_results if r.skipped]
 
     def get_successful_steps(self) -> list[StepResult]:
-        """Get all successful step results."""
+        """
+        Get all successful step results.
+
+        Returns:
+            list[StepResult]: List of results for successful steps.
+
+        Example:
+            >>> successful = summary.get_successful_steps()
+            >>> print(f"{len(successful)} steps completed successfully")
+        """
         return [r for r in self.step_results if r.success]
 
 
@@ -211,24 +502,87 @@ class ChainContext:
     """
     Manages shared state and data flow between chain steps.
 
-    Features:
-    - Scoped storage (step, chain, global)
-    - Token tracking for LLM context management
-    - Automatic cleanup of step-scoped data
-    - Thread-safe operations
-    - Deep copy isolation between steps
+    ChainContext is the central data structure that flows through all steps
+    in a chain execution. It provides scoped storage, token tracking for
+    LLM context management, automatic cleanup, and citation support.
 
-    Usage:
-        ctx = ChainContext(request_id="req_123")
+    Attributes:
+        request_id (str): Unique identifier for this chain execution.
+        max_tokens (int): Maximum token budget for LLM context.
+        created_at (datetime): When the context was created.
+        metadata (dict[str, Any]): Additional context metadata.
 
-        # Store data
-        ctx.set("user_query", "Who is the CEO?", scope=ContextScope.CHAIN)
+    Properties:
+        current_step (str | None): Name of the currently executing step.
+        total_tokens (int): Total tokens currently stored in context.
+        results (list[StepResult]): All step results in execution order.
+        last_result (StepResult | None): Most recent step result.
 
-        # Retrieve data
-        query = ctx.get("user_query")
+    Methods:
+        set(): Store a value in the context with specified scope.
+        get(): Retrieve a value from the context.
+        get_entry(): Get the full context entry including metadata.
+        has(): Check if a key exists in context.
+        delete(): Remove a key from context.
+        keys(): Get all keys, optionally filtered by scope.
+        add_result(): Add a step execution result.
+        get_result(): Get result for a specific step.
+        enter_step(): Enter a step execution scope.
+        exit_step(): Exit a step execution scope with cleanup.
+        step_scope(): Async context manager for step execution.
+        step_scope_sync(): Sync context manager for step execution.
+        to_dict(): Export context as dictionary.
+        clone(): Create a deep copy of the context.
+        add_citation(): Add a citation for source tracking.
+        add_source_content(): Add raw source content for verification.
+        get_citations(): Get citations from the context.
+        verify_citations(): Verify all citations against sources.
+        get_citation_summary(): Get citation coverage summary.
 
-        # Store step results
-        ctx.add_result(StepResult(step_name="extractor", output={...}, duration_ms=150))
+    Example:
+        >>> from agentorchestrator.core.context import ChainContext, ContextScope
+        >>>
+        >>> # Create context
+        >>> ctx = ChainContext(
+        ...     request_id="req_123",
+        ...     initial_data={"query": "Apple revenue"},
+        ...     max_tokens=100000,
+        ... )
+        >>>
+        >>> # Store and retrieve data
+        >>> ctx.set("company", "Apple Inc", scope=ContextScope.CHAIN)
+        >>> company = ctx.get("company")  # "Apple Inc"
+        >>>
+        >>> # Use step scope for automatic cleanup
+        >>> async with ctx.step_scope("process_data"):
+        ...     ctx.set("temp", {...}, scope=ContextScope.STEP)
+        ...     # temp is available here
+        ... # temp is automatically cleaned up
+        >>>
+        >>> # Track step results
+        >>> ctx.add_result(StepResult(
+        ...     step_name="fetch",
+        ...     output={"revenue": 394.3},
+        ...     duration_ms=500,
+        ... ))
+        >>>
+        >>> # Add citations for provenance
+        >>> ctx.add_citation(
+        ...     content="Total revenue was $394.3 billion",
+        ...     source_name="sec_filing",
+        ...     reasoning="Direct revenue figure from 10-K",
+        ... )
+
+    Thread-safety:
+        ChainContext is designed for concurrent access:
+        - Uses asyncio.Lock for async operations
+        - Uses threading.RLock for sync operations
+        - Uses contextvars for per-task step tracking
+
+    See Also:
+        ContextScope: Enum for data lifetime scopes.
+        StepResult: Dataclass for step execution results.
+        ContextManager: Manager for multiple contexts.
     """
 
     def __init__(
@@ -237,6 +591,24 @@ class ChainContext:
         initial_data: dict[str, Any] | None = None,
         max_tokens: int = 100000,
     ):
+        """
+        Initialize a new ChainContext.
+
+        Args:
+            request_id (str): Unique identifier for this chain execution.
+                Used for tracing, logging, and context retrieval.
+            initial_data (dict[str, Any] | None): Initial data to populate
+                the context with. All keys are stored with CHAIN scope.
+            max_tokens (int): Maximum token budget for LLM context management.
+                Default: 100000. Used for tracking context size.
+
+        Example:
+            >>> ctx = ChainContext(
+            ...     request_id="req_abc123",
+            ...     initial_data={"company": "Apple", "year": 2024},
+            ...     max_tokens=50000,
+            ... )
+        """
         self.request_id = request_id
         self.max_tokens = max_tokens
         self._store: dict[str, ContextEntry] = {}
@@ -254,12 +626,35 @@ class ChainContext:
 
     @property
     def current_step(self) -> str | None:
-        """Get current step name (async-task-safe via contextvars)"""
+        """
+        Get current step name (async-task-safe via contextvars).
+
+        Returns:
+            str | None: Name of the currently executing step, or None
+                if not within a step scope.
+
+        Example:
+            >>> async with ctx.step_scope("my_step"):
+            ...     print(ctx.current_step)  # "my_step"
+            >>> print(ctx.current_step)  # None
+        """
         return _current_step_var.get()
 
     @property
     def total_tokens(self) -> int:
-        """Total tokens currently stored in context"""
+        """
+        Total tokens currently stored in context.
+
+        Includes tokens from all scopes (step, chain, global).
+        Use for LLM context budget management.
+
+        Returns:
+            int: Total estimated token count.
+
+        Example:
+            >>> if ctx.total_tokens > ctx.max_tokens * 0.8:
+            ...     logger.warning("Context approaching token limit")
+        """
         with self._sync_lock:
             total = sum(entry.token_count for entry in self._store.values())
             # Include step-scoped tokens
@@ -269,13 +664,31 @@ class ChainContext:
 
     @property
     def results(self) -> list[StepResult]:
-        """All step results in execution order"""
+        """
+        All step results in execution order.
+
+        Returns:
+            list[StepResult]: Copy of the results list (thread-safe).
+
+        Example:
+            >>> for result in ctx.results:
+            ...     print(f"{result.step_name}: {result.duration_ms}ms")
+        """
         with self._sync_lock:
             return self._results.copy()
 
     @property
     def last_result(self) -> StepResult | None:
-        """Most recent step result"""
+        """
+        Most recent step result.
+
+        Returns:
+            StepResult | None: The last added result, or None if empty.
+
+        Example:
+            >>> if ctx.last_result and ctx.last_result.success:
+            ...     process(ctx.last_result.output)
+        """
         with self._sync_lock:
             return self._results[-1] if self._results else None
 
@@ -291,15 +704,33 @@ class ChainContext:
         Store a value in the context.
 
         Args:
-            key: Unique identifier for the value
-            value: The data to store
-            scope: Lifetime scope of the data
-            token_count: Estimated token count (for LLM context management)
-            metadata: Additional metadata about this entry
+            key (str): Unique identifier for the value.
+            value (Any): The data to store (any JSON-serializable type).
+            scope (ContextScope): Lifetime scope of the data.
+                Default: ContextScope.CHAIN.
+            token_count (int): Estimated token count for LLM tracking.
+                Default: 0.
+            metadata (dict[str, Any] | None): Additional metadata about
+                this entry. Default: None.
 
         Note:
             STEP-scoped data is isolated per step - parallel steps cannot
             see or interfere with each other's step-scoped data.
+
+        Example:
+            >>> # Store chain-wide data
+            >>> ctx.set("company", "Apple Inc", scope=ContextScope.CHAIN)
+            >>>
+            >>> # Store with token tracking
+            >>> ctx.set(
+            ...     "document",
+            ...     long_text,
+            ...     token_count=1500,
+            ...     metadata={"source": "sec_filing"},
+            ... )
+            >>>
+            >>> # Step-scoped temporary data
+            >>> ctx.set("temp_calc", result, scope=ContextScope.STEP)
         """
         current_step = self.current_step
 
@@ -345,16 +776,19 @@ class ChainContext:
         """
         Retrieve a value from the context.
 
+        Checks step-scoped storage first (current step only),
+        then falls back to chain/global storage.
+
         Args:
-            key: The key to look up
-            default: Value to return if key not found
+            key (str): The key to look up.
+            default (Any): Value to return if key not found. Default: None.
 
         Returns:
-            The stored value or default
+            Any: The stored value or default.
 
-        Note:
-            First checks step-scoped storage (current step only),
-            then falls back to chain/global storage.
+        Example:
+            >>> company = ctx.get("company")
+            >>> timeout = ctx.get("timeout", default=30)
         """
         with self._sync_lock:
             # First check step-scoped storage for current step
@@ -371,7 +805,24 @@ class ChainContext:
             return entry.value
 
     def get_entry(self, key: str) -> ContextEntry | None:
-        """Get the full context entry including metadata"""
+        """
+        Get the full context entry including metadata.
+
+        Unlike get(), this returns the ContextEntry wrapper with
+        all metadata (scope, timestamps, token count, etc.).
+
+        Args:
+            key (str): The key to look up.
+
+        Returns:
+            ContextEntry | None: The entry or None if not found.
+
+        Example:
+            >>> entry = ctx.get_entry("company")
+            >>> if entry:
+            ...     print(f"Created by: {entry.source_step}")
+            ...     print(f"Tokens: {entry.token_count}")
+        """
         with self._sync_lock:
             # First check step-scoped storage
             current_step = self.current_step
@@ -383,7 +834,21 @@ class ChainContext:
             return self._store.get(key)
 
     def has(self, key: str) -> bool:
-        """Check if a key exists in context"""
+        """
+        Check if a key exists in context.
+
+        Checks both step-scoped and shared storage.
+
+        Args:
+            key (str): The key to check.
+
+        Returns:
+            bool: True if the key exists.
+
+        Example:
+            >>> if ctx.has("company"):
+            ...     process_company(ctx.get("company"))
+        """
         with self._sync_lock:
             # Check step-scoped storage first
             current_step = self.current_step
@@ -393,7 +858,21 @@ class ChainContext:
             return key in self._store
 
     def delete(self, key: str) -> bool:
-        """Remove a key from context"""
+        """
+        Remove a key from context.
+
+        Checks step-scoped storage first, then shared storage.
+
+        Args:
+            key (str): The key to delete.
+
+        Returns:
+            bool: True if key was found and deleted.
+
+        Example:
+            >>> if ctx.delete("temp_data"):
+            ...     print("Temporary data cleaned up")
+        """
         with self._sync_lock:
             # Check step-scoped storage first
             current_step = self.current_step
@@ -409,7 +888,26 @@ class ChainContext:
             return False
 
     def keys(self, scope: ContextScope | None = None) -> list[str]:
-        """Get all keys, optionally filtered by scope"""
+        """
+        Get all keys, optionally filtered by scope.
+
+        Args:
+            scope (ContextScope | None): Filter by scope. If None, returns
+                all keys from shared store plus current step's storage.
+
+        Returns:
+            list[str]: List of keys matching the filter.
+
+        Example:
+            >>> # Get all keys
+            >>> all_keys = ctx.keys()
+            >>>
+            >>> # Get only step-scoped keys
+            >>> step_keys = ctx.keys(scope=ContextScope.STEP)
+            >>>
+            >>> # Get only chain-scoped keys
+            >>> chain_keys = ctx.keys(scope=ContextScope.CHAIN)
+        """
         with self._sync_lock:
             if scope == ContextScope.STEP:
                 # Only return keys from current step's storage
@@ -429,13 +927,41 @@ class ChainContext:
                 return [k for k, v in self._store.items() if v.scope == scope]
 
     def add_result(self, result: StepResult) -> None:
-        """Add a step execution result (thread-safe)"""
+        """
+        Add a step execution result (thread-safe).
+
+        Args:
+            result (StepResult): The step result to add.
+
+        Example:
+            >>> ctx.add_result(StepResult(
+            ...     step_name="fetch_data",
+            ...     output={"revenue": 394.3},
+            ...     duration_ms=500,
+            ...     token_count=100,
+            ... ))
+        """
         with self._sync_lock:
             self._results.append(result)
         logger.debug(f"Result added: {result.step_name} (success={result.success})")
 
     def get_result(self, step_name: str) -> StepResult | None:
-        """Get result for a specific step (thread-safe)"""
+        """
+        Get result for a specific step (thread-safe).
+
+        Returns the most recent result if step was executed multiple times.
+
+        Args:
+            step_name (str): Name of the step.
+
+        Returns:
+            StepResult | None: The result or None if step not found.
+
+        Example:
+            >>> result = ctx.get_result("fetch_data")
+            >>> if result and result.success:
+            ...     print(f"Fetch completed in {result.duration_ms}ms")
+        """
         with self._sync_lock:
             for result in reversed(self._results):
                 if result.step_name == step_name:
@@ -449,9 +975,24 @@ class ChainContext:
         Uses contextvars for async-task-safe step tracking, so parallel
         steps each have their own current_step value.
 
+        Args:
+            step_name (str): Name of the step being entered.
+
         Returns:
-            Token that must be passed to exit_step() to properly reset
-            the contextvar (enables proper nesting if needed).
+            contextvars.Token: Token that must be passed to exit_step()
+                to properly reset the contextvar.
+
+        Note:
+            Prefer using step_scope() context manager instead of
+            manually calling enter_step/exit_step.
+
+        Example:
+            >>> token = ctx.enter_step("my_step")
+            >>> try:
+            ...     # Step execution
+            ...     pass
+            ... finally:
+            ...     ctx.exit_step(token)
         """
         token = _current_step_var.set(step_name)
         logger.debug(f"Entering step: {step_name}")
@@ -459,12 +1000,25 @@ class ChainContext:
 
     def exit_step(self, token: contextvars.Token | None = None) -> None:
         """
-        Called when exiting a step - cleans up step-scoped data for THIS step only.
+        Called when exiting a step - cleans up step-scoped data.
+
+        Cleans up only THIS step's storage, not other parallel steps.
 
         Args:
-            token: The token returned by enter_step(). If provided, uses it
-                   to properly reset the contextvar. If not provided, just
-                   resets to None (for backward compatibility).
+            token (contextvars.Token | None): The token returned by
+                enter_step(). If provided, uses it to properly reset
+                the contextvar. If not provided, resets to None.
+
+        Note:
+            Prefer using step_scope() context manager instead of
+            manually calling enter_step/exit_step.
+
+        Example:
+            >>> token = ctx.enter_step("my_step")
+            >>> try:
+            ...     ctx.set("temp", value, scope=ContextScope.STEP)
+            ... finally:
+            ...     ctx.exit_step(token)  # temp is cleaned up
         """
         step_name = self.current_step
 
@@ -492,17 +1046,28 @@ class ChainContext:
         Ensures step-scoped data is always cleaned up, even if the step
         raises an exception. This prevents data leaks between steps.
 
-        Usage:
-            async with ctx.step_scope("my_step"):
-                ctx.set("temp", value, scope=ContextScope.STEP)
-                # ... step logic ...
-            # Automatic cleanup on exit, even on exception
-
         Args:
-            step_name: Name of the step being executed
+            step_name (str): Name of the step being executed.
 
         Yields:
-            The context (self) for chaining
+            ChainContext: The context (self) for chaining.
+
+        Example:
+            >>> async with ctx.step_scope("process_data"):
+            ...     # Set step-scoped data
+            ...     ctx.set("temp", intermediate_result, scope=ContextScope.STEP)
+            ...
+            ...     # Do processing
+            ...     result = await process(ctx.get("temp"))
+            ...
+            ...     # Store chain-scoped result
+            ...     ctx.set("result", result, scope=ContextScope.CHAIN)
+            ...
+            ... # temp is automatically cleaned up here, result persists
+
+        See Also:
+            step_scope_sync(): Synchronous version.
+            enter_step(), exit_step(): Low-level step management.
         """
         token = self.enter_step(step_name)
         try:
@@ -515,20 +1080,22 @@ class ChainContext:
         """
         Sync context manager for step execution with automatic cleanup.
 
-        Ensures step-scoped data is always cleaned up, even if the step
-        raises an exception. This prevents data leaks between steps.
-
-        Usage:
-            with ctx.step_scope_sync("my_step"):
-                ctx.set("temp", value, scope=ContextScope.STEP)
-                # ... step logic ...
-            # Automatic cleanup on exit, even on exception
+        Synchronous version of step_scope() for non-async code.
 
         Args:
-            step_name: Name of the step being executed
+            step_name (str): Name of the step being executed.
 
         Yields:
-            The context (self) for chaining
+            ChainContext: The context (self) for chaining.
+
+        Example:
+            >>> with ctx.step_scope_sync("process_data"):
+            ...     ctx.set("temp", value, scope=ContextScope.STEP)
+            ...     # ... step logic ...
+            ... # Automatic cleanup on exit
+
+        See Also:
+            step_scope(): Async version.
         """
         token = self.enter_step(step_name)
         try:
@@ -545,22 +1112,25 @@ class ChainContext:
         Export context as dictionary (for serialization).
 
         Args:
-            serializer: Optional serializer for redacting/truncating large fields.
-                       If None, uses default serialization (may be large!).
-            include_data: Whether to include context data (False for lightweight summary)
+            serializer (ContextSerializer | None): Optional serializer for
+                redacting/truncating large fields. If None, uses default
+                serialization (may be large!).
+            include_data (bool): Whether to include context data.
+                Set False for lightweight summary. Default: True.
 
         Returns:
-            JSON-serializable dictionary
+            dict[str, Any]: JSON-serializable dictionary.
 
-        Usage:
-            # Default (may include huge payloads)
-            ctx.to_dict()
-
-            # With serializer for safe logging/API responses
-            ctx.to_dict(serializer=TruncatingSerializer(max_size=1000))
-
-            # Lightweight summary only
-            ctx.to_dict(include_data=False)
+        Example:
+            >>> # Full export (may be large)
+            >>> full_dict = ctx.to_dict()
+            >>>
+            >>> # With truncation for logging
+            >>> from agentorchestrator.core.serializers import TruncatingSerializer
+            >>> safe_dict = ctx.to_dict(serializer=TruncatingSerializer(max_size=1000))
+            >>>
+            >>> # Lightweight summary only
+            >>> summary = ctx.to_dict(include_data=False)
         """
         with self._sync_lock:
             result = {
@@ -588,7 +1158,19 @@ class ChainContext:
             return result
 
     def clone(self) -> "ChainContext":
-        """Create a deep copy of the context (thread-safe)"""
+        """
+        Create a deep copy of the context (thread-safe).
+
+        Useful for creating isolated context copies for parallel
+        execution or testing.
+
+        Returns:
+            ChainContext: A new context with deep-copied data.
+
+        Example:
+            >>> ctx_copy = ctx.clone()
+            >>> ctx_copy.set("new_key", "value")  # Doesn't affect original
+        """
         with self._sync_lock:
             new_ctx = ChainContext(
                 request_id=self.request_id,
@@ -616,23 +1198,31 @@ class ChainContext:
         """
         Add a citation to the context's citation collection.
 
-        This is a convenience method for tracking citations during chain execution.
-        Citations are collected and can be used for verification and reporting.
+        Citations track data provenance and enable source verification.
+        Use this to document where data came from and why it's relevant.
 
         Args:
-            content: Verbatim quote from source
-            source_name: Name of the source (agent name, document, etc.)
-            source_type: Type of source ('agent', 'document', 'api', 'llm')
-            reasoning: Why this source supports the claim
-            document_id: Document identifier if applicable
-            **kwargs: Additional citation fields
+            content (str): Verbatim quote from source.
+            source_name (str): Name of the source (agent, document, etc.).
+            source_type (str): Type of source. Default: "agent".
+                Options: "agent", "document", "api", "llm".
+            reasoning (str | None): Why this source supports the claim.
+            document_id (str | None): Document identifier if applicable.
+            **kwargs: Additional citation fields (page_number, etc.).
 
         Example:
-            ctx.add_citation(
-                content="Total net sales were $394,328 million",
-                source_name="sec_filing_agent",
-                reasoning="Direct revenue figure from 10-K filing",
-            )
+            >>> ctx.add_citation(
+            ...     content="Total net sales were $394,328 million",
+            ...     source_name="sec_filing_agent",
+            ...     source_type="document",
+            ...     reasoning="Direct revenue figure from 10-K filing",
+            ...     document_id="AAPL-10K-2024",
+            ...     page_number=45,
+            ... )
+
+        See Also:
+            get_citations(): Retrieve stored citations.
+            verify_citations(): Verify citations against sources.
         """
         from agentorchestrator.models.citation import Citation, CitationCollection
 
@@ -656,12 +1246,20 @@ class ChainContext:
         """
         Add raw source content for citation verification.
 
-        When agents return data, store the raw content here so citations
-        can be verified against the original source.
+        Store the raw content from sources so citations can be
+        verified against the original text.
 
         Args:
-            source_name: Name of the source (should match citation.source_name)
-            content: Raw content from the source
+            source_name (str): Name of the source (should match
+                citation.source_name for verification).
+            content (str): Raw content from the source.
+
+        Example:
+            >>> ctx.add_source_content(
+            ...     "sec_filing",
+            ...     raw_10k_text,
+            ... )
+            >>> # Later citations can be verified against this
         """
         from agentorchestrator.models.citation import CitationCollection
 
@@ -677,10 +1275,18 @@ class ChainContext:
         Get citations from the context.
 
         Args:
-            source_name: Filter by source name (optional)
+            source_name (str | None): Filter by source name.
+                If None, returns all citations.
 
         Returns:
-            List of Citation objects
+            list[Citation]: List of Citation objects.
+
+        Example:
+            >>> # Get all citations
+            >>> all_citations = ctx.get_citations()
+            >>>
+            >>> # Get citations from specific source
+            >>> sec_citations = ctx.get_citations(source_name="sec_filing")
         """
         from agentorchestrator.models.citation import CitationCollection
 
@@ -696,8 +1302,17 @@ class ChainContext:
         """
         Verify all citations against stored source content.
 
+        Checks if each citation's content exists in the corresponding
+        source's raw content.
+
         Returns:
-            Dict mapping citation index to verification result
+            dict[str, bool]: Mapping of citation index to verification result.
+
+        Example:
+            >>> results = ctx.verify_citations()
+            >>> for idx, verified in results.items():
+            ...     status = "verified" if verified else "NOT FOUND"
+            ...     print(f"Citation {idx}: {status}")
         """
         from agentorchestrator.models.citation import CitationCollection
 
@@ -712,7 +1327,12 @@ class ChainContext:
         Get a summary of citation coverage and verification.
 
         Returns:
-            Dict with citation statistics
+            dict[str, Any]: Statistics including total citations,
+                verified count, and per-source breakdown.
+
+        Example:
+            >>> summary = ctx.get_citation_summary()
+            >>> print(f"Total: {summary['total']}, Verified: {summary['verified']}")
         """
         from agentorchestrator.models.citation import CitationCollection
 
@@ -723,18 +1343,53 @@ class ChainContext:
         return collection.get_verification_summary()
 
     def __repr__(self) -> str:
+        """Return string representation of the context."""
         return f"ChainContext(request_id={self.request_id}, keys={len(self._store)}, results={len(self._results)})"
 
 
 class ContextManager:
     """
     Global context manager for managing multiple chain contexts.
-    Useful for concurrent chain executions.
+
+    Singleton pattern for tracking concurrent chain executions.
+    Each chain execution gets its own ChainContext identified by request_id.
+
+    Attributes:
+        _contexts (dict[str, ChainContext]): Active contexts by request ID.
+        _global_store (dict[str, Any]): Global values available to all contexts.
+
+    Methods:
+        create_context(): Create and register a new chain context.
+        get_context(): Get an existing context by request ID.
+        remove_context(): Remove a context after chain completion.
+        set_global(): Set a global value available to all contexts.
+        get_global(): Get a global value.
+
+    Example:
+        >>> manager = ContextManager()  # Singleton
+        >>>
+        >>> # Create context for a chain execution
+        >>> ctx = manager.create_context("req_123", {"company": "Apple"})
+        >>>
+        >>> # Retrieve later
+        >>> ctx = manager.get_context("req_123")
+        >>>
+        >>> # Cleanup after execution
+        >>> manager.remove_context("req_123")
+        >>>
+        >>> # Set/get global values
+        >>> manager.set_global("config", config_dict)
+        >>> config = manager.get_global("config")
+
+    Note:
+        ContextManager is a singleton - all instances share state.
+        Use this for managing contexts across concurrent chain executions.
     """
 
     _instance: Optional["ContextManager"] = None
 
     def __new__(cls) -> "ContextManager":
+        """Create or return the singleton instance."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._contexts: dict[str, ChainContext] = {}
@@ -746,26 +1401,84 @@ class ContextManager:
         request_id: str,
         initial_data: dict[str, Any] | None = None,
     ) -> ChainContext:
-        """Create and register a new chain context"""
+        """
+        Create and register a new chain context.
+
+        Args:
+            request_id (str): Unique identifier for the chain execution.
+            initial_data (dict[str, Any] | None): Initial data for context.
+
+        Returns:
+            ChainContext: The newly created context.
+
+        Example:
+            >>> ctx = manager.create_context("req_123", {"query": "Apple"})
+        """
         ctx = ChainContext(request_id=request_id, initial_data=initial_data)
         self._contexts[request_id] = ctx
         return ctx
 
     def get_context(self, request_id: str) -> ChainContext | None:
-        """Get an existing context by request ID"""
+        """
+        Get an existing context by request ID.
+
+        Args:
+            request_id (str): The request ID to look up.
+
+        Returns:
+            ChainContext | None: The context or None if not found.
+
+        Example:
+            >>> ctx = manager.get_context("req_123")
+            >>> if ctx:
+            ...     print(f"Found context with {len(ctx.results)} results")
+        """
         return self._contexts.get(request_id)
 
     def remove_context(self, request_id: str) -> bool:
-        """Remove a context after chain completion"""
+        """
+        Remove a context after chain completion.
+
+        Args:
+            request_id (str): The request ID to remove.
+
+        Returns:
+            bool: True if context was found and removed.
+
+        Example:
+            >>> if manager.remove_context("req_123"):
+            ...     print("Context cleaned up")
+        """
         if request_id in self._contexts:
             del self._contexts[request_id]
             return True
         return False
 
     def set_global(self, key: str, value: Any) -> None:
-        """Set a global value available to all contexts"""
+        """
+        Set a global value available to all contexts.
+
+        Args:
+            key (str): The key to store.
+            value (Any): The value to store.
+
+        Example:
+            >>> manager.set_global("api_config", {"timeout": 30})
+        """
         self._global_store[key] = value
 
     def get_global(self, key: str, default: Any = None) -> Any:
-        """Get a global value"""
+        """
+        Get a global value.
+
+        Args:
+            key (str): The key to look up.
+            default (Any): Value to return if not found.
+
+        Returns:
+            Any: The stored value or default.
+
+        Example:
+            >>> config = manager.get_global("api_config", {})
+        """
         return self._global_store.get(key, default)

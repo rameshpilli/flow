@@ -1,8 +1,73 @@
 """
 AgentOrchestrator Main Class
+============================
 
-A DAG-based Chain Orchestration Framework inspired by Dagster patterns.
-Provides decorator-driven registration, dependency resolution, and execution.
+This module provides the main AgentOrchestrator class - a DAG-based Chain
+Orchestration Framework inspired by Dagster patterns.
+
+AgentOrchestrator is the central class for defining, validating, and executing
+chains of steps. It provides decorator-driven registration, dependency resolution,
+parallel execution, and comprehensive lifecycle management.
+
+Classes:
+    Definitions: Container for AgentOrchestrator definitions (agents, steps, chains).
+    AgentOrchestrator: Main orchestrator class with all registration and execution methods.
+
+Functions:
+    get_orchestrator: Get or create the default global orchestrator instance.
+    set_orchestrator: Set the default global orchestrator instance.
+
+Usage:
+    import agentorchestrator as ao
+
+    # Define an agent
+    @ao.agent
+    class NewsAgent:
+        async def fetch(self, query: str) -> dict: ...
+
+    # Define steps with dependencies
+    @ao.step
+    async def extract_company(ctx):
+        return {"company": "Apple"}
+
+    @ao.step(deps=[extract_company])
+    async def fetch_data(ctx):
+        return {"data": [...]}
+
+    # Define and run a chain
+    @ao.chain
+    class MyChain:
+        steps = [extract_company, fetch_data]
+
+    result = await ao.launch("MyChain", {"query": "Apple"})
+
+Example:
+    >>> from agentorchestrator import AgentOrchestrator
+    >>>
+    >>> # Create isolated orchestrator instance
+    >>> ao = AgentOrchestrator(name="my_app", isolated=True)
+    >>>
+    >>> # Register components
+    >>> @ao.step
+    ... async def my_step(ctx):
+    ...     return {"result": "success"}
+    >>>
+    >>> @ao.chain
+    ... class MyChain:
+    ...     steps = [my_step]
+    >>>
+    >>> # Validate and visualize
+    >>> ao.check()  # Validate all definitions
+    >>> ao.graph("MyChain")  # ASCII DAG visualization
+    >>>
+    >>> # Execute
+    >>> result = await ao.launch("MyChain", {"input": "data"})
+    >>> print(result["success"])  # True
+
+See Also:
+    - agentorchestrator.core.context: ChainContext for step data flow.
+    - agentorchestrator.core.decorators: Module-level decorator functions.
+    - agentorchestrator.agents.base: Base classes for agents.
 """
 
 import asyncio
@@ -52,7 +117,22 @@ class Definitions:
     """
     Container for AgentOrchestrator definitions (similar to Dagster's Definitions).
 
-    Holds all registered agents, steps, chains, and resources.
+    Holds all registered agents, steps, chains, and resources. Use this
+    to bundle and organize definitions for deployment or testing.
+
+    Attributes:
+        agents (list[Any]): List of agent classes.
+        steps (list[Any]): List of step functions.
+        chains (list[Any]): List of chain classes.
+        resources (dict[str, Any]): Dict of resource name to resource.
+
+    Example:
+        >>> defs = Definitions(
+        ...     agents=[NewsAgent, SECAgent],
+        ...     steps=[extract_company, fetch_data],
+        ...     chains=[MyChain],
+        ...     resources={"db": db_pool},
+        ... )
     """
 
     def __init__(
@@ -62,6 +142,15 @@ class Definitions:
         chains: list[Any] | None = None,
         resources: dict[str, Any] | None = None,
     ):
+        """
+        Initialize a Definitions container.
+
+        Args:
+            agents (list[Any] | None): List of agent classes.
+            steps (list[Any] | None): List of step functions.
+            chains (list[Any] | None): List of chain classes.
+            resources (dict[str, Any] | None): Dict of resources.
+        """
         self.agents = agents or []
         self.steps = steps or []
         self.chains = chains or []
@@ -70,37 +159,94 @@ class Definitions:
 
 class AgentOrchestrator:
     """
-    AgentOrchestrator: A DAG-based Chain Orchestration Framework
+    AgentOrchestrator: A DAG-based Chain Orchestration Framework.
 
-    Inspired by Dagster's clean API patterns. Provides:
-    - @ao.step() - Define processing steps (like @asset)
-    - @ao.agent() - Define data agents (like resources)
-    - @ao.chain() - Define execution chains (like @job)
+    Inspired by Dagster's clean API patterns, AgentOrchestrator provides
+    a powerful yet simple way to define and execute chains of processing
+    steps with dependency management, parallel execution, and resilience.
 
-    Usage:
-        import agentorchestrator as ao
+    Attributes:
+        name (str): Name of this orchestrator instance.
+        version (str): Version string for this instance.
 
-        # Define an agent
-        @ao.agent
-        class NewsAgent:
-            async def fetch(self, query: str) -> dict: ...
+    Core Decorators:
+        agent(): Register a class as a data agent.
+        step(): Register a function as a chain step.
+        chain(): Register a class as an execution chain.
 
-        # Define steps with dependencies via 'deps' parameter
-        @ao.step
-        def extract_company(ctx: ao.Context) -> dict: ...
+    Execution Methods:
+        launch(): Execute a chain asynchronously.
+        launch_sync(): Execute a chain synchronously.
+        run_step(): Run a single step in isolation.
+        launch_resumable(): Execute with checkpointing for resume.
+        resume(): Resume a failed chain run.
 
-        @ao.step(deps=[extract_company])
-        def fetch_data(ctx: ao.Context) -> dict: ...
+    Validation Methods:
+        check(): Validate all definitions and show DAG structure.
+        list_defs(): List all registered definitions.
+        graph(): Generate DAG visualization.
 
-        # Define a chain
-        @ao.chain
-        class MeetingPrepChain:
-            steps = [extract_company, fetch_data]
+    Registration Methods:
+        register_agent(): Programmatically register an agent.
+        register_step(): Programmatically register a step.
+        register_chain(): Programmatically register a chain.
+        register_resource(): Register a shared resource.
+        resource(): Decorator for resource factories.
 
-        # Validate & Run
-        ao.check()                    # Validate definitions
-        ao.list_defs()                # List all definitions
-        await ao.launch("my_chain")   # Execute chain
+    Discovery Methods:
+        list_agents(): List all registered agents.
+        list_steps(): List all registered steps.
+        list_chains(): List all registered chains.
+        list_resources(): List all registered resources.
+        get_agent(): Get an agent instance by name.
+        get_resource(): Get a resource by name.
+
+    Lifecycle Methods:
+        clear(): Clear all registrations.
+        cleanup_resources(): Cleanup all managed resources.
+
+    Example:
+        >>> import agentorchestrator as ao
+        >>>
+        >>> # Define an agent
+        >>> @ao.agent
+        ... class NewsAgent:
+        ...     async def fetch(self, query: str) -> dict:
+        ...         return {"news": [...]}
+        >>>
+        >>> # Define steps with dependencies via 'deps' parameter
+        >>> @ao.step
+        ... def extract_company(ctx):
+        ...     return {"company": ctx.get("query")}
+        >>>
+        >>> @ao.step(deps=[extract_company])
+        ... def fetch_data(ctx):
+        ...     company = ctx.get("company")
+        ...     return {"data": [...]}
+        >>>
+        >>> # Define a chain
+        >>> @ao.chain
+        ... class MeetingPrepChain:
+        ...     steps = [extract_company, fetch_data]
+        >>>
+        >>> # Validate & Run
+        >>> ao.check()                    # Validate definitions
+        >>> ao.list_defs()                # List all definitions
+        >>> result = await ao.launch("MeetingPrepChain", {"query": "Apple"})
+
+    Context Manager Usage:
+        >>> async with AgentOrchestrator(isolated=True) as ao:
+        ...     @ao.step
+        ...     async def temp_step(ctx):
+        ...         return {"result": "test"}
+        ...
+        ...     result = await ao.launch("TempChain")
+        ... # Resources automatically cleaned up
+
+    See Also:
+        ChainContext: Context object passed to steps.
+        agentorchestrator.agents.base: Base classes for agents.
+        agentorchestrator.core.decorators: Module-level decorators.
     """
 
     def __init__(
@@ -119,36 +265,60 @@ class AgentOrchestrator:
         checkpoint_dir: str | None = None,
     ):
         """
-        Initialize a AgentOrchestrator instance.
+        Initialize an AgentOrchestrator instance.
 
         Args:
-            name: Name of this AgentOrchestrator instance
-            version: Version string
-            max_parallel: Maximum concurrent steps (enforced via semaphore)
-            default_timeout_ms: Default timeout for steps in milliseconds
-            isolated: If True (default), create isolated registries (prevents state bleed)
-            agent_registry: Custom agent registry (overrides isolated flag)
-            step_registry: Custom step registry (overrides isolated flag)
-            chain_registry: Custom chain registry (overrides isolated flag)
-            run_store: Custom run store for checkpointing (overrides checkpoint_dir)
-            checkpoint_dir: Directory for file-based checkpoints (default: in-memory)
+            name (str): Name of this orchestrator instance. Used in logging
+                and identification. Default: "agentorchestrator".
+            version (str): Version string. Default: "1.0.0".
+            max_parallel (int): Maximum concurrent steps during execution.
+                Enforced via semaphore. Default: 10.
+            default_timeout_ms (int): Default timeout for steps in milliseconds.
+                Default: 30000 (30 seconds).
+            isolated (bool): If True (default), create isolated registries.
+                This prevents state bleed between tests or instances.
+                Set to False to use global shared registries.
+            agent_registry (AgentRegistry | None): Custom agent registry.
+                Overrides the isolated flag if provided.
+            step_registry (StepRegistry | None): Custom step registry.
+                Overrides the isolated flag if provided.
+            chain_registry (ChainRegistry | None): Custom chain registry.
+                Overrides the isolated flag if provided.
+            run_store (RunStore | None): Custom run store for checkpointing.
+                Overrides checkpoint_dir if provided.
+            checkpoint_dir (str | None): Directory for file-based checkpoints.
+                If None, uses in-memory storage (lost on restart).
 
         Example:
-            # Use isolated registries (default, prevents state bleed)
-            ao = AgentOrchestrator()
+            >>> # Default isolated instance (recommended)
+            >>> ao = AgentOrchestrator()
+            >>>
+            >>> # Named instance with custom settings
+            >>> ao = AgentOrchestrator(
+            ...     name="my_app",
+            ...     max_parallel=5,
+            ...     default_timeout_ms=60000,
+            ... )
+            >>>
+            >>> # Use global shared registries (for backward compatibility)
+            >>> ao = AgentOrchestrator(isolated=False)
+            >>>
+            >>> # With file-based checkpointing for resumability
+            >>> ao = AgentOrchestrator(checkpoint_dir="/tmp/checkpoints")
+            >>>
+            >>> # With custom registries for testing
+            >>> from agentorchestrator.core.registry import create_isolated_registries
+            >>> a, s, c = create_isolated_registries()
+            >>> ao = AgentOrchestrator(
+            ...     agent_registry=a,
+            ...     step_registry=s,
+            ...     chain_registry=c,
+            ... )
 
-            # Use global shared registries (for backward compatibility)
-            ao = AgentOrchestrator(isolated=False)
-
-            # Use custom registries
-            from agentorchestrator.core.registry import create_isolated_registries
-            a, s, c = create_isolated_registries()
-            ao = AgentOrchestrator(agent_registry=a, step_registry=s, chain_registry=c)
-
-            # Context manager for temporary registries
-            with AgentOrchestrator.temp_registries() as ao:
-                @ao.step
-                def temp_step(ctx): ...
+        Note:
+            Use `isolated=True` (default) for testing to prevent state bleed
+            between test cases. Use `isolated=False` only when you need
+            multiple orchestrator instances to share registrations.
         """
         self.name = name
         self.version = version
@@ -211,32 +381,57 @@ class AgentOrchestrator:
     @classmethod
     def temp_registries(cls, name: str = "temp", **kwargs) -> "AgentOrchestrator":
         """
-        Create a AgentOrchestrator instance with temporary isolated registries.
+        Create an AgentOrchestrator instance with temporary isolated registries.
 
         Use as a context manager for temporary definitions that are
-        automatically cleaned up.
+        automatically cleaned up when exiting the context.
 
-        Usage:
-            with AgentOrchestrator.temp_registries() as ao:
-                @ao.step
-                def my_step(ctx): ...
+        Args:
+            name (str): Name for the temporary instance. Default: "temp".
+            **kwargs: Additional arguments passed to __init__.
 
-                result = await ao.launch("my_chain")
-            # Registries automatically cleared after block
+        Returns:
+            AgentOrchestrator: New instance with isolated registries.
+
+        Example:
+            >>> with AgentOrchestrator.temp_registries() as ao:
+            ...     @ao.step
+            ...     def my_step(ctx):
+            ...         return {"result": "test"}
+            ...
+            ...     @ao.chain
+            ...     class TestChain:
+            ...         steps = [my_step]
+            ...
+            ...     result = ao.launch_sync("TestChain")
+            ... # Registries automatically cleared after block
         """
         return cls(name=name, isolated=True, **kwargs)
 
     def __enter__(self) -> "AgentOrchestrator":
-        """Enter context manager."""
+        """
+        Enter context manager.
+
+        Returns:
+            AgentOrchestrator: This instance.
+        """
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """
         Exit context manager with resource cleanup.
 
-        Note: For sync context manager, we attempt to run async cleanup
-        in a new event loop. For better cleanup guarantees, use the
-        async context manager (async with).
+        Cleans up managed resources and clears registries if isolated.
+
+        Note:
+            For sync context manager, async cleanup is attempted via
+            new event loop. For better cleanup guarantees, use the
+            async context manager (async with).
+
+        Args:
+            exc_type: Exception type if an error occurred.
+            exc_val: Exception value if an error occurred.
+            exc_tb: Exception traceback if an error occurred.
         """
         try:
             self._cleanup_resources_sync()
@@ -251,7 +446,8 @@ class AgentOrchestrator:
         Synchronously cleanup resources with timeout.
 
         Args:
-            timeout_seconds: Maximum time to wait for cleanup (default 30s)
+            timeout_seconds (float): Maximum time to wait for cleanup.
+                Default: 30.0 seconds.
         """
         try:
             loop = asyncio.get_running_loop()
@@ -265,18 +461,30 @@ class AgentOrchestrator:
                 logger.warning(f"Failed to cleanup resources: {e}")
 
     async def __aenter__(self) -> "AgentOrchestrator":
-        """Async context manager entry."""
+        """
+        Async context manager entry.
+
+        Returns:
+            AgentOrchestrator: This instance.
+        """
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """
         Async context manager exit with proper resource cleanup.
 
-        This ensures all managed resources (DB connections, HTTP clients, etc.)
-        are properly cleaned up when exiting the context, preventing:
+        Ensures all managed resources (DB connections, HTTP clients, etc.)
+        are properly cleaned up when exiting the context.
+
+        This prevents:
         - Memory leaks from unclosed connections
         - Connection pool exhaustion
         - File handle leaks
+
+        Args:
+            exc_type: Exception type if an error occurred.
+            exc_val: Exception value if an error occurred.
+            exc_tb: Exception traceback if an error occurred.
         """
         try:
             await self.cleanup_resources(timeout_seconds=30.0)
@@ -305,36 +513,47 @@ class AgentOrchestrator:
         """
         Register a data agent (similar to Dagster's resource).
 
+        Agents are responsible for fetching data from external sources.
+        They can be wrapped with resilience (timeout, retry, circuit-breaker)
+        for production use.
+
         Args:
-            cls: Agent class (auto-provided when used without parentheses)
-            name: Custom agent name (default: class name)
-            description: Agent description
-            group: Group name for organization
-            resilient: If True, auto-wrap instances in ResilientAgent
-            resilient_config: Config for ResilientAgent (timeout_seconds, max_retries, etc.)
+            cls (type[T] | None): Agent class (auto-provided when used
+                without parentheses).
+            name (str | None): Custom agent name. Default: class name.
+            description (str): Human-readable description.
+            group (str | None): Group name for organization.
+            resilient (bool): If True, auto-wrap instances in ResilientAgent.
+                Default: False.
+            resilient_config (dict[str, Any] | None): Config for ResilientAgent.
+                Keys: timeout_seconds, max_retries, circuit_failure_threshold.
 
-        Usage:
-            @ao.agent
-            class NewsAgent:
-                async def fetch(self, query: str) -> dict: ...
+        Returns:
+            type[T] | Callable[[type[T]], type[T]]: Decorated class or decorator.
 
-            @ao.agent(name="sec_agent", group="financial")
-            class SECFilingAgent:
-                async def fetch(self, query: str) -> dict: ...
-                
-            @ao.agent(
-                name="earnings_agent",
-                resilient=True,
-                resilient_config={"timeout_seconds": 30.0, "max_retries": 2}
-            )
-            class EarningsAgent(MCPAgent):
-                def __init__(self, mcp_url: str | None = None, **kwargs):
-                    super().__init__(**kwargs)
-                    if mcp_url:
-                        self.connector_config = ConnectorConfig(
-                            name="earnings_mcp",
-                            base_url=mcp_url
-                        )
+        Example:
+            >>> @ao.agent
+            ... class NewsAgent:
+            ...     async def fetch(self, query: str) -> dict:
+            ...         return {"news": [...]}
+            >>>
+            >>> @ao.agent(name="sec_agent", group="financial")
+            ... class SECFilingAgent:
+            ...     async def fetch(self, query: str) -> dict:
+            ...         return {"filings": [...]}
+            >>>
+            >>> @ao.agent(
+            ...     name="earnings_agent",
+            ...     resilient=True,
+            ...     resilient_config={"timeout_seconds": 30.0, "max_retries": 2},
+            ... )
+            ... class EarningsAgent:
+            ...     async def fetch(self, ticker: str) -> dict:
+            ...         return {"earnings": {...}}
+
+        See Also:
+            get_agent(): Retrieve an agent instance by name.
+            agentorchestrator.agents.base.BaseAgent: Base class for agents.
         """
 
         def decorator(cls: type[T]) -> type[T]:
@@ -377,50 +596,63 @@ class AgentOrchestrator:
         """
         Register a chain step (similar to Dagster's @asset).
 
-        Dependencies can be specified via:
-        1. deps parameter (list of step functions or names)
-        2. Function parameters (automatic resolution)
+        Steps are the building blocks of chains. Each step receives a
+        ChainContext and can read from or write to it.
 
-        Resources can be injected via the 'resources' parameter.
+        Args:
+            func (F | None): Step function (auto-provided when used
+                without parentheses).
+            name (str | None): Custom step name. Default: function name.
+            deps (list[Any] | None): Steps that must complete before this one.
+                Can be step functions or string names.
+            dependencies (list[Any] | None): Alias for deps (backward compat).
+            produces (list[str] | None): Context keys this step produces.
+            resources (list[str] | None): Resource names to inject as kwargs.
+            description (str): Human-readable description.
+            group (str | None): Step group for organization.
+            timeout_ms (int): Execution timeout in milliseconds. Default: 30000.
+            retry (int): Number of retries on failure. Default: 0.
+            max_concurrency (int | None): Max parallel instances. None = unlimited.
+            input_model (type | None): Pydantic model to validate input.
+            output_model (type | None): Pydantic model to validate output.
+            input_key (str | None): Context key to validate. Default: "request".
+            validate_output (bool): Whether to validate output. Default: True.
 
-        Input/Output Contracts:
-        - input_model: Pydantic model to validate input data (fail-fast on bad payloads)
-        - output_model: Pydantic model to validate step output
-        - input_key: Context key to validate (default: "request")
-        - validate_output: Whether to validate output (default: True)
+        Returns:
+            F | Callable[[F], F]: Decorated function or decorator.
 
-        Usage:
-            @fg.step
-            async def extract_company(ctx): ...
+        Example:
+            >>> @ao.step
+            ... async def extract_company(ctx):
+            ...     return {"company": ctx.get("query")}
+            >>>
+            >>> @ao.step(deps=[extract_company], produces=["data"])
+            ... async def fetch_data(ctx):
+            ...     company = ctx.get("company")
+            ...     return {"data": [...]}
+            >>>
+            >>> # With resource injection
+            >>> @ao.step(resources=["db", "llm"])
+            ... async def process_with_resources(ctx, db, llm):
+            ...     data = await db.query("...")
+            ...     summary = await llm.generate("...")
+            ...     return {"summary": summary}
+            >>>
+            >>> # With input/output contracts (fail-fast validation)
+            >>> from pydantic import BaseModel
+            >>>
+            >>> class RequestModel(BaseModel):
+            ...     query: str
+            ...     limit: int = 10
+            >>>
+            >>> @ao.step(input_model=RequestModel, input_key="request")
+            ... async def validated_step(ctx):
+            ...     request = ctx.get("request")  # Already validated
+            ...     return {"result": request.query}
 
-            @fg.step(deps=[extract_company], produces=["company_data"])
-            async def process_data(ctx): ...
-
-            # Or with group
-            @fg.step(group="context_builder")
-            async def build_context(ctx): ...
-
-            # Limit concurrency for rate-limited APIs
-            @fg.step(max_concurrency=2)
-            async def call_external_api(ctx): ...
-
-            # With resource injection
-            @fg.step(resources=["db", "llm"])
-            async def fetch_data(ctx, db, llm):
-                # db and llm are automatically injected
-                data = await db.query("...")
-                summary = await llm.generate("...")
-
-            # With input/output contracts (fail-fast validation)
-            @fg.step(
-                input_model=ChainRequest,
-                output_model=ContextBuilderOutput,
-                input_key="request",
-            )
-            async def context_builder(ctx) -> ContextBuilderOutput:
-                request = ctx.get("request")  # Already validated as ChainRequest
-                # ... process ...
-                return output  # Validated against ContextBuilderOutput
+        See Also:
+            chain(): Combine steps into chains.
+            register_resource(): Register resources for injection.
         """
         resource_manager = self._resource_manager
 
@@ -508,28 +740,52 @@ class AgentOrchestrator:
         """
         Register a chain (similar to Dagster's @job).
 
-        Supports chain composition - you can include other chains as steps,
-        and they will be automatically expanded into wrapper steps that
-        execute the subchain.
+        Chains define the execution order of steps. Supports chain composition
+        where other chains can be included as steps.
 
-        Usage:
-            @fg.chain
-            class MeetingPrepChain:
-                steps = ["extract_company", "fetch_data", "build_response"]
+        Args:
+            cls (type[T] | None): Chain class (auto-provided when used
+                without parentheses).
+            name (str | None): Custom chain name. Default: class name.
+            description (str): Human-readable description.
+            group (str | None): Chain group for organization.
 
-            # Or with step functions directly
-            @fg.chain
-            class MyChain:
-                steps = [extract_company, fetch_data]
+        Returns:
+            type[T] | Callable[[type[T]], type[T]]: Decorated class or decorator.
 
-            # Chain composition - include other chains as steps
-            @fg.chain
-            class ParentChain:
-                steps = [
-                    "preprocessing_step",
-                    "child_chain",       # Another chain as a step
-                    "postprocessing_step",
-                ]
+        Example:
+            >>> @ao.chain
+            ... class MeetingPrepChain:
+            ...     steps = ["extract_company", "fetch_data", "build_response"]
+            >>>
+            >>> # With step functions directly
+            >>> @ao.chain
+            ... class MyChain:
+            ...     steps = [extract_company, fetch_data]
+            >>>
+            >>> # Chain composition - include other chains as steps
+            >>> @ao.chain
+            ... class ParentChain:
+            ...     steps = [
+            ...         "preprocessing_step",
+            ...         "child_chain",  # Another chain as a step
+            ...         "postprocessing_step",
+            ...     ]
+            >>>
+            >>> # With error handling configuration
+            >>> @ao.chain
+            ... class ResilientChain:
+            ...     steps = ["step1", "step2", "step3"]
+            ...     error_handling = "continue"  # Continue on step failure
+
+        Chain Class Attributes:
+            steps (list): Required. List of step functions or names.
+            error_handling (str): Optional. "fail_fast" or "continue".
+            parallel_groups (list[list[str]]): Optional. Parallel step groups.
+
+        See Also:
+            launch(): Execute a registered chain.
+            subchain(): Explicitly include a chain as a step.
         """
 
         def decorator(cls: type[T]) -> type[T]:
@@ -591,13 +847,15 @@ class AgentOrchestrator:
         Create a wrapper step that executes a subchain.
 
         This enables chain composition by wrapping chains as steps.
+        The subchain receives current context data and its outputs
+        are merged back into the parent context.
 
         Args:
-            subchain_name: Name of the chain to execute as a step
-            parent_chain_name: Name of the parent chain (for namespacing)
+            subchain_name (str): Name of the chain to execute as a step.
+            parent_chain_name (str): Name of the parent chain (for namespacing).
 
         Returns:
-            Name of the created wrapper step
+            str: Name of the created wrapper step.
         """
         wrapper_step_name = f"__subchain__{subchain_name}"
 
@@ -679,40 +937,42 @@ class AgentOrchestrator:
         """
         Create a step that executes another chain (explicit subchain reference).
 
-        Use this when you want to explicitly include a chain as a step with
-        custom dependencies.
+        Use this when you want to explicitly include a chain as a step
+        with custom dependencies.
 
         Args:
-            chain_name: Name of the chain to execute as a step
-            deps: Dependencies for this subchain step
-            produces: What this subchain produces
+            chain_name (str): Name of the chain to execute as a step.
+            deps (list[Any] | None): Dependencies for this subchain step.
+            produces (list[str] | None): What this subchain produces.
 
         Returns:
-            Name of the wrapper step (for use in chain definitions)
+            str: Name of the wrapper step (for use in chain definitions).
 
-        Usage:
-            @fg.chain
-            class ParentChain:
-                steps = [
-                    "setup_step",
-                    fg.subchain("data_processing_chain", deps=["setup_step"]),
-                    "finalize_step",
-                ]
+        Raises:
+            ValueError: If the specified chain is not registered.
 
-        Example with dependencies:
-            # Define inner chain
-            @fg.chain
-            class DataProcessing:
-                steps = ["fetch", "transform", "validate"]
-
-            # Use in parent chain with explicit dependencies
-            @fg.chain
-            class Pipeline:
-                steps = [
-                    "init",
-                    fg.subchain("DataProcessing", deps=["init"]),
-                    "report",
-                ]
+        Example:
+            >>> @ao.chain
+            ... class ParentChain:
+            ...     steps = [
+            ...         "setup_step",
+            ...         ao.subchain("data_processing_chain", deps=["setup_step"]),
+            ...         "finalize_step",
+            ...     ]
+            >>>
+            >>> # Define inner chain first
+            >>> @ao.chain
+            ... class DataProcessing:
+            ...     steps = ["fetch", "transform", "validate"]
+            >>>
+            >>> # Use in parent chain with explicit dependencies
+            >>> @ao.chain
+            ... class Pipeline:
+            ...     steps = [
+            ...         "init",
+            ...         ao.subchain("DataProcessing", deps=["init"]),
+            ...         "report",
+            ...     ]
         """
         if not self._chain_registry.is_chain(chain_name):
             raise ValueError(f"Chain '{chain_name}' not found. Register it first.")
@@ -752,7 +1012,20 @@ class AgentOrchestrator:
         agent_class: type,
         **kwargs,
     ) -> "AgentOrchestrator":
-        """Programmatically register an agent"""
+        """
+        Programmatically register an agent.
+
+        Args:
+            name (str): Unique agent name.
+            agent_class (type): The agent class to register.
+            **kwargs: Additional registration options (description, group, etc.).
+
+        Returns:
+            AgentOrchestrator: Self for method chaining.
+
+        Example:
+            >>> ao.register_agent("news", NewsAgent, group="data")
+        """
         self._agent_registry.register_agent(name=name, agent_class=agent_class, **kwargs)
         return self
 
@@ -764,7 +1037,27 @@ class AgentOrchestrator:
         produces: list[str] | None = None,
         **kwargs,
     ) -> "AgentOrchestrator":
-        """Programmatically register a step"""
+        """
+        Programmatically register a step.
+
+        Args:
+            name (str): Unique step name.
+            handler (Callable): The step function to register.
+            deps (list[str] | None): Step dependencies.
+            produces (list[str] | None): Context keys produced.
+            **kwargs: Additional registration options.
+
+        Returns:
+            AgentOrchestrator: Self for method chaining.
+
+        Example:
+            >>> ao.register_step(
+            ...     "fetch_data",
+            ...     fetch_data_handler,
+            ...     deps=["extract_company"],
+            ...     produces=["data"],
+            ... )
+        """
         self._step_registry.register_step(
             name=name,
             handler=handler,
@@ -780,7 +1073,24 @@ class AgentOrchestrator:
         steps: list[str],
         **kwargs,
     ) -> "AgentOrchestrator":
-        """Programmatically register a chain"""
+        """
+        Programmatically register a chain.
+
+        Args:
+            name (str): Unique chain name.
+            steps (list[str]): List of step names in execution order.
+            **kwargs: Additional registration options.
+
+        Returns:
+            AgentOrchestrator: Self for method chaining.
+
+        Example:
+            >>> ao.register_chain(
+            ...     "my_chain",
+            ...     ["step1", "step2", "step3"],
+            ...     error_handling="continue",
+            ... )
+        """
         self._chain_registry.register_chain(name=name, steps=steps, **kwargs)
         return self
 
@@ -797,27 +1107,47 @@ class AgentOrchestrator:
         """
         Register a shared resource (config, clients, etc.).
 
-        All resources are now managed through ResourceManager for unified
-        lifecycle management.
+        Resources are managed through ResourceManager for unified
+        lifecycle management including cleanup.
 
-        Usage:
-            # Direct instance
-            ao.register_resource("config", config_dict)
+        Args:
+            name (str): Unique resource name.
+            resource (Any): Direct resource instance. Mutually exclusive
+                with factory.
+            factory (Callable[[], Any] | None): Factory function to create
+                the resource lazily. Mutually exclusive with resource.
+            scope (ResourceScope): Resource scope. Default: SINGLETON.
+                SINGLETON: One instance shared across all uses.
+                REQUEST: New instance per chain execution.
+            cleanup (Callable[[Any], Any] | None): Cleanup function called
+                when resource is disposed.
+            dependencies (list[str] | None): Other resources this depends on.
 
-            # Factory with cleanup
-            ao.register_resource(
-                "db",
-                factory=lambda: create_db_pool(),
-                cleanup=lambda pool: pool.close(),
-            )
+        Returns:
+            AgentOrchestrator: Self for method chaining.
 
-            # Async factory with dependencies
-            ao.register_resource(
-                "cache",
-                factory=create_redis,
-                cleanup=lambda c: c.close(),
-                dependencies=["config"],
-            )
+        Example:
+            >>> # Direct instance
+            >>> ao.register_resource("config", config_dict)
+            >>>
+            >>> # Factory with cleanup
+            >>> ao.register_resource(
+            ...     "db",
+            ...     factory=lambda: create_db_pool(),
+            ...     cleanup=lambda pool: pool.close(),
+            ... )
+            >>>
+            >>> # Async factory with dependencies
+            >>> ao.register_resource(
+            ...     "cache",
+            ...     factory=create_redis,
+            ...     cleanup=lambda c: c.close(),
+            ...     dependencies=["config"],
+            ... )
+
+        See Also:
+            resource(): Decorator for resource factories.
+            get_resource(): Retrieve a resource by name.
         """
         if factory is not None:
             self._resource_manager.register(
@@ -849,15 +1179,24 @@ class AgentOrchestrator:
         """
         Decorator to register a factory function as a resource.
 
-        Usage:
-            @ao.resource("db", cleanup=lambda c: c.close())
-            def create_db():
-                return DatabasePool()
+        Args:
+            name (str | None): Resource name. Default: function name.
+            scope (ResourceScope): Resource scope. Default: SINGLETON.
+            cleanup (Callable[[Any], Any] | None): Cleanup function.
+            dependencies (list[str] | None): Resource dependencies.
 
-            @ao.resource("cache", dependencies=["config"])
-            async def create_cache():
-                config = await ao.get_resource_async("config")
-                return Redis(config.redis_url)
+        Returns:
+            Callable: The decorator function.
+
+        Example:
+            >>> @ao.resource("db", cleanup=lambda c: c.close())
+            ... def create_db():
+            ...     return DatabasePool()
+            >>>
+            >>> @ao.resource("cache", dependencies=["config"])
+            ... async def create_cache():
+            ...     config = await ao.get_resource_async("config")
+            ...     return Redis(config.redis_url)
         """
         def decorator(factory: Callable[[], Any]) -> Callable[[], Any]:
             resource_name = name or factory.__name__
@@ -874,25 +1213,42 @@ class AgentOrchestrator:
     def get_agent(self, name: str, **init_kwargs) -> Any:
         """
         Get an agent instance by name with runtime configuration.
-        
+
         Args:
-            name: Registered agent name
-            **init_kwargs: Arguments passed to agent constructor (e.g., mcp_url)
-            
+            name (str): Registered agent name.
+            **init_kwargs: Arguments passed to agent constructor.
+
         Returns:
-            Agent instance (auto-wrapped in ResilientAgent if configured)
-            
-        Usage:
-            # Get agent with runtime config
-            sec_agent = ao.get_agent("sec_filing_agent", mcp_url="http://sec-mcp:8000")
-            
-            # Get agent without config (for mock mode)
-            sec_agent = ao.get_agent("sec_filing_agent")
+            Any: Agent instance (auto-wrapped in ResilientAgent if configured).
+
+        Raises:
+            KeyError: If agent is not registered.
+
+        Example:
+            >>> # Get agent with runtime config
+            >>> sec_agent = ao.get_agent("sec_filing_agent", mcp_url="http://sec-mcp:8000")
+            >>>
+            >>> # Get agent without config (for mock mode)
+            >>> sec_agent = ao.get_agent("sec_filing_agent")
         """
         return self._agent_registry.get_agent(name, **init_kwargs)
 
     def use(self, middleware: Any) -> "AgentOrchestrator":
-        """Add middleware to the execution pipeline"""
+        """
+        Add middleware to the execution pipeline.
+
+        Middleware intercepts step execution for cross-cutting concerns.
+
+        Args:
+            middleware: Middleware instance with before/after methods.
+
+        Returns:
+            AgentOrchestrator: Self for method chaining.
+
+        Example:
+            >>> ao.use(TimingMiddleware())
+            >>> ao.use(LoggingMiddleware())
+        """
         self._middleware.append(middleware)
         self._executor.add_middleware(middleware)
         return self
@@ -905,15 +1261,36 @@ class AgentOrchestrator:
         """
         Validate definitions (like 'dg check defs').
 
-        Checks:
-        - All steps exist
+        Validates all registered definitions and displays the DAG structure
+        with execution order and parallel groups.
+
+        Checks performed:
+        - All steps in chains exist
         - Dependencies are resolvable
         - No circular dependencies
         - Chains are valid
 
-        Usage:
-            fg.check()                    # Check all
-            fg.check("meeting_prep")      # Check specific chain
+        Args:
+            chain_name (str | None): Specific chain to check. If None, checks all.
+
+        Returns:
+            dict[str, Any]: Validation result with keys:
+                - valid (bool): True if all checks passed.
+                - chains (list): Per-chain validation results.
+                - errors (list): List of error messages.
+                - warnings (list): List of warnings.
+
+        Example:
+            >>> result = ao.check()  # Check all
+            >>> if not result["valid"]:
+            ...     for error in result["errors"]:
+            ...         print(f"Error: {error}")
+            >>>
+            >>> ao.check("meeting_prep")  # Check specific chain
+
+        See Also:
+            list_defs(): List all definitions.
+            graph(): Visualize the DAG.
         """
         errors = []
         warnings = []
@@ -977,7 +1354,7 @@ class AgentOrchestrator:
         }
 
     def _check_chain(self, chain_name: str) -> dict[str, Any]:
-        """Validate a single chain"""
+        """Validate a single chain."""
         chain_spec = self._chain_registry.get_spec(chain_name)
         if not chain_spec:
             return {
@@ -1035,8 +1412,15 @@ class AgentOrchestrator:
         """
         List all definitions (like 'dg list defs').
 
-        Usage:
-            fg.list_defs()
+        Displays all registered agents, steps, chains, and resources
+        with their dependencies and relationships.
+
+        Returns:
+            dict[str, list[str]]: Dict with keys "agents", "steps", "chains".
+
+        Example:
+            >>> defs = ao.list_defs()
+            >>> print(f"Registered: {len(defs['steps'])} steps")
         """
         agents = self.list_agents()
         steps = self.list_steps()
@@ -1084,12 +1468,15 @@ class AgentOrchestrator:
         Generate DAG visualization.
 
         Args:
-            chain_name: Chain to visualize
-            format: "ascii" or "mermaid"
+            chain_name (str): Chain to visualize.
+            format (str): Output format. "ascii" or "mermaid".
 
-        Usage:
-            fg.graph("meeting_prep")              # ASCII
-            fg.graph("meeting_prep", "mermaid")   # Mermaid.js
+        Returns:
+            str: The visualization string.
+
+        Example:
+            >>> ao.graph("meeting_prep")  # ASCII art
+            >>> ao.graph("meeting_prep", "mermaid")  # Mermaid.js format
         """
         from agentorchestrator.core.visualize import DAGVisualizer
 
@@ -1122,26 +1509,48 @@ class AgentOrchestrator:
         """
         Execute a chain (like 'dg launch').
 
+        This is the main method for running chains asynchronously.
+        The chain's steps are executed in dependency order with
+        parallel execution where possible.
+
         Args:
-            chain_name: Name of the chain to execute
-            data: Initial context data
-            request_id: Optional request ID for tracing
-            debug_callback: Optional callback invoked after each step for debugging.
-                            Receives (ctx, step_name, result_dict) arguments.
-                            Useful for CLI debug mode and per-step context snapshots.
-            validate_input: If True (default), validate input against chain's
-                           input_model before execution starts (fail-fast).
+            chain_name (str): Name of the chain to execute.
+            data (dict[str, Any] | None): Initial context data.
+            request_id (str | None): Optional request ID for tracing.
+                Auto-generated if not provided.
+            debug_callback (DebugCallback | None): Optional callback invoked
+                after each step for debugging. Receives (ctx, step_name, result).
+            validate_input (bool): If True (default), validate input against
+                chain's input_model before execution (fail-fast).
 
-        Usage:
-            result = await fg.launch("meeting_prep", {"company": "Apple"})
-
-            # With debug callback
-            def on_step(ctx, step_name, result):
-                print(f"Step {step_name}: {result}")
-            result = await fg.launch("meeting_prep", data, debug_callback=on_step)
+        Returns:
+            dict[str, Any]: Execution result with keys:
+                - success (bool): True if chain completed successfully.
+                - results (list): Per-step results.
+                - context (dict): Final context state.
+                - duration_ms (float): Total execution time.
+                - error (dict | None): Error details if failed.
 
         Raises:
-            ContractValidationError: If validate_input=True and input fails validation
+            ContractValidationError: If validate_input=True and input
+                fails validation.
+
+        Example:
+            >>> result = await ao.launch("meeting_prep", {"company": "Apple"})
+            >>> if result["success"]:
+            ...     print(f"Completed in {result['duration_ms']}ms")
+            ... else:
+            ...     print(f"Failed: {result['error']}")
+            >>>
+            >>> # With debug callback
+            >>> def on_step(ctx, step_name, result):
+            ...     print(f"Step {step_name}: {result}")
+            >>> result = await ao.launch("chain", data, debug_callback=on_step)
+
+        See Also:
+            launch_sync(): Synchronous wrapper.
+            launch_resumable(): Execute with checkpointing.
+            run_step(): Run a single step in isolation.
         """
         # Chain-level input validation (fail-fast)
         if validate_input and data is not None:
@@ -1228,18 +1637,25 @@ class AgentOrchestrator:
         """
         Synchronous wrapper for launch() with proper resource cleanup.
 
+        Creates a new event loop via asyncio.run() and executes the chain.
+        Resources are automatically cleaned up after execution.
+
         Args:
-            chain_name: Name of the chain to execute
-            data: Initial context data
-            request_id: Optional request ID for tracing
-            cleanup: If True (default), cleanup resources after execution.
-                     Set to False if you plan to run multiple chains and
-                     cleanup manually later.
+            chain_name (str): Name of the chain to execute.
+            data (dict[str, Any] | None): Initial context data.
+            request_id (str | None): Optional request ID for tracing.
+            cleanup (bool): If True (default), cleanup resources after execution.
+                Set to False if you plan to run multiple chains.
+
+        Returns:
+            dict[str, Any]: Execution result (same as launch()).
+
+        Example:
+            >>> result = ao.launch_sync("meeting_prep", {"company": "Apple"})
 
         Note:
-            This method creates a new event loop via asyncio.run().
-            Resources are automatically cleaned up after execution to prevent
-            memory leaks and connection exhaustion.
+            This method creates a new event loop. For multiple chain executions
+            in async code, use launch() directly.
         """
         async def _run_with_cleanup():
             try:
@@ -1259,43 +1675,46 @@ class AgentOrchestrator:
         """
         Run a single step in isolation for testing.
 
-        This allows testing any step independently without running the entire
-        chain. Dependencies are NOT executed - the provided data is used
-        directly as context.
+        Executes any step independently without running the entire chain.
+        Dependencies are NOT executed - the provided data is used directly.
 
-        This is a generic framework capability - users can test any step they
-        define without needing to create special test endpoints.
+        This is useful for:
+        - Unit testing individual steps
+        - Debugging step behavior
+        - Integration testing with mock data
 
         Args:
-            step_name: Name of the step to run
-            data: Initial context data (simulates what dependencies would provide)
-            request_id: Optional request ID for tracing
+            step_name (str): Name of the step to run.
+            data (dict[str, Any] | None): Initial context data (simulates
+                what dependencies would provide).
+            request_id (str | None): Optional request ID for tracing.
 
         Returns:
-            Result dict containing:
-            - success: Whether step completed successfully
-            - output: Step's return value
-            - context: Context state after step execution
-            - duration_ms: Execution time in milliseconds
-            - error: Error details if step failed
+            dict[str, Any]: Result with keys:
+                - success (bool): Whether step completed successfully.
+                - step_name (str): Name of the executed step.
+                - output (Any): Step's return value.
+                - context (dict): Context state after execution.
+                - duration_ms (float): Execution time.
+                - error (dict | None): Error details if failed.
 
-        Usage:
-            # Test a step in isolation
-            result = await ao.run_step("context_builder", {
-                "request": {"corporate_company_name": "Apple Inc"}
-            })
+        Example:
+            >>> # Test a step in isolation
+            >>> result = await ao.run_step("context_builder", {
+            ...     "request": {"corporate_company_name": "Apple Inc"}
+            ... })
+            >>> assert result["success"]
+            >>> assert result["output"]["company"] == "Apple Inc"
+            >>>
+            >>> # Provide mock data for dependent steps
+            >>> result = await ao.run_step("response_builder", {
+            ...     "context_output": {...},  # Mock from context_builder
+            ...     "prioritization_output": {...},  # Mock from prioritization
+            ... })
 
-            # Verify step output
-            assert result["success"]
-            assert result["output"]["company"] == "Apple Inc"
-
-        Example with mock data for dependent steps:
-            # If response_builder depends on context_builder output,
-            # provide that data directly:
-            result = await ao.run_step("response_builder", {
-                "context_output": {...},  # Mock data from context_builder
-                "prioritization_output": {...},  # Mock data from content_prioritization
-            })
+        See Also:
+            run_step_sync(): Synchronous version.
+            launch(): Run a full chain.
         """
         import time
         import uuid
@@ -1364,8 +1783,16 @@ class AgentOrchestrator:
         """
         Synchronous version of run_step().
 
-        Usage:
-            result = ao.run_step_sync("context_builder", {"request": {...}})
+        Args:
+            step_name (str): Name of the step to run.
+            data (dict[str, Any] | None): Initial context data.
+            request_id (str | None): Optional request ID.
+
+        Returns:
+            dict[str, Any]: Step execution result.
+
+        Example:
+            >>> result = ao.run_step_sync("context_builder", {"request": {...}})
         """
         return asyncio.run(self.run_step(step_name, data, request_id))
 
@@ -1377,7 +1804,11 @@ class AgentOrchestrator:
         debug_callback: DebugCallback | None = None,
         **kwargs,
     ) -> dict[str, Any]:
-        """Alias for launch() - backward compatibility"""
+        """
+        Alias for launch() - backward compatibility.
+
+        See launch() for full documentation.
+        """
         return await self.launch(
             chain_name, initial_data, debug_callback=debug_callback, **kwargs
         )
@@ -1389,7 +1820,11 @@ class AgentOrchestrator:
         cleanup: bool = True,
         **kwargs,
     ) -> dict[str, Any]:
-        """Alias for launch_sync() - backward compatibility"""
+        """
+        Alias for launch_sync() - backward compatibility.
+
+        See launch_sync() for full documentation.
+        """
         return self.launch_sync(chain_name, initial_data, cleanup=cleanup, **kwargs)
 
     # ══════════════════════════════════════════════════════════════════
@@ -1406,26 +1841,33 @@ class AgentOrchestrator:
         Execute a chain with automatic checkpointing for resumability.
 
         If the chain fails partway through, you can resume it later using
-        resume() or retry_failed().
+        resume() or retry_failed(). Checkpoints are saved after each step.
 
         Args:
-            chain_name: Name of the chain to execute
-            data: Initial context data
-            run_id: Optional run ID (auto-generated if not provided)
+            chain_name (str): Name of the chain to execute.
+            data (dict[str, Any] | None): Initial context data.
+            run_id (str | None): Optional run ID. Auto-generated if not provided.
 
         Returns:
-            Result dict containing:
-            - run_id: ID for resuming this run
-            - success: Whether chain completed successfully
-            - status: "completed", "partial", or "failed"
-            - checkpoint: Full checkpoint data
+            dict[str, Any]: Result with keys:
+                - run_id (str): ID for resuming this run.
+                - success (bool): Whether chain completed successfully.
+                - status (str): "completed", "partial", or "failed".
+                - checkpoint (dict): Full checkpoint data.
 
-        Usage:
-            # Run with checkpointing
-            result = await ao.launch_resumable("my_chain", {"company": "Apple"})
+        Example:
+            >>> # Run with checkpointing
+            >>> result = await ao.launch_resumable("my_chain", {"company": "Apple"})
+            >>> run_id = result["run_id"]
+            >>>
+            >>> # If it fails, resume later
+            >>> if not result["success"]:
+            ...     result = await ao.resume(run_id)
 
-            # If it fails, resume later
-            result = await ao.resume(result["run_id"])
+        See Also:
+            resume(): Resume a failed run.
+            retry_failed(): Re-run only failed steps.
+            get_partial_output(): Get outputs from completed steps.
         """
         return await self._resumable_runner.run(
             chain_name=chain_name,
@@ -1441,19 +1883,23 @@ class AgentOrchestrator:
         """
         Resume a failed or partial chain run.
 
-        Loads the checkpoint from run_store and continues execution
-        from where it left off.
+        Loads the checkpoint and continues execution from where it left off.
 
         Args:
-            run_id: ID of the run to resume
-            skip_completed: If True, skip steps that already completed
+            run_id (str): ID of the run to resume.
+            skip_completed (bool): If True, skip steps that already completed.
+                Default: True.
 
         Returns:
-            Result dict with updated checkpoint
+            dict[str, Any]: Result with updated checkpoint.
 
-        Usage:
-            # Resume a failed run
-            result = await ao.resume("run_abc123")
+        Raises:
+            ValueError: If run_id is not found.
+
+        Example:
+            >>> # Resume a failed run
+            >>> result = await ao.resume("run_abc123")
+            >>> print(f"Status: {result['status']}")
         """
         return await self._resumable_runner.resume(
             run_id=run_id,
@@ -1465,10 +1911,13 @@ class AgentOrchestrator:
         Re-run only the failed steps from a previous run.
 
         Args:
-            run_id: ID of the run with failed steps
+            run_id (str): ID of the run with failed steps.
 
         Returns:
-            Result dict with updated checkpoint
+            dict[str, Any]: Result with updated checkpoint.
+
+        Example:
+            >>> result = await ao.retry_failed("run_abc123")
         """
         return await self._resumable_runner.retry_failed(run_id)
 
@@ -1480,10 +1929,14 @@ class AgentOrchestrator:
         before a failure.
 
         Args:
-            run_id: ID of the run
+            run_id (str): ID of the run.
 
         Returns:
-            Dict with outputs from completed steps
+            dict[str, Any]: Outputs from completed steps.
+
+        Example:
+            >>> outputs = await ao.get_partial_output("run_abc123")
+            >>> print(f"Completed: {list(outputs.keys())}")
         """
         return await self._resumable_runner.get_partial_output(run_id)
 
@@ -1495,10 +1948,15 @@ class AgentOrchestrator:
         List runs that can be resumed.
 
         Args:
-            chain_name: Filter by chain name (optional)
+            chain_name (str | None): Filter by chain name.
 
         Returns:
-            List of resumable run summaries
+            list[dict[str, Any]]: List of resumable run summaries.
+
+        Example:
+            >>> runs = await ao.list_resumable_runs()
+            >>> for run in runs:
+            ...     print(f"{run['run_id']}: {run['status']}")
         """
         return await self._resumable_runner.list_resumable(chain_name)
 
@@ -1507,10 +1965,15 @@ class AgentOrchestrator:
         Get a run checkpoint by ID.
 
         Args:
-            run_id: ID of the run
+            run_id (str): ID of the run.
 
         Returns:
-            RunCheckpoint or None if not found
+            RunCheckpoint | None: The checkpoint or None if not found.
+
+        Example:
+            >>> checkpoint = await ao.get_run("run_abc123")
+            >>> if checkpoint:
+            ...     print(f"Chain: {checkpoint.chain_name}")
         """
         return await self._run_store.load_checkpoint(run_id)
 
@@ -1524,12 +1987,19 @@ class AgentOrchestrator:
         List run checkpoints with optional filters.
 
         Args:
-            chain_name: Filter by chain name
-            status: Filter by status ("completed", "failed", "partial")
-            limit: Maximum number of runs to return
+            chain_name (str | None): Filter by chain name.
+            status (str | None): Filter by status ("completed", "failed", "partial").
+            limit (int): Maximum number of runs to return. Default: 100.
 
         Returns:
-            List of RunCheckpoint objects
+            list[RunCheckpoint]: List of matching checkpoints.
+
+        Example:
+            >>> # List all failed runs
+            >>> runs = await ao.list_runs(status="failed")
+            >>>
+            >>> # List runs for a specific chain
+            >>> runs = await ao.list_runs(chain_name="my_chain", limit=10)
         """
         return await self._run_store.list_runs(
             chain_name=chain_name,
@@ -1542,10 +2012,14 @@ class AgentOrchestrator:
         Delete a run checkpoint.
 
         Args:
-            run_id: ID of the run to delete
+            run_id (str): ID of the run to delete.
 
         Returns:
-            True if deleted, False if not found
+            bool: True if deleted, False if not found.
+
+        Example:
+            >>> if await ao.delete_run("run_abc123"):
+            ...     print("Checkpoint deleted")
         """
         return await self._run_store.delete_checkpoint(run_id)
 
@@ -1554,15 +2028,42 @@ class AgentOrchestrator:
     # ══════════════════════════════════════════════════════════════════
 
     def list_agents(self) -> list[str]:
-        """List all registered agents"""
+        """
+        List all registered agents.
+
+        Returns:
+            list[str]: List of agent names.
+
+        Example:
+            >>> agents = ao.list_agents()
+            >>> print(f"Registered agents: {agents}")
+        """
         return self._agent_registry.list()
 
     def list_steps(self) -> list[str]:
-        """List all registered steps"""
+        """
+        List all registered steps.
+
+        Returns:
+            list[str]: List of step names.
+
+        Example:
+            >>> steps = ao.list_steps()
+            >>> print(f"Registered steps: {steps}")
+        """
         return self._step_registry.list()
 
     def list_chains(self) -> list[str]:
-        """List all registered chains"""
+        """
+        List all registered chains.
+
+        Returns:
+            list[str]: List of chain names.
+
+        Example:
+            >>> chains = ao.list_chains()
+            >>> print(f"Registered chains: {chains}")
+        """
         return self._chain_registry.list()
 
     def get_resource(self, name: str) -> Any:
@@ -1570,6 +2071,18 @@ class AgentOrchestrator:
         Get a registered resource (sync version).
 
         For resources with factories, this triggers lazy initialization.
+
+        Args:
+            name (str): Resource name.
+
+        Returns:
+            Any: The resource instance.
+
+        Raises:
+            KeyError: If resource is not registered.
+
+        Example:
+            >>> db = ao.get_resource("db")
         """
         return self._resource_manager.get_sync(name)
 
@@ -1577,27 +2090,69 @@ class AgentOrchestrator:
         """
         Get a registered resource (async version).
 
-        For resources with factories, this triggers lazy initialization.
+        For resources with async factories, use this method.
+
+        Args:
+            name (str): Resource name.
+
+        Returns:
+            Any: The resource instance.
+
+        Raises:
+            KeyError: If resource is not registered.
+
+        Example:
+            >>> db = await ao.get_resource_async("db")
         """
         return await self._resource_manager.get(name)
 
     def has_resource(self, name: str) -> bool:
-        """Check if a resource is registered"""
+        """
+        Check if a resource is registered.
+
+        Args:
+            name (str): Resource name to check.
+
+        Returns:
+            bool: True if registered.
+
+        Example:
+            >>> if ao.has_resource("db"):
+            ...     db = ao.get_resource("db")
+        """
         return self._resource_manager.has(name)
 
     def list_resources(self) -> list[str]:
-        """List all registered resources"""
+        """
+        List all registered resources.
+
+        Returns:
+            list[str]: List of resource names.
+
+        Example:
+            >>> resources = ao.list_resources()
+        """
         return self._resource_manager.list_resources()
 
     async def cleanup_resources(self, timeout_seconds: float = 30.0) -> None:
         """
         Cleanup all managed resources with timeout.
 
+        Calls cleanup functions for all resources that have them.
+        Resources are cleaned up in reverse dependency order.
+
         Args:
-            timeout_seconds: Maximum time to wait for cleanup (default 30s)
+            timeout_seconds (float): Maximum time to wait for cleanup.
+                Default: 30.0 seconds.
 
         Raises:
-            asyncio.TimeoutError: If cleanup exceeds timeout
+            asyncio.TimeoutError: If cleanup exceeds timeout.
+
+        Example:
+            >>> await ao.cleanup_resources()
+            >>>
+            >>> # With custom timeout
+            >>> await ao.cleanup_resources(timeout_seconds=60.0)
         """
         try:
             await asyncio.wait_for(
@@ -1617,11 +2172,34 @@ class AgentOrchestrator:
         request_id: str,
         data: dict[str, Any] | None = None,
     ) -> ChainContext:
-        """Create a new chain context"""
+        """
+        Create a new chain context.
+
+        Args:
+            request_id (str): Unique request identifier.
+            data (dict[str, Any] | None): Initial context data.
+
+        Returns:
+            ChainContext: The new context.
+
+        Example:
+            >>> ctx = ao.create_context("req_123", {"query": "Apple"})
+        """
         return self._context_manager.create_context(request_id, data)
 
     def get_context(self, request_id: str) -> ChainContext | None:
-        """Get an existing context"""
+        """
+        Get an existing context.
+
+        Args:
+            request_id (str): The request ID to look up.
+
+        Returns:
+            ChainContext | None: The context or None if not found.
+
+        Example:
+            >>> ctx = ao.get_context("req_123")
+        """
         return self._context_manager.get_context(request_id)
 
     # ══════════════════════════════════════════════════════════════════
@@ -1629,7 +2207,16 @@ class AgentOrchestrator:
     # ══════════════════════════════════════════════════════════════════
 
     def clear(self) -> None:
-        """Clear all registrations"""
+        """
+        Clear all registrations.
+
+        Removes all registered agents, steps, chains, and resources.
+        Use in tests to reset state between test cases.
+
+        Example:
+            >>> ao.clear()
+            >>> assert len(ao.list_steps()) == 0
+        """
         self._agent_registry.clear()
         self._step_registry.clear()
         self._chain_registry.clear()
@@ -1637,7 +2224,11 @@ class AgentOrchestrator:
 
     # Legacy alias
     def clear_registrations(self) -> None:
-        """Alias for clear() - backward compatibility"""
+        """
+        Alias for clear() - backward compatibility.
+
+        See clear() for documentation.
+        """
         self.clear()
 
     # Legacy method - kept for backward compatibility
@@ -1651,6 +2242,8 @@ class AgentOrchestrator:
         Legacy validate method - use check() instead.
 
         Kept for backward compatibility.
+
+        See check() for documentation.
         """
         if output == "mermaid":
             if chain_name:
@@ -1658,6 +2251,7 @@ class AgentOrchestrator:
         return self.check(chain_name)
 
     def __repr__(self) -> str:
+        """Return string representation of the orchestrator."""
         return (
             f"AgentOrchestrator(name={self.name!r}, "
             f"agents={len(self.list_agents())}, "
@@ -1674,7 +2268,23 @@ _default_orchestrator: AgentOrchestrator | None = None
 
 
 def get_orchestrator() -> AgentOrchestrator:
-    """Get or create the default AgentOrchestrator instance"""
+    """
+    Get or create the default AgentOrchestrator instance.
+
+    Returns the global singleton orchestrator instance. Creates one
+    if it doesn't exist.
+
+    Returns:
+        AgentOrchestrator: The default orchestrator instance.
+
+    Example:
+        >>> ao = get_orchestrator()
+        >>> @ao.step
+        ... async def my_step(ctx): ...
+
+    See Also:
+        set_orchestrator(): Set a custom default instance.
+    """
     global _default_orchestrator
     if _default_orchestrator is None:
         _default_orchestrator = AgentOrchestrator()
@@ -1682,7 +2292,21 @@ def get_orchestrator() -> AgentOrchestrator:
 
 
 def set_orchestrator(ao: AgentOrchestrator) -> None:
-    """Set the default AgentOrchestrator instance"""
+    """
+    Set the default AgentOrchestrator instance.
+
+    Use this to replace the global singleton with a custom instance.
+
+    Args:
+        ao (AgentOrchestrator): The orchestrator to use as default.
+
+    Example:
+        >>> custom_ao = AgentOrchestrator(name="custom", max_parallel=5)
+        >>> set_orchestrator(custom_ao)
+
+    See Also:
+        get_orchestrator(): Get the default instance.
+    """
     global _default_orchestrator
     _default_orchestrator = ao
 
