@@ -23,13 +23,16 @@ logger = logging.getLogger(__name__)
 
 # Token counting - shared utility
 def count_tokens(text: str) -> int:
-    """Count tokens using tiktoken, or estimate (~4 chars/token)."""
+    """
+    Count tokens using tiktoken if available, otherwise estimate (~4 chars/token).
+    """
     try:
         import tiktoken
 
         enc = tiktoken.get_encoding("cl100k_base")
         return len(enc.encode(text))
-    except ImportError:
+    except (ImportError, Exception):
+        # Fallback: estimate ~4 characters per token (conservative for English text)
         return len(text) // 4
 
 
@@ -73,7 +76,7 @@ class LangChainSummarizer:
         strategy: SummarizationStrategy = SummarizationStrategy.MAP_REDUCE,
         chunk_size: int = 2000,
         chunk_overlap: int = 200,
-        use_token_splitter: bool = True,
+        use_token_splitter: bool = False,  # Default to character splitter (no tiktoken dependency)
         map_prompt: str | None = None,
         reduce_prompt: str | None = None,
         refine_prompt: str | None = None,

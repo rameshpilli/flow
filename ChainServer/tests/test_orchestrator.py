@@ -464,7 +464,7 @@ class TestLLMGateway:
 
         assert client.server_url == "https://llm.example.com/v1"
         assert client.model_name == "gpt-4"
-        assert client.temperature == 0.0
+        assert client.temperature == 0.2  # Default temperature in LLMGatewayClient
         assert client.max_tokens == 4096
 
     def test_llm_gateway_client_with_oauth_config(self):

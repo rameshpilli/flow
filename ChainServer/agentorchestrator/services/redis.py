@@ -731,7 +731,8 @@ class RedisService:
         """Simple ping check. Returns True if Redis responds."""
         try:
             return await self.client.ping()
-        except Exception:
+        except Exception as e:
+            logger.debug("Redis ping failed: %s", e)
             return False
 
     # ═══════════════════════════════════════════════════════════════════════════

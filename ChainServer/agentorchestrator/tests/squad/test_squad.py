@@ -188,7 +188,7 @@ class TestLLMGatewayAgent:
         from agentorchestrator.squad.agents.base import Agent
 
         assert Agent.generate_key_from_name("Tech Agent") == "tech-agent"
-        assert Agent.generate_key_from_name("Finance & Trading") == "finance--trading"
+        assert Agent.generate_key_from_name("Finance & Trading") == "finance-trading"  # & is removed, spaces collapse to single hyphen
         assert Agent.generate_key_from_name("AI Assistant 2.0") == "ai-assistant-20"
 
     @pytest.mark.asyncio

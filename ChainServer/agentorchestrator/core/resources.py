@@ -411,8 +411,8 @@ def reset_resource_manager() -> None:
     if _global_resource_manager:
         try:
             asyncio.run(_global_resource_manager.cleanup_all())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Resource cleanup during reset failed: %s", e)
     _global_resource_manager = ResourceManager()
 
 

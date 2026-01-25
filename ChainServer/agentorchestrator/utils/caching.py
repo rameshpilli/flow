@@ -17,6 +17,7 @@ Usage:
 
 import asyncio
 import functools
+import threading
 import time
 from typing import Callable, TypeVar
 
@@ -25,7 +26,7 @@ T = TypeVar("T")
 
 def timed_lru_cache(seconds: int = 300, maxsize: int = 128):
     """
-    LRU cache decorator with time-based expiration.
+    LRU cache decorator with time-based expiration (thread-safe).
 
     Caches function results for a specified duration. After expiration,
     the next call will re-execute the function and cache the new result.
@@ -44,24 +45,28 @@ def timed_lru_cache(seconds: int = 300, maxsize: int = 128):
     """
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         cache: dict = {}
+        lock = threading.Lock()
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs) -> T:
             key = (args, tuple(sorted(kwargs.items())))
             now = time.time()
 
-            if key in cache:
-                result, timestamp = cache[key]
-                if now - timestamp < seconds:
-                    return result
+            with lock:
+                if key in cache:
+                    result, timestamp = cache[key]
+                    if now - timestamp < seconds:
+                        return result
 
+            # Execute function outside lock to avoid blocking
             result = func(*args, **kwargs)
-            cache[key] = (result, now)
 
-            # Evict oldest entry if cache is too large
-            if len(cache) > maxsize:
-                oldest = min(cache.keys(), key=lambda k: cache[k][1])
-                del cache[oldest]
+            with lock:
+                cache[key] = (result, now)
+                # Evict oldest entry if cache is too large
+                if len(cache) > maxsize:
+                    oldest = min(cache.keys(), key=lambda k: cache[k][1])
+                    del cache[oldest]
 
             return result
 

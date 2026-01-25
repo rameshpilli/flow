@@ -1565,10 +1565,6 @@ class AgentOrchestrator:
         """List all registered chains"""
         return self._chain_registry.list()
 
-    def get_agent(self, name: str, **kwargs) -> Any:
-        """Get an agent instance"""
-        return self._agent_registry.get_agent(name, **kwargs)
-
     def get_resource(self, name: str) -> Any:
         """
         Get a registered resource (sync version).
