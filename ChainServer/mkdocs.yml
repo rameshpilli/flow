@@ -143,6 +143,9 @@ nav:
     - Architecture: ARCHITECTURE.md
     - API Reference: API.md
 
+  - Context Management:
+    - Overview: CONTEXT_MANAGEMENT.md
+
   - Patterns & Examples:
     - Feature Examples: FEATURE_EXAMPLES.md
 
