@@ -138,16 +138,26 @@ nav:
     - Quick Start: QUICKSTART.md
     - Requirements: REQUIREMENTS.md
 
-  - Framework Guide:
-    - User Guide: USER_GUIDE.md
+  - Understanding:
+    - Overview: understanding/index.md
+    - Context: understanding/context.md
+    - Steps & Chains: understanding/steps_and_chains.md
+    - Agents: understanding/agents.md
+    - Multi-Agent Systems: understanding/multi_agent.md
+
+  - Patterns:
+    - Overview: patterns/index.md
+    - Context Isolation: patterns/context_isolation.md
+    - Summarization: patterns/summarization.md
+    - Aggregation: patterns/aggregation.md
+    - Routing: patterns/routing.md
+
+  - Reference:
     - Architecture: ARCHITECTURE.md
     - API Reference: API.md
-
-  - Context Management:
-    - Overview: CONTEXT_MANAGEMENT.md
-
-  - Patterns & Examples:
+    - Context Management: CONTEXT_MANAGEMENT.md
     - Feature Examples: FEATURE_EXAMPLES.md
+    - User Guide: USER_GUIDE.md
 
   - Help:
     - Troubleshooting: TROUBLESHOOTING.md

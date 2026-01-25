@@ -196,13 +196,33 @@ agentorchestrator/
 
 ## Documentation
 
+### Learning Path
+
+<div class="grid cards" markdown>
+
+-   :material-school:{ .lg .middle } **Understanding**
+
+    ---
+
+    Core concepts: [Context](understanding/context.md), [Steps & Chains](understanding/steps_and_chains.md), [Agents](understanding/agents.md), [Multi-Agent](understanding/multi_agent.md)
+
+-   :material-puzzle:{ .lg .middle } **Patterns**
+
+    ---
+
+    Production patterns: [Context Isolation](patterns/context_isolation.md), [Summarization](patterns/summarization.md), [Aggregation](patterns/aggregation.md), [Routing](patterns/routing.md)
+
+</div>
+
+### Reference
+
 | Section | Description |
 |---------|-------------|
 | [Quick Start](QUICKSTART.md) | Get started in 5 minutes |
 | [Architecture](ARCHITECTURE.md) | System design & diagrams |
-| [User Guide](USER_GUIDE.md) | Comprehensive usage guide |
 | [API Reference](API.md) | Full API documentation |
-| [Requirements](REQUIREMENTS.md) | Dependencies & environment |
+| [Context Management](CONTEXT_MANAGEMENT.md) | Deep dive into context patterns |
+| [Feature Examples](FEATURE_EXAMPLES.md) | Code examples for all features |
 | [Troubleshooting](TROUBLESHOOTING.md) | Common issues & solutions |
 
 ---
