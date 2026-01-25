@@ -118,14 +118,30 @@ Middleware wraps step execution: `before()` → step → `after()` / `on_error()
 
 ---
 
-## What's Partially Done (Gaps to Fill)
+## Roadmap: What We're Building Towards
 
+### Near-Term (High Priority)
+| Feature | Why It Matters |
+|---------|----------------|
+| **Deep Research Agent** | Multi-stage research with web search, question decomposition, report synthesis |
+| **Agent Handoffs** | Explicit A→B→C agent delegation with context transfer |
+| **Developer Docs Overhaul** | LlamaIndex-quality docs for 100+ user adoption |
+
+### Medium-Term
+| Feature | Why It Matters |
+|---------|----------------|
+| **ReAct Pattern** | Industry-standard Thought→Action→Observation loop |
+| **Event-Driven Execution** | Beyond DAG - flexible loops, branches, streaming events |
+| **Tool Registry** | Built-in tools (web search, file, SQL) + easy discovery |
+| **Memory Patterns** | Summary, window, entity, semantic memory strategies |
+
+### Partial Implementations (Need Enhancement)
 | Feature | Current State | What's Missing |
 |---------|--------------|----------------|
-| **Human-in-Loop** | Checkpointing works, supervisor has validators | Need: @ao.approval_step(), pause/resume UI, external integrations (Slack) |
-| **Tool Streaming** | LLM tokens stream | Need: ToolEvent (start/progress/complete), tool result streaming |
-| **Agent Reflection** | Validator callbacks exist | Need: Built-in critique prompts, @ao.reflect(), quality scoring |
-| **Debugger UI** | ASCII/Mermaid visualization | Need: Web UI, real-time event viewer, breakpoints |
+| **Human-in-Loop** | Checkpointing, validators | @ao.approval_step(), pause UI, Slack integration |
+| **Tool Streaming** | LLM tokens stream | ToolEvent (start/progress/complete) |
+| **Agent Reflection** | Validator callbacks | Built-in critique prompts, @ao.reflect() |
+| **Debugger UI** | ASCII/Mermaid viz | Web UI, breakpoints, real-time events |
 
 ---
 
@@ -205,11 +221,22 @@ bd close <id>
 bd sync               # Sync with git
 ```
 
-### Active Feature Issues
-- `flow-9hm` - Human-in-the-Loop Workflows (P1, partial)
-- `flow-p7y` - Tool Result Streaming (P2, partial)
-- `flow-954` - Agent Reflection/Self-Critique (P2, partial)
-- `flow-hwk` - Workflow Debugger UI (P3, partial)
+### Priority 1 - Core Agent Capabilities
+- `flow-4l4` - **Deep Research Agent Pattern** (new)
+- `flow-5t6` - **Agent Handoff Protocol** (new)
+- `flow-9hm` - Human-in-the-Loop Workflows (partial)
+- `flow-c3z` - Developer Documentation Overhaul (epic)
+
+### Priority 2 - Enhanced Patterns
+- `flow-mly` - **ReAct Agent Pattern** (new)
+- `flow-2u5` - **Event-Driven Step Execution** (new)
+- `flow-yp7` - **Tool Hub / Registry** (new)
+- `flow-01k` - **Conversation Memory Patterns** (new)
+- `flow-p7y` - Tool Result Streaming (partial)
+- `flow-954` - Agent Reflection/Self-Critique (partial)
+
+### Priority 3
+- `flow-hwk` - Workflow Debugger UI (partial)
 
 ### Recently Closed (Already Implemented)
 - `flow-znf` - Long-term Memory/Vector Stores ✓
