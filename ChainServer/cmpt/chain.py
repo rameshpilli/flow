@@ -1,5 +1,6 @@
 """
 CMPT Chain Definition
+=====================
 
 This file defines the 3-stage CMPT pipeline using AgentOrchestrator decorators.
 
@@ -8,6 +9,18 @@ Pipeline:
     │ Context Builder │ ──► │ Content Prioritization │ ──► │ Response Builder │
     └─────────────────┘     └───────────────────────┘     └──────────────────┘
           Stage 1                   Stage 2                      Stage 3
+
+AgentOrchestrator Features Used:
+    - @ao.step(): Define individual pipeline stages with dependencies
+    - @ao.chain(): Define the chain that orchestrates steps
+    - @ao.agent(): Register agents with resilience configuration
+    - ao.use(): Add middleware (OffloadMiddleware for large payloads)
+    - ao.launch(): Execute the chain with input data
+
+Imports from AgentOrchestrator:
+    - agentorchestrator.AgentOrchestrator: Main orchestrator class
+    - agentorchestrator.services.llm_gateway.get_llm_client: LLM client factory
+    - agentorchestrator.middleware.offload.OffloadMiddleware: Payload offloading
 
 Usage:
     from agentorchestrator import AgentOrchestrator

@@ -263,6 +263,23 @@ class ContextBuilderOutput(BaseModel):
     Output from the Context Builder service.
 
     Contains all extracted context needed for content prioritization.
+
+    Attributes:
+        company_info: Extracted company information (name, ticker, industry, etc.)
+        company_name: Resolved company name
+        ticker: Resolved stock ticker symbol
+        temporal_context: Extracted temporal context (fiscal quarter, earnings dates)
+        rbc_persona: RBC employee persona information
+        corporate_client_personas: List of corporate client personas
+        personas: Convenience property that returns all personas (RBC + clients)
+
+    Example:
+        >>> output = ContextBuilderOutput(
+        ...     company_name="Apple Inc",
+        ...     ticker="AAPL",
+        ...     rbc_persona=PersonaInfo(name="John Doe", is_internal=True),
+        ... )
+        >>> print(output.personas)  # All personas including RBC and clients
     """
 
     # Company info
@@ -292,6 +309,20 @@ class ContextBuilderOutput(BaseModel):
 
     # Timing
     timing_ms: dict[str, float] | None = Field(None, description="Timing for each extractor")
+
+    @property
+    def personas(self) -> list[PersonaInfo]:
+        """
+        Get all personas (RBC employee + corporate clients).
+
+        Returns:
+            List of all PersonaInfo objects, with RBC persona first if present.
+        """
+        result = []
+        if self.rbc_persona:
+            result.append(self.rbc_persona)
+        result.extend(self.corporate_client_personas)
+        return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

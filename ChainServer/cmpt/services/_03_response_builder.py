@@ -1,13 +1,18 @@
 """
 Response Builder Service
+========================
 
 Stage 3 of the CMPT chain: Execute agents and build the final response.
 
-This service uses AgentOrchestrator's agent framework (BaseAgent, ResilientAgent)
+This service uses AgentOrchestrator's agent framework (BaseAgent, AgentResult)
 and LLM Gateway for structured LLM interactions.
 
+Components Used from AgentOrchestrator:
+    - agentorchestrator.agents.base.AgentResult: Result container from agents
+    - agentorchestrator.services.llm_gateway.LLMGatewayClient: LLM interactions
+
 Usage:
-    from agentorchestrator.services import LLMGatewayClient
+    from agentorchestrator.services.llm_gateway import LLMGatewayClient
 
     llm = LLMGatewayClient(
         server_url="https://llm-gateway.corp.com/v1/chat/completions",
@@ -24,7 +29,9 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from agentorchestrator.agents.base import AgentResult as AOAgentResult
+# Import AgentOrchestrator's AgentResult for type checking agent responses
+# Note: cmpt has its own AgentResult model in models.py for serialization
+from agentorchestrator.agents.base import AgentResult as BaseAgentResult
 
 from cmpt.services.models import (
     AgentResult,
@@ -187,7 +194,7 @@ class ResponseBuilderService:
             try:
                 # Pass subquery params to agent.fetch
                 # ResilientAgent handles timeout/retries internally
-                ao_result: AOAgentResult = await agent.fetch(sq.query, **sq.params)
+                ao_result: BaseAgentResult = await agent.fetch(sq.query, **sq.params)
                 return AgentResult(
                     agent=sq.agent,
                     success=ao_result.success,

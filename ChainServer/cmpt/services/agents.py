@@ -1,5 +1,31 @@
 """
-CMPT Data Agents - SEC filings, earnings transcripts, and news via MCP.
+CMPT Data Agents
+================
+
+SEC filings, earnings transcripts, and news data agents via MCP.
+
+These agents extend AgentOrchestrator's MCPAdapterAgent to communicate
+with external MCP (Model Context Protocol) servers.
+
+AgentOrchestrator Components Used:
+    - agentorchestrator.agents.base.BaseAgent: Base agent class
+    - agentorchestrator.agents.base.AgentResult: Standard result container
+    - agentorchestrator.plugins.mcp_adapter.MCPAdapterAgent: MCP communication
+    - agentorchestrator.plugins.mcp_adapter.MCPAdapterConfig: MCP configuration
+    - agentorchestrator.testing.testable: Decorator for agent testing
+
+Agent Registration:
+    Agents are registered with @ao.agent() decorator which wraps them in
+    ResilientAgent for automatic retries, timeouts, and circuit breaker.
+
+Example:
+    >>> from cmpt.services.agents import register_cmpt_agents, get_cmpt_agents
+    >>> from agentorchestrator import AgentOrchestrator
+    >>>
+    >>> ao = AgentOrchestrator(name="cmpt")
+    >>> register_cmpt_agents(ao)  # Register agent classes
+    >>> agents = get_cmpt_agents(ao, sec_url="http://sec-mcp:8000")
+    >>> result = await agents["sec_filing_agent"].fetch("AAPL", ticker="AAPL")
 """
 
 import logging
