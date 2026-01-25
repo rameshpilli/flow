@@ -12,13 +12,48 @@ AgentOrchestrator is a lightweight, decorator-driven framework for building data
 |------------|-------------|
 | **Decorator-Based Pipelines** | Simple `@ao.step()`, `@ao.chain()`, `@ao.agent()` decorators for intuitive pipeline definition |
 | **DAG Execution Engine** | Automatic dependency resolution with parallel execution for optimal performance |
-| **Multi-Agent Orchestration** | Supervisor patterns, context isolation, and result aggregation for coordinating specialized agents |
+| **Multi-Agent Patterns** | Squad, Supervisor, FunctionAgent with handoffs, and intent-based routing |
 | **LLM Gateway Integration** | OAuth-enabled LLM client for corporate environments with structured output support |
 | **Memory & Storage** | InMemory, Redis, and Mem0 semantic memory for conversation persistence |
 | **Middleware Stack** | Pluggable logging, caching, summarization, rate limiting, and circuit breakers |
 | **Resilience Patterns** | Retry with backoff, circuit breakers, timeouts, and fail-fast cancellation |
 | **Observability** | Structured logging, OpenTelemetry tracing, and metrics collection |
 | **CLI Tools** | Run, validate, visualize, and debug chains from command line |
+
+---
+
+## Agent Patterns
+
+AgentOrchestrator provides multiple patterns for building AI agents:
+
+| Pattern | Use Case | Example |
+|---------|----------|---------|
+| **Squad** | Team coordination with supervisor | Research teams, complex analysis |
+| **Supervisor Agent** | Central coordinator with specialists | Customer support, multi-domain Q&A |
+| **FunctionAgent** | Explicit handoffs between agents | Pipeline workflows (Research → Write → Review) |
+| **MultiAgentOrchestrator** | Intent-based routing | Route to specialists based on query type |
+| **Linear Chains** | Sequential DAG execution | ETL pipelines, data processing |
+| **Deep Research Agent** | Multi-source research synthesis | Financial analysis, market research |
+
+### Quick Comparison
+
+```
+┌─────────────────────┬─────────────────────┬─────────────────────┐
+│     SQUAD           │   SUPERVISOR        │   FUNCTION AGENT    │
+│                     │                     │                     │
+│ squad.run(query)    │ supervisor.process()│ agent.handoff()     │
+│                     │                     │                     │
+│   ┌───────┐         │      ┌───┐          │  ┌───┐    ┌───┐     │
+│   │ Lead  │         │      │ S │          │  │ A │ →  │ B │     │
+│   └───┬───┘         │      └─┬─┘          │  └───┘    └───┘     │
+│   ┌───┴───┐         │    ┌───┼───┐        │                     │
+│ ┌─┴─┐ ┌─┴─┐ ┌─┴─┐   │  ┌─┴─┐ ┌─┴─┐ ┌─┴─┐  │  Explicit handoff   │
+│ │ A │ │ B │ │ C │   │  │ A │ │ B │ │ C │  │  with context        │
+│ └───┘ └───┘ └───┘   │  └───┘ └───┘ └───┘  │                     │
+│                     │                     │                     │
+│ Simple API          │ Full control        │  Pipeline pattern   │
+└─────────────────────┴─────────────────────┴─────────────────────┘
+```
 
 ---
 
@@ -114,6 +149,155 @@ class ParallelChain:
     steps = ["fetch_news", "fetch_stocks", "combine"]
 
 # fetch_news and fetch_stocks run in parallel (~1s total, not 2s)
+```
+
+---
+
+## Multi-Agent Patterns
+
+### 1. Squad Pattern (Recommended for Teams)
+
+The simplest way to coordinate multiple agents:
+
+```python
+from agentorchestrator.squad import (
+    Squad,
+    SquadOptions,
+    LLMGatewayAgent,
+    LLMGatewayAgentOptions,
+)
+
+# Create specialist agents
+research_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="Researcher",
+    description="Find and gather information on topics.",
+    llm_client=llm_client,
+))
+
+analyst_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="Analyst",
+    description="Analyze data and provide insights.",
+    llm_client=llm_client,
+))
+
+writer_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="Writer",
+    description="Write clear, compelling content.",
+    llm_client=llm_client,
+))
+
+# Create supervisor (lead agent)
+lead = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="ProjectLead",
+    description="Coordinates team to answer complex questions",
+    llm_client=llm_client,
+))
+
+# Form the squad
+squad = Squad(
+    supervisor=lead,
+    agents=[research_agent, analyst_agent, writer_agent],
+    options=SquadOptions(trace=True),
+)
+
+# Execute - supervisor coordinates the team automatically
+result = await squad.run("Research AI trends and write a report")
+print(result.content)
+```
+
+See: [examples/supervisor_chain.py](examples/supervisor_chain.py)
+
+### 2. FunctionAgent with Handoffs (Pipeline Pattern)
+
+For explicit agent-to-agent workflows:
+
+```python
+from agentorchestrator.squad import FunctionAgent, FunctionAgentOptions
+
+# Create agents with handoff permissions
+researcher = FunctionAgent(FunctionAgentOptions(
+    name="Researcher",
+    description="Gathers information",
+    llm_client=llm_client,
+    can_handoff_to=["Writer"],  # Can only hand off to Writer
+))
+
+writer = FunctionAgent(FunctionAgentOptions(
+    name="Writer",
+    description="Writes reports",
+    llm_client=llm_client,
+    can_handoff_to=["User"],  # Terminal - returns to user
+))
+
+# Researcher hands off to Writer with context
+handoff = await researcher.handoff(
+    to_agent="Writer",
+    context={"findings": findings, "sources": sources},
+    message="Research complete. Please write a summary.",
+)
+
+# Orchestrator routes using handoff.to_agent
+print(f"{handoff.from_agent} → {handoff.to_agent}")
+# "Researcher → Writer"
+```
+
+### 3. Deep Research Agent (Financial Analysis)
+
+Multi-source research with context management:
+
+```python
+from agentorchestrator.examples.financial_research_agent import (
+    FinancialResearchAgent,
+    ResearchConfig,
+)
+
+# Create agent with context management
+agent = FinancialResearchAgent(ResearchConfig(
+    max_context_tokens=100_000,
+    enable_auto_summarization=True,
+))
+
+# Run comprehensive research
+report = await agent.research(
+    topic="Analyze Tesla's competitive position in the EV market",
+    focus_areas=["market share", "technology", "financials"],
+    depth="comprehensive",
+)
+
+print(report.executive_summary)
+for finding in report.key_findings:
+    print(f"- {finding.finding} ({finding.confidence:.0%} confidence)")
+```
+
+See: [examples/financial_research_agent.py](examples/financial_research_agent.py)
+
+### 4. MultiAgentOrchestrator (Intent-Based Routing)
+
+Route queries to specialists based on intent:
+
+```python
+from agentorchestrator.squad import (
+    MultiAgentOrchestrator,
+    LLMGatewayClassifier,
+    LLMGatewayAgent,
+)
+
+# Create orchestrator with classifier
+orchestrator = MultiAgentOrchestrator(
+    classifier=LLMGatewayClassifier(llm_client=llm_client),
+)
+
+# Add specialist agents
+orchestrator.add_agent(tech_agent)
+orchestrator.add_agent(finance_agent)
+orchestrator.add_agent(support_agent)
+
+# Classifier automatically routes to the right agent
+response = await orchestrator.route_request(
+    "How do I optimize my Python code?",
+    user_id="user-123",
+)
+# Routes to tech_agent based on query content
 ```
 
 ---
@@ -216,50 +400,23 @@ for mem in results:
 
 ---
 
-## Multi-Agent Orchestration
-
-### Supervisor Pattern
-
-```python
-from agentorchestrator.squad import SupervisorAgent, LLMGatewayAgent
-
-# Create specialized agents
-researcher = LLMGatewayAgent(
-    name="researcher",
-    instructions="Find and gather information.",
-    llm_client=client,
-)
-
-analyst = LLMGatewayAgent(
-    name="analyst",
-    instructions="Analyze data and provide insights.",
-    llm_client=client,
-)
-
-# Create supervisor to coordinate
-supervisor = SupervisorAgent(
-    name="coordinator",
-    team=[researcher, analyst],
-    llm_client=client,
-)
-
-# Execute
-result = await supervisor.process_message("Research AI trends and analyze impact")
-```
-
-### Context Isolation
+## Context Isolation
 
 Prevent context pollution in multi-agent systems:
 
 ```python
 from agentorchestrator.squad.context import (
     ContextIsolationManager,
+    IsolationLevel,
     ResultAggregator,
     AggregationStrategy,
 )
 
 # Create isolation manager
-isolation = ContextIsolationManager(coordinator_context=ctx)
+isolation = ContextIsolationManager(
+    coordinator_context=ctx,
+    isolation_level=IsolationLevel.FULL,
+)
 
 # Each agent gets isolated namespace
 for agent in team:
@@ -267,6 +424,7 @@ for agent in team:
 
 # Share only what's needed
 isolation.share_with_all("query", user_query)
+isolation.share_between("researcher", "findings", ["analyst", "writer"])
 
 # Aggregate results
 aggregator = ResultAggregator(strategy=AggregationStrategy.SYNTHESIZE)
@@ -285,6 +443,8 @@ from agentorchestrator.middleware import (
     CacheMiddleware,
     SummarizerMiddleware,
     RateLimiterMiddleware,
+    MiddlewareCircuitBreakerConfig,
+    CircuitBreakerMiddleware,
 )
 
 ao = AgentOrchestrator(name="my_app")
@@ -302,6 +462,39 @@ ao.use(SummarizerMiddleware(summarizer=summarizer, max_tokens=4000))
 ao.use(RateLimiterMiddleware({
     "fetch_data": {"requests_per_second": 10},
 }))
+
+# Circuit breaker for resilience
+ao.use(CircuitBreakerMiddleware({
+    "external_api": MiddlewareCircuitBreakerConfig(failure_threshold=5),
+}))
+```
+
+---
+
+## Examples
+
+| Example | Description | Location |
+|---------|-------------|----------|
+| **Hello World** | Basic step and chain setup | [examples/getting_started/](examples/getting_started/) |
+| **Supervisor Chain** | Multi-agent supervisor pattern | [examples/supervisor_chain.py](examples/supervisor_chain.py) |
+| **Financial Research** | Deep research agent with MCP servers | [examples/financial_research_agent.py](examples/financial_research_agent.py) |
+| **RAG Pipeline** | Retrieval-augmented generation | [examples/rag/](examples/rag/) |
+| **Memory Integration** | Chat storage and semantic memory | [examples/memory/](examples/memory/) |
+
+### Running Examples
+
+```bash
+# Run the supervisor chain example
+python -m agentorchestrator.examples.supervisor_chain
+
+# Run the financial research agent
+python -m agentorchestrator.examples.financial_research_agent \
+    "Analyze Tesla's competitive position" \
+    --focus "market share" "technology" \
+    --depth comprehensive
+
+# Or use the CLI
+ao run hello_chain --data '{"name": "World"}'
 ```
 
 ---
@@ -350,19 +543,6 @@ See [CLI Reference](docs/cli/index.md) for complete documentation.
 
 ---
 
-## Examples
-
-| Example | Description |
-|---------|-------------|
-| [Hello World](examples/getting_started/) | Basic step and chain setup |
-| [RAG Pipeline](examples/rag/) | Retrieval-augmented generation with VectorStore |
-| [Multi-Agent Research](examples/agents/) | Supervisor coordinating specialized agents |
-| [Memory Integration](examples/memory/) | Chat storage and semantic memory |
-
-See [examples/](examples/) for full implementations with READMEs.
-
----
-
 ## Documentation
 
 | Section | Description |
@@ -391,7 +571,7 @@ agentorchestrator/
 ├── core/               # AgentOrchestrator, Context, DAG, Registry
 ├── middleware/         # Cache, Logger, Summarizer, Rate Limiter
 ├── squad/              # Multi-agent orchestration
-│   ├── agents/         # LLMGatewayAgent for squad coordination
+│   ├── agents/         # LLMGatewayAgent, SupervisorAgent, FunctionAgent
 │   ├── classifiers/    # Intent classification
 │   ├── context/        # Context isolation & result aggregation
 │   └── storage/        # Chat storage (InMemory, Redis)
@@ -403,6 +583,10 @@ agentorchestrator/
 │   └── mem0.py         # Mem0Memory (semantic memory)
 ├── utils/              # Logging, tracing, circuit breaker
 ├── examples/           # Example implementations
+│   ├── getting_started/# Hello world, simple chains
+│   ├── agents/         # Multi-agent examples
+│   ├── rag/            # RAG pipeline examples
+│   └── memory/         # Memory integration examples
 └── docs/               # Documentation
 ```
 
@@ -432,13 +616,24 @@ from agentorchestrator.squad.storage.redis import RedisChatStorage
 # Agents
 from agentorchestrator.agents import BaseAgent, ResilientAgent, AgentResult
 
-# Squad (Multi-Agent)
+# Squad (Multi-Agent) - All patterns
 from agentorchestrator.squad import (
-    SupervisorAgent,
+    # High-level Squad wrapper
+    Squad,
+    SquadOptions,
+    # Agent types
     LLMGatewayAgent,
+    LLMGatewayAgentOptions,
+    SupervisorAgent,
+    SupervisorAgentOptions,
+    FunctionAgent,
+    FunctionAgentOptions,
+    HandoffResult,
+    # Routing
+    MultiAgentOrchestrator,
     LLMGatewayClassifier,
-)
-from agentorchestrator.squad.context import (
+    # Context management
+    IsolationLevel,
     ContextIsolationManager,
     ResultAggregator,
     AggregationStrategy,
@@ -450,6 +645,8 @@ from agentorchestrator.middleware import (
     LoggerMiddleware,
     SummarizerMiddleware,
     RateLimiterMiddleware,
+    CircuitBreakerMiddleware,
+    MiddlewareCircuitBreakerConfig,
 )
 
 # Utilities
