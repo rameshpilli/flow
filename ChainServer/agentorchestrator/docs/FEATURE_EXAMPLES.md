@@ -764,6 +764,194 @@ async for event in agent.research_stream("Analyze Tesla's competitive position")
 
 ---
 
+## 8. Context Isolation for Multi-Agent Systems (NEW)
+
+**What it does**: Each agent operates in its own isolated context, preventing context pollution
+and enabling clean result aggregation. This is the **gold standard** for scaling to 5-10+ agents.
+
+**Implementation**: [`squad/context/`](../squad/context/)
+
+### The Problem: Context Explosion
+
+Without isolation, if a coordinator passes full history to each sub-agent:
+```
+N agents × full context = massive token usage + confused reasoning
+```
+
+Agent A's intermediate data accidentally influences Agent B. Context grows exponentially.
+
+### The Solution: Manus-Style Context Isolation
+
+Each agent gets its own namespace. Coordinator mediates all data sharing.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              Coordinator Context (SupervisorAgent)                           │
+│  ├─ request_id, user_query, execution_plan                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+                    │ Creates isolated namespaces
+        ┌───────────┼───────────┐
+        ↓           ↓           ↓
+   ┌─────────┐ ┌─────────┐ ┌─────────┐
+   │ Agent 1 │ │ Agent 2 │ │ Agent 3 │
+   │Namespace│ │Namespace│ │Namespace│
+   │         │ │         │ │         │
+   │ - temp  │ │ - temp  │ │ - temp  │
+   │ - data  │ │ - data  │ │ - data  │
+   │ - result│ │ - result│ │ - result│
+   └─────────┘ └─────────┘ └─────────┘
+        │           │           │
+        └───────────┴───────────┘
+                    ↓
+        ┌─────────────────────────┐
+        │    ResultAggregator     │
+        │ - Collect results       │
+        │ - Detect conflicts      │
+        │ - Synthesize/merge      │
+        └─────────────────────────┘
+                    ↓
+              Final Response
+```
+
+### Basic Usage
+
+```python
+from agentorchestrator.squad.context import (
+    ContextIsolationManager,
+    ResultAggregator,
+    AggregationStrategy,
+    IsolationLevel,
+)
+
+# Supervisor creates isolation manager
+isolation = ContextIsolationManager(coordinator_context=ctx)
+
+# Create isolated namespaces for each team member
+for agent in team:
+    agent.namespace = isolation.create_namespace(
+        agent_id=agent.id,
+        isolation_level=IsolationLevel.FULL,  # Can't see other agents' data
+    )
+
+# Share request data with all agents
+isolation.share_with_all("query", user_query)
+isolation.share_with_all("user_id", user_id)
+
+# Execute agents in parallel - each in isolated context
+async with isolation.execute_parallel(team, process_agent, query) as results:
+    for agent_id, result in results.items():
+        print(f"{agent_id}: {result}")
+```
+
+### Agent Execution with Namespace
+
+```python
+async def process_agent(agent, query, namespace):
+    """Each agent operates in its own namespace."""
+    async with namespace:
+        # Agent only sees:
+        # 1. Explicitly shared data (query, user_id)
+        # 2. Its own local data
+        # 3. Nothing from other agents
+
+        # Store intermediate work (invisible to others)
+        namespace.set("raw_data", await agent.fetch_data(query))
+        namespace.set("analysis", await agent.analyze(namespace.get("raw_data")))
+
+        # Set final result for aggregation
+        result = await agent.generate_response(namespace.get("analysis"))
+        namespace.set_result(result, metadata={"confidence": 0.9})
+
+        return result
+```
+
+### Result Aggregation
+
+```python
+from agentorchestrator.squad.context import ResultAggregator, AggregationStrategy
+
+# Collect results from isolated namespaces
+aggregator = ResultAggregator(strategy=AggregationStrategy.SYNTHESIZE)
+
+for agent in team:
+    aggregator.add_from_namespace(agent.id, agent.namespace)
+
+# Aggregate with LLM synthesis
+final = await aggregator.aggregate(llm=llm_client)
+
+print(final.data)  # Synthesized response from all agents
+print(final.confidence)  # Overall confidence
+print(final.conflicts)  # Any disagreements between agents
+```
+
+### Aggregation Strategies
+
+| Strategy | Description | Best For |
+|----------|-------------|----------|
+| `SYNTHESIZE` | LLM creates narrative from all results | Research, reports |
+| `MERGE` | Deep merge dicts/lists | Structured data |
+| `PRIORITIZE` | Select highest confidence result | Single-answer questions |
+| `VOTE` | Majority voting | Discrete choices |
+| `CHAIN` | Sequential refinement | Iterative improvement |
+| `CONCAT` | Simple concatenation | Text segments |
+
+### Selective Data Sharing
+
+```python
+# Share data from one agent to specific others (coordinator-mediated)
+isolation.share_between(
+    source_agent="researcher",
+    key="findings",
+    target_agents=["writer", "reviewer"],  # Only these can see it
+)
+
+# Agent can publish data for coordinator to share
+async with namespace:
+    namespace.publish("key_insight", important_finding)
+    # Coordinator decides if/how to share with others
+```
+
+### Isolation Levels
+
+```python
+class IsolationLevel(Enum):
+    FULL = "full"      # Only sees own data + explicitly shared keys
+    PARTIAL = "partial" # Sees own data + all coordinator CHAIN data (read-only)
+    NONE = "none"       # No isolation (legacy mode)
+```
+
+### Integration with Financial Research Agent
+
+```python
+from agentorchestrator.examples.financial_research_agent import FinancialResearchAgent
+from agentorchestrator.squad.context import ContextIsolationManager
+
+# The financial research agent now uses context isolation internally
+agent = FinancialResearchAgent(
+    config=ResearchConfig(
+        # Context isolation is enabled by default for multi-agent steps
+        enable_context_isolation=True,
+    )
+)
+
+# News, SEC, and Earnings agents each get isolated contexts
+# Their huge responses don't pollute each other
+# Coordinator aggregates only the relevant findings
+report = await agent.research("Analyze Tesla's competitive position")
+```
+
+### Benefits
+
+| Aspect | Without Isolation | With Isolation |
+|--------|-------------------|----------------|
+| **Token Usage** | N × full context | N × focused context |
+| **Reasoning** | Confused by irrelevant data | Clear, focused |
+| **Scaling** | Breaks at 5+ agents | Linear scaling |
+| **Debugging** | Hard to trace | Per-agent snapshots |
+| **Security** | All data visible | Controlled sharing |
+
+---
+
 ## Summary: What Changes
 
 | Feature | Before | After |
