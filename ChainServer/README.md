@@ -77,13 +77,32 @@ result = asyncio.run(ao.launch("my_pipeline", {}))
 
 ## CLI
 
+The CLI is available as both `ao` (shorthand) and `agentorchestrator` (full name):
+
 ```bash
-ao run my_pipeline --data '{"key": "value"}'
-ao check       # Validate definitions
-ao list        # List components
-ao graph       # Visualize DAG
-ao health      # Health check
+# Execution
+ao run my_pipeline --data '{"key": "value"}'  # Run a chain
+ao run my_pipeline --resumable                # Run with checkpointing
+ao run my_pipeline --dry-run                  # Preview execution plan
+ao resume <run_id>                            # Resume failed run
+
+# Validation & Inspection
+ao check              # Quick validation
+ao validate my_chain  # Comprehensive validation
+ao list               # List all components
+ao graph my_chain     # Visualize DAG
+
+# Development
+ao dev --watch        # Hot reload mode
+ao debug my_chain     # Debug with snapshots
+
+# Diagnostics
+ao health --detailed  # Full health check
+ao doctor             # Diagnose issues
+ao version            # Show version
 ```
+
+See [CLI Reference](agentorchestrator/docs/cli/index.md) for complete documentation.
 
 ## License
 

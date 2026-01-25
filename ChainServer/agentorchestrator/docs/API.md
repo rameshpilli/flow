@@ -536,32 +536,41 @@ with trace_span("my_operation", {"key": "value"}):
 
 ## CLI
 
+The CLI is available as both `ao` (recommended shorthand) and `agentorchestrator` (full name):
+
 ```bash
-# Run chain
-agentorchestrator run my_chain --data '{"key": "value"}'
+# Execution
+ao run my_chain --data '{"key": "value"}'      # Run a chain
+ao run my_chain --resumable                    # With checkpointing
+ao run my_chain --dry-run                      # Preview execution
+ao run my_chain --step my_step                 # Test single step
+ao resume <run_id>                             # Resume failed run
+ao runs --status failed                        # List runs
+ao run-info <run_id>                           # Run details
+ao run-output <run_id>                         # Partial outputs
 
-# Validate
-agentorchestrator check
+# Validation & Inspection
+ao check                                       # Quick validation
+ao validate my_chain                           # Comprehensive checks
+ao list                                        # List components
+ao graph my_chain                              # ASCII DAG
+ao graph my_chain --format mermaid             # Mermaid diagram
 
-# List components
-agentorchestrator list
+# Development & Debugging
+ao dev --watch                                 # Hot reload mode
+ao debug my_chain --data '{}'                  # Debug with snapshots
 
-# Visualize
-agentorchestrator graph my_chain
-agentorchestrator graph my_chain --format mermaid
-
-# Health check
-agentorchestrator health
-agentorchestrator health --detailed
-
-# Diagnose issues
-agentorchestrator doctor
-
-# Development
-agentorchestrator dev --watch
+# Health & Diagnostics
+ao health                                      # Basic health
+ao health --detailed                           # Full health check
+ao doctor                                      # Diagnose issues
+ao version                                     # Version info
+ao config                                      # Show config
 
 # Scaffolding
-agentorchestrator new agent MyAgent
-agentorchestrator new chain MyChain
-agentorchestrator new project my-app
+ao new agent MyAgent                           # Agent template
+ao new chain MyChain                           # Chain template
+ao new project my-app                          # Full project
 ```
+
+See [CLI Reference](cli/index.md) for complete documentation.

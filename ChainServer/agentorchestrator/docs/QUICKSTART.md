@@ -220,19 +220,44 @@ for mem in results:
 
 ## CLI
 
+The CLI is available as `ao` (recommended) or `agentorchestrator` (full name):
+
 ```bash
 # Run a chain
-agentorchestrator run my_chain --data '{"name": "Test"}'
+ao run my_chain --data '{"name": "Test"}'
+
+# Run with checkpointing (for resume capability)
+ao run my_chain --resumable --data '{"name": "Test"}'
+
+# Dry run - see execution plan without running
+ao run my_chain --dry-run --data '{"name": "Test"}'
 
 # Validate definitions
-agentorchestrator check
+ao check
+
+# Comprehensive validation
+ao validate my_chain
 
 # List all registered components
-agentorchestrator list
+ao list
 
 # Visualize chain DAG
-agentorchestrator graph my_chain
+ao graph my_chain
+
+# Development mode with hot reload
+ao dev --watch
+
+# Debug mode with context snapshots
+ao debug my_chain --data '{"name": "Test"}'
+
+# Health check
+ao health --detailed
+
+# Diagnose setup issues
+ao doctor
 ```
+
+See [CLI Reference](cli/index.md) for complete documentation.
 
 ## Next Steps
 

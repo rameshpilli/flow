@@ -152,6 +152,14 @@ nav:
     - Aggregation: patterns/aggregation.md
     - Routing: patterns/routing.md
 
+  - CLI Reference:
+    - Overview: cli/index.md
+    - Execution Commands: cli/run.md
+    - Validation & Inspection: cli/validation.md
+    - Scaffolding: cli/scaffolding.md
+    - Development & Debugging: cli/development.md
+    - Health & Diagnostics: cli/diagnostics.md
+
   - Reference:
     - Architecture: ARCHITECTURE.md
     - API Reference: API.md

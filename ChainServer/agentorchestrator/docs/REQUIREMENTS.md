@@ -258,28 +258,30 @@ pytest agentorchestrator/tests/integration/ -v
 
 ## CLI Commands
 
+The CLI is available as `ao` (recommended) or `agentorchestrator`:
+
 ```bash
-# Run a chain
-agentorchestrator run my_chain --data '{"key": "value"}'
+# Execution
+ao run my_chain --data '{"key": "value"}'      # Run a chain
+ao run my_chain --resumable                    # With checkpointing
+ao resume <run_id>                             # Resume failed run
 
-# Validate definitions
-agentorchestrator check
+# Validation & Inspection
+ao check                                       # Quick validation
+ao validate my_chain                           # Comprehensive validation
+ao list                                        # List components
+ao graph my_chain                              # Visualize DAG
 
-# List all registered components
-agentorchestrator list
+# Development
+ao dev --watch                                 # Hot reload mode
+ao debug my_chain --data '{}'                  # Debug with snapshots
 
-# Visualize chain DAG
-agentorchestrator graph my_chain
-
-# Health check
-agentorchestrator health
-
-# Diagnose issues
-agentorchestrator doctor
-
-# Development mode with hot reload
-agentorchestrator dev --watch
+# Diagnostics
+ao health --detailed                           # Health check
+ao doctor                                      # Diagnose issues
 ```
+
+See [CLI Reference](cli/index.md) for complete documentation.
 
 ---
 

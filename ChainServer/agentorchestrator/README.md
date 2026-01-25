@@ -308,35 +308,45 @@ ao.use(RateLimiterMiddleware({
 
 ## CLI
 
+The CLI is available as both `ao` (shorthand, recommended) and `agentorchestrator` (full name):
+
 ```bash
-# Run a chain
-ao run my_pipeline --data '{"key": "value"}'
+# Execution Commands
+ao run my_pipeline --data '{"key": "value"}'      # Run a chain
+ao run my_pipeline --resumable                    # With checkpointing
+ao run my_pipeline --dry-run                      # Preview execution plan
+ao run my_pipeline --step my_step                 # Test single step
+ao resume <run_id>                                # Resume failed run
+ao runs --status failed                           # List failed runs
+ao run-info <run_id>                              # Show run details
+ao run-output <run_id>                            # Get partial outputs
 
-# Validate all definitions
-ao check
+# Validation & Inspection
+ao check                                          # Quick validation
+ao validate my_chain                              # Comprehensive validation
+ao validate my_chain --data '{"sample": "data"}'  # With sample data
+ao list                                           # List all components
+ao graph my_pipeline                              # ASCII DAG visualization
+ao graph my_pipeline --format mermaid             # Mermaid diagram
 
-# List all registered components
-ao list
+# Development & Debugging
+ao dev --watch                                    # Hot reload mode
+ao debug my_chain --data '{"key": "value"}'       # Debug with snapshots
 
-# Visualize chain DAG
-ao graph my_pipeline
-ao graph my_pipeline --format mermaid
-
-# Health check
-ao health
-ao health --detailed
-
-# Diagnose issues
-ao doctor
-
-# Development mode with hot reload
-ao dev --watch
+# Health & Diagnostics
+ao health                                         # Basic health check
+ao health --detailed                              # Full dependency check
+ao doctor                                         # Diagnose setup issues
+ao version                                        # Show version
+ao config                                         # Show config (masked)
 
 # Scaffolding
-ao new agent MyAgent
-ao new chain MyChain
-ao new project my-app
+ao new agent MyAgent                              # Generate agent template
+ao new chain MyChain                              # Generate chain template
+ao new project my-app                             # Generate full project
 ```
+
+See [CLI Reference](docs/cli/index.md) for complete documentation.
 
 ---
 

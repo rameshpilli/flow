@@ -6,16 +6,16 @@ Common issues and solutions for AgentOrchestrator applications.
 
 ```bash
 # Check chain definitions
-agentorchestrator check
+ao check
 
 # Validate specific chain with dry-run
-agentorchestrator validate my_chain
+ao validate my_chain
 
 # Full health check
-agentorchestrator health --detailed
+ao health --detailed
 
 # Debug mode with snapshots
-agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
+ao debug my_chain --company "Apple" --snapshot-dir ./debug
 ```
 
 ---
@@ -34,7 +34,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
    ```
 2. Check chain registration:
    ```bash
-   agentorchestrator list
+   ao list
    ```
 3. Verify chain decorator:
    ```python
@@ -50,7 +50,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
 **Solution:**
 1. Visualize the DAG:
    ```bash
-   agentorchestrator graph my_chain
+   ao graph my_chain
    ```
 2. Remove circular dependencies:
    ```python
@@ -124,7 +124,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
    ```
 3. Use ResilientAgent for automatic retry:
    ```python
-   from agentorchestrator.agents import ResilientAgent, ResilientAgentConfig
+   from ao.agents import ResilientAgent, ResilientAgentConfig
 
    resilient = ResilientAgent(
        agent=my_agent,
@@ -146,7 +146,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
 2. Check underlying service health
 3. Reset circuit manually:
    ```python
-   from agentorchestrator.utils.circuit_breaker import reset_all_circuit_breakers
+   from ao.utils.circuit_breaker import reset_all_circuit_breakers
    reset_all_circuit_breakers()
    ```
 4. Adjust thresholds:
@@ -164,7 +164,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
 **Solutions:**
 1. Check entry point registration in `pyproject.toml`:
    ```toml
-   [project.entry-points."agentorchestrator.agents"]
+   [project.entry-points."ao.agents"]
    my_plugin = "my_package.agents:MyAgent"
    ```
 2. Reinstall package:
@@ -173,7 +173,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
    ```
 3. Verify discovery:
    ```python
-   from agentorchestrator.plugins import discover_plugins
+   from ao.plugins import discover_plugins
    plugins = discover_plugins()
    print(plugins)
    ```
@@ -193,7 +193,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
    ```
 2. Check connection settings:
    ```python
-   from agentorchestrator.core.context_store import RedisContextStore
+   from ao.core.context_store import RedisContextStore
 
    store = RedisContextStore(
        host="localhost",
@@ -203,7 +203,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
    ```
 3. Use in-memory store for development:
    ```python
-   from agentorchestrator.core.context_store import InMemoryContextStore
+   from ao.core.context_store import InMemoryContextStore
    store = InMemoryContextStore()
    ```
 
@@ -214,8 +214,8 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
 **Solutions:**
 1. Use offloading middleware:
    ```python
-   from agentorchestrator.middleware import OffloadMiddleware
-   from agentorchestrator.core import RedisContextStore
+   from ao.middleware import OffloadMiddleware
+   from ao.core import RedisContextStore
 
    ao.use_middleware(OffloadMiddleware(
        store=RedisContextStore(),
@@ -224,7 +224,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
    ```
 2. Manually offload large data:
    ```python
-   from agentorchestrator.core import offload_to_redis
+   from ao.core import offload_to_redis
 
    ref = await offload_to_redis(
        ctx, "large_data", big_payload,
@@ -244,8 +244,8 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
 **Solutions:**
 1. Check run exists:
    ```bash
-   agentorchestrator runs --limit 50
-   agentorchestrator run-info run_xxx
+   ao runs --limit 50
+   ao run-info run_xxx
    ```
 2. Verify checkpoint directory:
    ```python
@@ -300,7 +300,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
 **Solutions:**
 1. Use migrations:
    ```python
-   from agentorchestrator.core.versioning import MigrationManager
+   from ao.core.versioning import MigrationManager
 
    # Create a manager per service (no global helper)
    manager = MigrationManager()
@@ -314,7 +314,7 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
    ```
 2. Validate before migration:
    ```bash
-   agentorchestrator validate my_chain --data '{"old_format": "data"}'
+   ao validate my_chain --data '{"old_format": "data"}'
    ```
 
 ---
@@ -326,19 +326,19 @@ agentorchestrator debug my_chain --company "Apple" --snapshot-dir ./debug
 **Diagnostics:**
 1. Enable debug mode:
    ```bash
-   agentorchestrator debug my_chain --snapshot-dir ./debug
+   ao debug my_chain --snapshot-dir ./debug
    ```
 2. Check step timings in snapshots
 3. Enable tracing:
    ```python
-   from agentorchestrator.utils.tracing import configure_tracing
+   from ao.utils.tracing import configure_tracing
    configure_tracing(service_name="my-app", endpoint="http://jaeger:4317")
    ```
 
 **Solutions:**
 1. Add caching:
    ```python
-   from agentorchestrator.middleware import CacheMiddleware
+   from ao.middleware import CacheMiddleware
    ao.use_middleware(CacheMiddleware(ttl_seconds=300))
    ```
 2. Increase parallelism:
@@ -411,7 +411,7 @@ app.add_middleware(
 **Solutions:**
 1. Check component health:
    ```bash
-   agentorchestrator health --detailed --verbose
+   ao health --detailed --verbose
    ```
 2. Verify dependencies (Redis, LLM):
    ```python
@@ -432,11 +432,11 @@ app.add_middleware(
 
 2. **Run diagnostics:**
    ```bash
-   agentorchestrator health --detailed --json > health.json
-   agentorchestrator validate my_chain --json > validation.json
+   ao health --detailed --json > health.json
+   ao validate my_chain --json > validation.json
    ```
 
-3. **Report issues:** https://github.com/agentorchestrator/agentorchestrator/issues
+3. **Report issues:** https://github.com/ao/ao/issues
    - Include error message
-   - Include AgentOrchestrator version: `agentorchestrator version --json`
+   - Include AgentOrchestrator version: `ao version --json`
    - Include diagnostic output

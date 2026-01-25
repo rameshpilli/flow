@@ -124,25 +124,31 @@ print(result)  # {"sum": 6, ...}
 
 ## CLI Usage
 
+The CLI is available as `ao` (recommended) or `agentorchestrator`:
+
 ```bash
-# Run a chain
-agentorchestrator run my_pipeline --data '{"key": "value"}'
+# Execution
+ao run my_pipeline --data '{"key": "value"}'   # Run chain
+ao run my_pipeline --resumable                 # With checkpointing
+ao run my_pipeline --dry-run                   # Preview execution
+ao resume <run_id>                             # Resume failed run
 
-# Validate definitions
-agentorchestrator check
+# Validation & Inspection
+ao check                                       # Quick validation
+ao validate my_chain                           # Comprehensive validation
+ao list                                        # List components
+ao graph my_pipeline                           # Visualize DAG
 
-# List all components
-agentorchestrator list
+# Development & Debugging
+ao dev --watch                                 # Hot reload mode
+ao debug my_chain --data '{}'                  # Debug with snapshots
 
-# Visualize DAG
-agentorchestrator graph my_pipeline
-
-# Health check
-agentorchestrator health
-
-# Diagnose issues
-agentorchestrator doctor
+# Health & Diagnostics
+ao health --detailed                           # Full health check
+ao doctor                                      # Diagnose issues
 ```
+
+[CLI Reference](cli/index.md){ .md-button }
 
 ---
 
