@@ -66,6 +66,12 @@ from agentorchestrator.utils.logging import (
 from agentorchestrator.utils.retry import RetryPolicy, async_retry, retry
 from agentorchestrator.utils.timing import async_timed, timed
 
+# Caching utilities
+from agentorchestrator.utils.caching import (
+    timed_lru_cache,
+    async_timed_lru_cache,
+)
+
 # Tracing
 from agentorchestrator.utils.tracing import (
     ChainTracer,
@@ -140,4 +146,7 @@ __all__ = [
     "check_llm_health",
     "check_agents_health",
     "check_chains_health",
+    # Caching
+    "timed_lru_cache",
+    "async_timed_lru_cache",
 ]

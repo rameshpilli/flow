@@ -423,6 +423,28 @@ class RedisService:
             logger.error(f"Redis connection failed: {e}")
             raise
 
+    @property
+    def is_connected(self) -> bool:
+        """Check if async client is connected."""
+        return self._connected and self._client is not None
+
+    async def ensure_connected(self) -> "RedisService":
+        """
+        Ensure Redis is connected, connecting if necessary.
+
+        This is the preferred way to check/establish connection before operations.
+
+        Returns:
+            Self for chaining
+
+        Example:
+            await redis.ensure_connected()
+            value = await redis.get("key")
+        """
+        if not self._connected:
+            await self.connect()
+        return self
+
     async def close(self) -> None:
         """Close Redis connections."""
         if self._client:

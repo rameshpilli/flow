@@ -3,73 +3,33 @@ LLM Gateway Client
 
 Provides a thin wrapper around LLM providers (OpenAI, Anthropic, etc.)
 with OAuth token management and caching support.
+
+For corporate environments that require going through an LLM gateway
+with OAuth authentication.
+
+Usage:
+    from agentorchestrator.services import LLMGatewayClient
+
+    client = LLMGatewayClient(
+        server_url="https://llm-gateway.corp.com/api/chat",
+        api_key="your-api-key",
+    )
+
+    response = await client.generate_async("Hello, world!")
 """
 
 import asyncio
-import functools
 import json
 import logging
 import os
 import time
 from typing import Any, TypeVar
 
+from agentorchestrator.utils.caching import timed_lru_cache, async_timed_lru_cache
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
-
-def timed_lru_cache(seconds: int = 300, maxsize: int = 128):
-    """LRU cache decorator with time-based expiration."""
-    def decorator(func):
-        cache = {}
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            key = (args, tuple(sorted(kwargs.items())))
-            now = time.time()
-            if key in cache:
-                result, timestamp = cache[key]
-                if now - timestamp < seconds:
-                    return result
-            result = func(*args, **kwargs)
-            cache[key] = (result, now)
-            # Evict old entries if cache is too large
-            if len(cache) > maxsize:
-                oldest = min(cache.keys(), key=lambda k: cache[k][1])
-                del cache[oldest]
-            return result
-        return wrapper
-    return decorator
-
-
-def async_timed_lru_cache(seconds: int = 300, maxsize: int = 128):
-    """Async LRU cache decorator with time-based expiration."""
-    def decorator(func):
-        cache = {}
-        lock = asyncio.Lock()
-
-        @functools.wraps(func)
-        async def wrapper(*args, **kwargs):
-            key = (args, tuple(sorted(kwargs.items())))
-            now = time.time()
-
-            async with lock:
-                if key in cache:
-                    result, timestamp = cache[key]
-                    if now - timestamp < seconds:
-                        return result
-
-            result = await func(*args, **kwargs)
-
-            async with lock:
-                cache[key] = (result, now)
-                # Evict old entries if cache is too large
-                if len(cache) > maxsize:
-                    oldest = min(cache.keys(), key=lambda k: cache[k][1])
-                    del cache[oldest]
-
-            return result
-        return wrapper
-    return decorator
 
 
 class OAuthTokenManager:
@@ -406,12 +366,6 @@ class LLMGatewayClient:
                 except Exception:
                     pass
             return {}
-
-    def get_langchain_llm(self):
-        """Return a LangChain-compatible LLM wrapper."""
-        # Stub - in production, return actual LangChain wrapper
-        return None
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #                       GLOBAL CLIENT MANAGEMENT

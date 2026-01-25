@@ -115,8 +115,7 @@ class RedisChatStorage(ChatStorage):
 
     async def _ensure_connected(self) -> None:
         """Ensure Redis is connected."""
-        if not self.redis._connected:
-            await self.redis.connect()
+        await self.redis.ensure_connected()
 
     async def save_chat_message(
         self,

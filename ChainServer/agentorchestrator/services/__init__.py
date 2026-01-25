@@ -17,8 +17,10 @@ from agentorchestrator.services.llm_gateway import (
     get_llm_client,
     init_default_llm_client,
     set_default_llm_client,
-    timed_lru_cache,
 )
+
+# Re-export caching utilities for backward compatibility
+from agentorchestrator.utils.caching import timed_lru_cache
 
 # Redis service (optional - requires redis package)
 try:
@@ -49,6 +51,14 @@ from agentorchestrator.services.vector_store import (
     VectorStoreService,
 )
 
+# Mem0 semantic memory service
+from agentorchestrator.services.mem0 import (
+    BaseMemory,
+    CompositeMemory,
+    Mem0Memory,
+    MemoryEntry,
+)
+
 __all__ = [
     # LLM Gateway
     "LLMGatewayClient",
@@ -73,4 +83,9 @@ __all__ = [
     "VectorDocument",
     "VectorMatch",
     "InMemoryVectorStore",
+    # Mem0 Memory
+    "BaseMemory",
+    "Mem0Memory",
+    "CompositeMemory",
+    "MemoryEntry",
 ]
