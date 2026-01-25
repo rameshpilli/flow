@@ -343,7 +343,7 @@ class CompositeMiddleware(Middleware):
         >>> # Group related middleware
         >>> data_protection = CompositeMiddleware([
         ...     RateLimiterMiddleware(default_config=RateLimitConfig(rps=10)),
-        ...     CircuitBreakerMiddleware(default_config=CircuitBreakerConfig()),
+        ...     CircuitBreakerMiddleware(default_config=MiddlewareCircuitBreakerConfig()),
         ... ])
         >>>
         >>> # Register as single unit

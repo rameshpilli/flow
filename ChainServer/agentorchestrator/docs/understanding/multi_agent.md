@@ -2,6 +2,13 @@
 
 When a single agent isn't enough, **multi-agent systems** let you coordinate specialized agents to tackle complex tasks.
 
+> **Implementation Status:**
+> - ✅ **Supervisor Pattern** - Fully implemented (`SupervisorAgent`, `Squad`)
+> - ✅ **Context Isolation** - Fully implemented (`IsolationLevel`, `ContextIsolationManager`)
+> - ✅ **FunctionAgent Handoffs** - Implemented (`FunctionAgent.handoff()`)
+> - 🚧 **Swarm Pattern** - Planned for future release
+> - 🚧 **Network Pattern** - Planned for future release
+
 ## When to Use Multi-Agent
 
 | Scenario | Single Agent | Multi-Agent |
@@ -38,47 +45,50 @@ AgentOrchestrator supports three multi-agent patterns:
 └─────────────────┴─────────────────────┴─────────────────────────┘
 ```
 
-## Supervisor Pattern
+## Supervisor Pattern ✅
 
 A supervisor agent coordinates sub-agents, delegating tasks and aggregating results.
 
 ```python
-from agentorchestrator.squad import SupervisorAgent, Squad
-
-# Define specialized agents
-class ResearchAgent(BaseAgent):
-    name = "researcher"
-    instructions = "Find and gather information on topics."
-    tools = [search_web, read_document]
-
-class AnalystAgent(BaseAgent):
-    name = "analyst"
-    instructions = "Analyze data and provide insights."
-    tools = [calculate_metrics, create_chart]
-
-class WriterAgent(BaseAgent):
-    name = "writer"
-    instructions = "Write clear, compelling content."
-
-# Create supervisor
-supervisor = SupervisorAgent(
-    name="project_lead",
-    instructions="""
-    You coordinate a research team. Delegate tasks to the right agent:
-    - researcher: for gathering information
-    - analyst: for data analysis
-    - writer: for final documentation
-    """,
+from agentorchestrator.squad import (
+    Squad,
+    SquadOptions,
+    LLMGatewayAgent,
+    LLMGatewayAgentOptions,
 )
+
+# Create specialist agents
+research_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="Researcher",
+    description="Find and gather information on topics.",
+))
+
+analyst_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="Analyst",
+    description="Analyze data and provide insights.",
+))
+
+writer_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="Writer",
+    description="Write clear, compelling content.",
+))
+
+# Create supervisor (lead agent)
+lead = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="ProjectLead",
+    description="Coordinates team to answer complex questions",
+))
 
 # Form the squad
 squad = Squad(
-    supervisor=supervisor,
-    agents=[ResearchAgent(), AnalystAgent(), WriterAgent()],
+    supervisor=lead,
+    agents=[research_agent, analyst_agent, writer_agent],
+    options=SquadOptions(trace=True),
 )
 
 # Execute
 result = await squad.run("Research AI trends and write a report")
+print(result.content)
 ```
 
 ### When to Use Supervisor
@@ -88,11 +98,15 @@ result = await squad.run("Research AI trends and write a report")
 - Results require synthesis
 - Agents have distinct roles
 
-## Swarm Pattern
+## Swarm Pattern 🚧
+
+> **Status:** Planned for future release. Not yet implemented.
 
 Agents work as peers with shared state, no central coordinator.
+This pattern is useful for emergent problem-solving and consensus-based tasks.
 
 ```python
+# PLANNED - Not yet available
 from agentorchestrator.squad import Swarm
 
 # Agents collaborate as equals
@@ -109,18 +123,22 @@ swarm = Swarm(
 result = await swarm.run("Design a new product feature")
 ```
 
-### When to Use Swarm
+### When to Use Swarm (Future)
 
 - Emergent problem-solving
 - Debate/consensus needed
 - No clear hierarchy
 - Creative tasks
 
-## Network Pattern
+## Network Pattern 🚧
+
+> **Status:** Planned for future release. Not yet implemented.
 
 Agents route tasks to each other based on capability.
+For current use cases, consider using `MultiAgentOrchestrator` with a classifier.
 
 ```python
+# PLANNED - Not yet available
 from agentorchestrator.squad import AgentNetwork, route
 
 class TriageAgent(BaseAgent):
@@ -141,13 +159,69 @@ network = AgentNetwork(
 result = await network.handle("I can't log into my account")
 ```
 
-### When to Use Network
+### Current Alternative: MultiAgentOrchestrator
+
+For intent-based routing, use the implemented `MultiAgentOrchestrator`:
+
+```python
+from agentorchestrator.squad import (
+    MultiAgentOrchestrator,
+    LLMGatewayClassifier,
+    LLMGatewayAgent,
+)
+
+orchestrator = MultiAgentOrchestrator(
+    classifier=LLMGatewayClassifier(),
+)
+orchestrator.add_agent(technical_agent)
+orchestrator.add_agent(billing_agent)
+
+# Classifier routes to the right agent
+response = await orchestrator.route_request(
+    "I can't log into my account",
+    user_id="user-1",
+)
+```
+
+### When to Use Network (Future)
 
 - Customer support routing
 - Skill-based task assignment
 - Dynamic workflows
 
-## Context Isolation
+## Agent Handoffs ✅
+
+Use `FunctionAgent` for explicit agent-to-agent delegation with context transfer:
+
+```python
+from agentorchestrator.squad import FunctionAgent, FunctionAgentOptions
+
+# Create agents with handoff permissions
+researcher = FunctionAgent(FunctionAgentOptions(
+    name="Researcher",
+    description="Gathers information",
+    can_handoff_to=["Writer"],  # Can only hand off to Writer
+))
+
+writer = FunctionAgent(FunctionAgentOptions(
+    name="Writer",
+    description="Writes reports",
+    can_handoff_to=["User"],  # Terminal - returns to user
+))
+
+# Researcher hands off to Writer with context
+handoff = await researcher.handoff(
+    to_agent="Writer",
+    context={"findings": findings, "sources": sources},
+    message="Research complete. Please write a summary.",
+)
+
+# Orchestrator uses handoff.to_agent to route to Writer
+print(f"{handoff.from_agent} → {handoff.to_agent}")
+# "Researcher → Writer"
+```
+
+## Context Isolation ✅
 
 In multi-agent systems, **context isolation** prevents agents from seeing each other's work-in-progress:
 
@@ -175,7 +249,7 @@ isolation.share_between("researcher", "findings", ["analyst", "writer"])
 
 See [Context Isolation Pattern](../patterns/context_isolation.md) for full details.
 
-## Result Aggregation
+## Result Aggregation ✅
 
 Combine outputs from multiple agents:
 

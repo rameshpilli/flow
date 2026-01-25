@@ -40,10 +40,10 @@ from agentorchestrator.middleware.offload import (
     cap_per_source,
 )
 from agentorchestrator.middleware.rate_limiter import (
-    CircuitBreakerConfig,
     CircuitBreakerMiddleware,
     CircuitOpenError,
     CircuitState,
+    MiddlewareCircuitBreakerConfig,
     RateLimitAndCircuitBreakerMiddleware,
     RateLimitConfig,
     RateLimiterMiddleware,
@@ -89,7 +89,7 @@ __all__ = [
     "RateLimitConfig",
     "RateLimitExceededError",
     "CircuitBreakerMiddleware",
-    "CircuitBreakerConfig",
+    "MiddlewareCircuitBreakerConfig",
     "CircuitOpenError",
     "CircuitState",
     "RateLimitAndCircuitBreakerMiddleware",

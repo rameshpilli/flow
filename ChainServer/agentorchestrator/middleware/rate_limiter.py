@@ -27,7 +27,7 @@ Usage:
         RateLimiterMiddleware,
         RateLimitConfig,
         CircuitBreakerMiddleware,
-        CircuitBreakerConfig,
+        MiddlewareCircuitBreakerConfig,
     )
 
     # Configure rate limiting
@@ -38,7 +38,7 @@ Usage:
 
     # Configure circuit breaker
     ao.use(CircuitBreakerMiddleware({
-        "fetch_news_data": CircuitBreakerConfig(failure_threshold=5),
+        "fetch_news_data": MiddlewareCircuitBreakerConfig(failure_threshold=5),
     }))
 
 Example:
@@ -96,7 +96,6 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "RateLimitConfig",
     "MiddlewareCircuitBreakerConfig",
-    "CircuitBreakerConfig",
     "StepRateLimitState",
     "CircuitBreakerState",
     "RateLimitExceededError",
@@ -212,8 +211,6 @@ class MiddlewareCircuitBreakerConfig:
     half_open_max_requests: int = 1
 
 
-# Backward compatibility alias
-CircuitBreakerConfig = MiddlewareCircuitBreakerConfig
 
 
 @dataclass

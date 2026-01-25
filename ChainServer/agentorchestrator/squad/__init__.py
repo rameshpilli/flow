@@ -1,5 +1,6 @@
 """
 Multi-Agent Squad Module for AgentOrchestrator.
+===============================================
 
 Provides a native multi-agent orchestration system that works with
 the corporate LLM Gateway (OAuth-enabled), bypassing direct API calls
@@ -9,11 +10,14 @@ This module follows the patterns of AWS Agent Squad but is built to work
 behind corporate proxy with your existing LLMGatewayClient.
 
 Key Components:
-    - MultiAgentOrchestrator: Main orchestrator for managing agents and routing
+    - Squad: High-level wrapper for supervisor + agents pattern (recommended)
+    - MultiAgentOrchestrator: Intent-based routing for managing agents
     - LLMGatewayAgent: Agent that uses LLMGatewayClient for inference
     - SupervisorAgent: Coordinates a team of specialist agents
+    - FunctionAgent: Agent with explicit handoff capabilities
     - LLMGatewayClassifier: Intent classifier using LLMGatewayClient
     - ChatStorage: Conversation persistence (InMemory, Redis)
+    - IsolationLevel: Context isolation levels (FULL, PARTIAL, NONE)
 
 Example:
     ```python
@@ -90,6 +94,9 @@ For team coordination with SupervisorAgent:
 # Core orchestrator
 from agentorchestrator.squad.orchestrator import MultiAgentOrchestrator
 
+# Squad wrapper (recommended entry point)
+from agentorchestrator.squad.squad import Squad, SquadOptions
+
 # Agents
 from agentorchestrator.squad.agents import (
     Agent,
@@ -99,6 +106,9 @@ from agentorchestrator.squad.agents import (
     LLMGatewayAgentOptions,
     SupervisorAgent,
     SupervisorAgentOptions,
+    FunctionAgent,
+    FunctionAgentOptions,
+    HandoffResult,
 )
 
 # Classifiers
@@ -115,6 +125,17 @@ from agentorchestrator.squad.storage import (
     RedisChatStorage,
 )
 
+# Context Isolation
+from agentorchestrator.squad.context import (
+    AgentContextNamespace,
+    IsolationLevel,
+    ContextIsolationManager,
+    ResultAggregator,
+    AggregationStrategy,
+    ContextAgentResult,
+    AggregatedResult,
+)
+
 # Types
 from agentorchestrator.squad.types import (
     ConversationMessage,
@@ -129,6 +150,9 @@ from agentorchestrator.squad.types import (
 )
 
 __all__ = [
+    # Squad (recommended entry point)
+    "Squad",
+    "SquadOptions",
     # Orchestrator
     "MultiAgentOrchestrator",
     # Agents
@@ -139,6 +163,9 @@ __all__ = [
     "LLMGatewayAgentOptions",
     "SupervisorAgent",
     "SupervisorAgentOptions",
+    "FunctionAgent",
+    "FunctionAgentOptions",
+    "HandoffResult",
     # Classifiers
     "Classifier",
     "LLMGatewayClassifier",
@@ -147,6 +174,14 @@ __all__ = [
     "ChatStorage",
     "InMemoryChatStorage",
     "RedisChatStorage",
+    # Context Isolation
+    "AgentContextNamespace",
+    "IsolationLevel",
+    "ContextIsolationManager",
+    "ResultAggregator",
+    "AggregationStrategy",
+    "ContextAgentResult",
+    "AggregatedResult",
     # Types
     "ConversationMessage",
     "TimestampedMessage",

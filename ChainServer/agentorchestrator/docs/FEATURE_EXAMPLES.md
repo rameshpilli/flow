@@ -3,77 +3,106 @@
 > Concrete examples showing how to use AgentOrchestrator patterns.
 > For full implementations, see `agentorchestrator/examples/`.
 
-> **Note**: Some examples in this document show aspirational patterns that may
-> not be fully implemented yet. Check the actual module exists before using.
-> Currently implemented: `agents`, `services`, `squad`, `middleware`, `utils`.
+## Implementation Status
+
+| Feature | Status | Import |
+|---------|--------|--------|
+| **Squad** | ✅ Implemented | `from agentorchestrator.squad import Squad` |
+| **SupervisorAgent** | ✅ Implemented | `from agentorchestrator.squad import SupervisorAgent` |
+| **FunctionAgent** | ✅ Implemented | `from agentorchestrator.squad import FunctionAgent` |
+| **Context Isolation** | ✅ Implemented | `from agentorchestrator.squad import IsolationLevel` |
+| **Middleware Suite** | ✅ Implemented | `from agentorchestrator.middleware import *` |
+| **Financial Research** | ✅ Implemented | See examples/financial_research_agent.py |
+| **ReAct Pattern** | 🚧 Planned | Coming soon |
+| **Event-Driven Workflows** | 🚧 Planned | Coming soon |
+| **Tool Registry** | 🚧 Planned | Coming soon |
+| **Swarm** | 🚧 Planned | Coming soon |
+| **AgentNetwork** | 🚧 Planned | Coming soon |
+
+> **Note**: Features marked 🚧 Planned show aspirational patterns.
+> Check the import works before using any feature.
 
 ---
 
-## 1. Financial Deep Research Agent
+## 1. Squad Pattern ✅
+
+**What it does**: Coordinate a team of specialist agents with a supervisor.
+
+```python
+from agentorchestrator.squad import (
+    Squad,
+    SquadOptions,
+    LLMGatewayAgent,
+    LLMGatewayAgentOptions,
+)
+
+# Create specialist agents
+tech_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="TechAgent",
+    description="Handles technical questions",
+))
+finance_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="FinanceAgent",
+    description="Handles financial questions",
+))
+
+# Create supervisor (lead agent)
+lead = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="Supervisor",
+    description="Coordinates team to answer complex questions",
+))
+
+# Create squad
+squad = Squad(
+    supervisor=lead,
+    agents=[tech_agent, finance_agent],
+    options=SquadOptions(trace=True),
+)
+
+# Execute
+result = await squad.run("Analyze tech stocks for Q1")
+print(result.content)
+```
+
+---
+
+## 2. Financial Deep Research Agent ✅
 
 **What it does**: Multi-stage research with Refinitiv news, SEC filings, and earnings analysis.
 
 **Full implementation**: [`examples/financial_research_agent.py`](../examples/financial_research_agent.py)
 
-### Quick Start
+> **Note**: The `.research()`, `.research_stream()`, and `.with_memory()` methods
+> shown below are aspirational patterns. The actual implementation uses the
+> chain execution pattern. See the example file for working code.
+
+### Using the Chain Pattern (Implemented)
 ```python
+from agentorchestrator import AgentOrchestrator
+from agentorchestrator.examples.financial_research_agent import register_financial_research_chain
+
+ao = AgentOrchestrator(name="research")
+register_financial_research_chain(ao)
+
+result = await ao.launch("financial_research_chain", {
+    "company": "Tesla",
+    "topic": "EV market position",
+})
+```
+
+### Aspirational API (Planned)
+```python
+# NOTE: This API is planned but not yet implemented
 from agentorchestrator.examples.financial_research_agent import (
     FinancialResearchAgent,
 )
 
-# Create agent (connects to Refinitiv, SEC, Earnings MCP servers)
 agent = FinancialResearchAgent()
-
-# Run deep research
 report = await agent.research(
     topic="Analyze Tesla's competitive position in the EV market",
     focus_areas=["market share", "technology", "financials"],
     depth="comprehensive",
 )
-
-# Results include:
-print(report.executive_summary)
-for finding in report.key_findings:
-    print(f"- [{finding.category}] {finding.finding} ({finding.confidence:.0%})")
-print(f"Sources: {len(report.sources)} from news, SEC, earnings")
-```
-
-### With Persistent Memory (mem0)
-```python
-from app import MemoryStoreClient
-from agentorchestrator.services import Mem0Memory
-
-# Connect to corporate mem0
-mem0 = MemoryStoreClient(
-    base_url="https://mem0.cfk.devfg.rbc.com",
-    agent_id="research-agent-001"
-)
-
-# Agent remembers past research
-agent = FinancialResearchAgent().with_memory(Mem0Memory(client=mem0))
-
-# First research session
-await agent.research("Tesla EV market analysis")
-
-# Later session - agent recalls previous research
-await agent.research("Compare Tesla to Rivian")
-# Agent: "Based on my previous Tesla analysis..."
-```
-
-### Stream Research Progress
-```python
-async for event in agent.research_stream("Impact of AI on banking"):
-    match event["step"]:
-        case "decompose_question":
-            print(f"📝 Breaking into sub-questions...")
-        case "gather_news":
-            print(f"📰 Searching Refinitiv news...")
-        case "gather_sec":
-            print(f"📋 Fetching SEC filings...")
-        case "analyze_findings":
-            print(f"🔍 Analyzing {event['finding_count']} findings...")
-        case "complete":
-            print(f"✅ Report ready!")
 ```
 
 ### Architecture
