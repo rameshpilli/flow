@@ -111,6 +111,122 @@ LLM_MODEL_NAME=claude-sonnet-4
 MEM0_URL=https://mem0.cfk.devfg.rbc.com
 ```
 
+### Context Management for Large Responses
+
+When multiple agents return large responses (e.g., 100+ news articles, full SEC filings),
+the combined context can overflow LLM token limits. The financial research agent uses
+a multi-layered strategy to handle this:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Context Management Pipeline                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Layer 1: Source-Level Capping (cap_per_source)                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ • Limits items per data source (news, SEC, earnings)                │   │
+│  │ • Preserves balance across sources (not just first N)               │   │
+│  │ • Tracks metadata: "kept 20 of 150, omitted 130 lower-relevance"   │   │
+│  │ • NEVER blindly truncates - always records what was omitted        │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                              ↓                                              │
+│  Layer 2: Automatic Summarization (SummarizerMiddleware)                    │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ • Triggers when step output > threshold (e.g., 8K tokens)           │   │
+│  │ • Uses MAP_REDUCE strategy:                                         │   │
+│  │   1. Split into chunks                                              │   │
+│  │   2. Summarize each chunk in parallel                               │   │
+│  │   3. Combine summaries into final summary                           │   │
+│  │ • Domain-specific prompts for financial content                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                              ↓                                              │
+│  Layer 3: Offloading (OffloadMiddleware)                                    │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ • Large payloads (>100KB) stored in Redis                           │   │
+│  │ • Context keeps lightweight reference (ContextRef)                  │   │
+│  │ • Full data always recoverable: await store.retrieve(ref)           │   │
+│  │ • 100% data preservation - NEVER loses data                         │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                              ↓                                              │
+│  Layer 4: Token Budget Management (TokenManagerMiddleware)                  │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ • Tracks total context tokens across all steps                      │   │
+│  │ • Warns at 80%, auto-compresses at 100%                             │   │
+│  │ • Prioritizes recent/important context over old                     │   │
+│  │ • Auto-triggers summarization on oldest steps first                 │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Configuration
+```python
+from agentorchestrator.examples.financial_research_agent import ResearchConfig
+
+config = ResearchConfig(
+    # Context management settings
+    max_context_tokens=100_000,      # Total budget for analysis
+    summarization_threshold=8_000,   # Summarize outputs over this
+    offload_threshold_bytes=100_000, # Offload payloads over 100KB
+    max_items_per_source=20,         # Cap items per data source
+    enable_auto_summarization=True,
+    enable_auto_offload=True,
+)
+
+agent = FinancialResearchAgent(config)
+```
+
+#### Using Cap Utilities Directly
+```python
+from agentorchestrator.middleware.offload import (
+    cap_items_with_metadata,
+    cap_per_source,
+)
+
+# Cap by relevance, preserve metadata
+articles, meta = cap_items_with_metadata(
+    all_articles,
+    max_items=20,
+    sort_key=lambda x: x.get("relevance", 0),
+    sort_reverse=True,
+)
+# meta = {"original_count": 150, "kept_count": 20, "omitted_count": 130, ...}
+
+# Cap per source for balanced representation
+filings, meta = cap_per_source(
+    all_filings,
+    source_field="ticker",
+    max_per_source=5,
+    total_max=20,
+)
+# Ensures each company gets fair representation
+```
+
+#### Summarization Strategies
+```python
+from agentorchestrator.middleware.summarizer import (
+    SummarizationStrategy,
+    LangChainSummarizer,
+    create_gateway_summarizer,
+)
+
+# STUFF: Single LLM call (small docs only)
+# MAP_REDUCE: Parallel chunks → combine (best for large docs)
+# REFINE: Sequential refinement (best quality, slowest)
+
+summarizer = create_gateway_summarizer(
+    strategy=SummarizationStrategy.MAP_REDUCE,
+    chunk_size=2000,
+)
+
+# Register domain-specific prompts
+LangChainSummarizer.register_domain_prompts(
+    domain="financial_news",
+    map_prompt="Summarize this financial news, preserving key metrics...",
+    reduce_prompt="Combine summaries into a cohesive analysis...",
+)
+```
+
 ---
 
 ## 2. Agent Handoffs (flow-5t6)
