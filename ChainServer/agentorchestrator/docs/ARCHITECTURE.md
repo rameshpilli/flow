@@ -10,47 +10,236 @@ AgentOrchestrator is a DAG-based chain orchestration framework. It provides deco
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                           AgentOrchestrator                                      │
+│                           AgentOrchestrator                             │
 ├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                  │
-│  │   Agents    │    │    Steps    │    │   Chains    │                  │
-│  │  @ao.    │    │  @ao.    │    │  @ao.    │                  │
-│  │   agent()   │    │   step()    │    │   chain()   │                  │
-│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘                  │
-│         │                  │                  │                          │
-│         ▼                  ▼                  ▼                          │
-│  ┌─────────────────────────────────────────────────────────┐            │
-│  │                    Registry System                       │            │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │            │
-│  │  │AgentRegistry│  │StepRegistry │  │ChainRegistry│     │            │
-│  │  └─────────────┘  └─────────────┘  └─────────────┘     │            │
-│  └─────────────────────────────────────────────────────────┘            │
-│                              │                                           │
-│                              ▼                                           │
-│  ┌─────────────────────────────────────────────────────────┐            │
-│  │                    DAG Executor                          │            │
-│  │  • Dependency resolution                                 │            │
-│  │  • Parallel execution                                    │            │
-│  │  • Retry & circuit breaker                              │            │
-│  │  • True fail-fast cancellation                          │            │
-│  └─────────────────────────────────────────────────────────┘            │
-│                              │                                           │
-│                              ▼                                           │
-│  ┌─────────────────────────────────────────────────────────┐            │
-│  │                    Middleware Stack                      │            │
-│  │  LoggerMiddleware → CacheMiddleware → SummarizerMiddleware           │
-│  └─────────────────────────────────────────────────────────┘            │
-│                              │                                           │
-│                              ▼                                           │
-│  ┌─────────────────────────────────────────────────────────┐            │
-│  │                    ChainContext                          │            │
-│  │  • Scoped storage (step/chain/global)                   │            │
-│  │  • Token tracking                                        │            │
-│  │  • Step results                                          │            │
-│  └─────────────────────────────────────────────────────────┘            │
-│                                                                          │
+│                                                                         │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                 │
+│  │   Agents    │    │    Steps    │    │   Chains    │                 │
+│  │  @ao.       │    │  @ao.       │    │  @ao.       │                 │
+│  │   agent()   │    │   step()    │    │   chain()   │                 │
+│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘                 │
+│         │                  │                  │                         │
+│         ▼                  ▼                  ▼                         │
+│  ┌─────────────────────────────────────────────────────────┐           │
+│  │                    Registry System                       │           │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      │           │
+│  │  │AgentRegistry│  │StepRegistry │  │ChainRegistry│      │           │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘      │           │
+│  └─────────────────────────────────────────────────────────┘           │
+│                              │                                          │
+│                              ▼                                          │
+│  ┌─────────────────────────────────────────────────────────┐           │
+│  │                    DAG Executor                          │           │
+│  │  • Dependency resolution                                 │           │
+│  │  • Parallel execution                                    │           │
+│  │  • Retry & circuit breaker                               │           │
+│  │  • True fail-fast cancellation                           │           │
+│  └─────────────────────────────────────────────────────────┘           │
+│                              │                                          │
+│                              ▼                                          │
+│  ┌─────────────────────────────────────────────────────────┐           │
+│  │                    Middleware Stack                      │           │
+│  │  LoggerMiddleware → CacheMiddleware → SummarizerMiddleware          │
+│  └─────────────────────────────────────────────────────────┘           │
+│                              │                                          │
+│                              ▼                                          │
+│  ┌─────────────────────────────────────────────────────────┐           │
+│  │                    ChainContext                          │           │
+│  │  • Scoped storage (step/chain/global)                    │           │
+│  │  • Token tracking                                        │           │
+│  │  • Step results                                          │           │
+│  └─────────────────────────────────────────────────────────┘           │
+│                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## State Machine Diagrams
+
+### Chain Execution State Machine
+
+```
+                              ┌─────────────┐
+                              │   CREATED   │
+                              └──────┬──────┘
+                                     │ launch()
+                                     ▼
+                              ┌─────────────┐
+                              │ VALIDATING  │
+                              └──────┬──────┘
+                                     │ validation passed
+                                     ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                         EXECUTING                                 │
+│  ┌─────────────────────────────────────────────────────────────┐ │
+│  │                                                              │ │
+│  │    ┌─────────┐     ┌─────────┐     ┌─────────┐              │ │
+│  │    │STEP_WAIT│────▶│STEP_RUN │────▶│STEP_DONE│              │ │
+│  │    └─────────┘     └────┬────┘     └─────────┘              │ │
+│  │                         │                                    │ │
+│  │                    step failed                               │ │
+│  │                         │                                    │ │
+│  │                         ▼                                    │ │
+│  │                   ┌───────────┐                              │ │
+│  │                   │STEP_RETRY │───▶ (retry limit)            │ │
+│  │                   └───────────┘                              │ │
+│  │                                                              │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+└───────────────────────────┬──────────────────────────────────────┘
+                            │
+           ┌────────────────┼────────────────┐
+           │                │                │
+           ▼                ▼                ▼
+    ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+    │  COMPLETED  │  │   FAILED    │  │  CANCELLED  │
+    └─────────────┘  └─────────────┘  └─────────────┘
+```
+
+### Circuit Breaker State Machine
+
+```
+                    ┌─────────────────────────────────────┐
+                    │                                     │
+                    │         success_count++             │
+                    ▼                                     │
+             ┌─────────────┐                              │
+             │             │                              │
+     ───────▶│   CLOSED    │◀─────────────────────────────┘
+             │             │         success_threshold reached
+             └──────┬──────┘
+                    │
+                    │ failure_count >= failure_threshold
+                    │
+                    ▼
+             ┌─────────────┐
+             │             │
+             │    OPEN     │────────────────────┐
+             │             │                    │
+             └──────┬──────┘                    │
+                    │                           │
+                    │ recovery_timeout elapsed  │ request arrives
+                    │                           │ (fail immediately)
+                    ▼                           │
+             ┌─────────────┐                    │
+             │             │                    │
+             │  HALF_OPEN  │◀───────────────────┘
+             │             │     (after timeout)
+             └──────┬──────┘
+                    │
+        ┌───────────┴───────────┐
+        │                       │
+        ▼                       ▼
+   success                   failure
+        │                       │
+        ▼                       ▼
+   → CLOSED                  → OPEN
+```
+
+### Step Execution State Machine
+
+```
+     ┌──────────────┐
+     │   PENDING    │
+     └───────┬──────┘
+             │ dependencies satisfied
+             ▼
+     ┌──────────────┐
+     │   WAITING    │ ──────────────────────────┐
+     └───────┬──────┘                           │
+             │ acquired execution slot           │ chain cancelled
+             ▼                                   │
+     ┌──────────────┐                           │
+     │   RUNNING    │────────────┐              │
+     └───────┬──────┘            │              │
+             │                   │              ▼
+    ┌────────┴────────┐     step threw     ┌──────────────┐
+    │                 │     exception      │  CANCELLED   │
+    ▼                 ▼          │         └──────────────┘
+┌────────┐      ┌──────────┐    │
+│SUCCESS │      │ RETRYING │◀───┘
+└────────┘      └────┬─────┘
+                     │
+          ┌──────────┴──────────┐
+          │                     │
+          ▼                     ▼
+    retry succeeds        retry exhausted
+          │                     │
+          ▼                     ▼
+     → SUCCESS              ┌────────┐
+                            │ FAILED │
+                            └────────┘
+```
+
+### Agent Request Processing State Machine
+
+```
+                    ┌──────────────┐
+        request ───▶│   RECEIVED   │
+                    └───────┬──────┘
+                            │
+                            ▼
+                    ┌──────────────┐
+                    │  CLASSIFYING │
+                    └───────┬──────┘
+                            │ agent selected
+                            ▼
+                    ┌──────────────┐
+                    │  PROCESSING  │
+                    └───────┬──────┘
+                            │
+              ┌─────────────┴─────────────┐
+              │                           │
+              ▼                           ▼
+     ┌──────────────┐            ┌──────────────┐
+     │ TOOL_CALLING │            │  GENERATING  │
+     └───────┬──────┘            └───────┬──────┘
+              │ tool results              │
+              └─────────────┬─────────────┘
+                            │
+                            ▼
+                    ┌──────────────┐
+                    │   COMPLETE   │
+                    └──────────────┘
+```
+
+### Context Isolation State Machine
+
+```
+     ┌───────────────┐
+     │   ISOLATED    │ ◀──────────────────────────────────┐
+     └───────┬───────┘                                    │
+             │ create_namespace()                         │
+             ▼                                            │
+     ┌───────────────┐                                    │
+     │   NAMESPACE   │                                    │
+     │   CREATED     │                                    │
+     └───────┬───────┘                                    │
+             │                                            │
+    ┌────────┴────────────────┐                          │
+    │                         │                          │
+    ▼                         ▼                          │
+┌───────────┐           ┌───────────┐                    │
+│   LOCAL   │           │  SHARED   │                    │
+│   WRITE   │           │   READ    │                    │
+└─────┬─────┘           └─────┬─────┘                    │
+      │                       │                          │
+      └───────────┬───────────┘                          │
+                  │                                       │
+                  ▼                                       │
+          ┌───────────────┐                              │
+          │  RESULT_SET   │                              │
+          └───────┬───────┘                              │
+                  │ namespace closed                     │
+                  ▼                                       │
+          ┌───────────────┐                              │
+          │  AGGREGATING  │ ─────────────────────────────┘
+          └───────┬───────┘      next request
+                  │
+                  ▼
+          ┌───────────────┐
+          │   COMPLETE    │
+          └───────────────┘
 ```
 
 ---
@@ -133,118 +322,138 @@ Pluggable processing hooks:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                        Chain Execution Flow                           │
+│                        Chain Execution Flow                          │
 ├──────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│   ao.launch("my_chain", initial_data)                             │
-│                      │                                                │
-│                      ▼                                                │
-│   ┌──────────────────────────────────────┐                           │
-│   │  1. Input Validation                  │                           │
-│   │     (Pydantic models if defined)      │                           │
-│   └──────────────────────────────────────┘                           │
-│                      │                                                │
-│                      ▼                                                │
-│   ┌──────────────────────────────────────┐                           │
-│   │  2. Create ChainContext               │                           │
-│   │     - request_id                      │                           │
-│   │     - initial_data                    │                           │
-│   └──────────────────────────────────────┘                           │
-│                      │                                                │
-│                      ▼                                                │
-│   ┌──────────────────────────────────────┐                           │
-│   │  3. Build DAG                         │                           │
-│   │     - Resolve dependencies            │                           │
-│   │     - Create execution plan           │                           │
-│   └──────────────────────────────────────┘                           │
-│                      │                                                │
-│                      ▼                                                │
-│   ┌──────────────────────────────────────┐                           │
-│   │  4. Execute Steps (in order)          │                           │
-│   │                                       │                           │
-│   │     For each step:                    │                           │
-│   │     ├─ middleware.before()            │                           │
-│   │     ├─ step_handler(ctx)              │                           │
-│   │     ├─ middleware.after()             │                           │
-│   │     └─ ctx.add_result(StepResult)     │                           │
-│   │                                       │                           │
-│   │     Parallel steps run concurrently   │                           │
-│   └──────────────────────────────────────┘                           │
-│                      │                                                │
-│                      ▼                                                │
-│   ┌──────────────────────────────────────┐                           │
-│   │  5. Return Results                    │                           │
-│   │     - All step outputs                │                           │
-│   │     - Execution metadata              │                           │
-│   │     - Error info (if any)             │                           │
-│   └──────────────────────────────────────┘                           │
-│                                                                       │
+│                                                                      │
+│   ao.launch("my_chain", initial_data)                                │
+│                      │                                               │
+│                      ▼                                               │
+│   ┌──────────────────────────────────────┐                          │
+│   │  1. Input Validation                  │                          │
+│   │     (Pydantic models if defined)      │                          │
+│   └──────────────────────────────────────┘                          │
+│                      │                                               │
+│                      ▼                                               │
+│   ┌──────────────────────────────────────┐                          │
+│   │  2. Create ChainContext               │                          │
+│   │     - request_id                      │                          │
+│   │     - initial_data                    │                          │
+│   └──────────────────────────────────────┘                          │
+│                      │                                               │
+│                      ▼                                               │
+│   ┌──────────────────────────────────────┐                          │
+│   │  3. Build DAG                         │                          │
+│   │     - Resolve dependencies            │                          │
+│   │     - Create execution plan           │                          │
+│   └──────────────────────────────────────┘                          │
+│                      │                                               │
+│                      ▼                                               │
+│   ┌──────────────────────────────────────┐                          │
+│   │  4. Execute Steps (in order)          │                          │
+│   │                                       │                          │
+│   │     For each step:                    │                          │
+│   │     ├─ middleware.before()            │                          │
+│   │     ├─ step_handler(ctx)              │                          │
+│   │     ├─ middleware.after()             │                          │
+│   │     └─ ctx.add_result(StepResult)     │                          │
+│   │                                       │                          │
+│   │     Parallel steps run concurrently   │                          │
+│   └──────────────────────────────────────┘                          │
+│                      │                                               │
+│                      ▼                                               │
+│   ┌──────────────────────────────────────┐                          │
+│   │  5. Return Results                    │                          │
+│   │     - All step outputs                │                          │
+│   │     - Execution metadata              │                          │
+│   │     - Error info (if any)             │                          │
+│   └──────────────────────────────────────┘                          │
+│                                                                      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## CMPT Chain Architecture
-
-The built-in Client Meeting Prep (CMPT) chain has 3 stages:
+## Services Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                        CMPT Chain Flow                                   │
+│                         Services Layer                                   │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
-│   INPUT: ChainRequest                                                    │
-│   ├─ corporate_company_name: "Apple Inc"                                │
-│   ├─ meeting_datetime: "2025-01-15T10:00:00Z"                           │
-│   ├─ rbc_employee_email: "john.doe@rbc.com"                             │
-│   └─ corporate_client_email: "jane.smith@apple.com"                     │
-│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                     LLMGatewayClient                             │    │
+│  │  • OAuth token management (auto-refresh)                         │    │
+│  │  • OpenAI-compatible API                                         │    │
+│  │  • Structured output with Pydantic                               │    │
+│  │  • Streaming support                                             │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
 │                              │                                           │
-│                              ▼                                           │
-│   ┌─────────────────────────────────────────────────────────────────┐   │
-│   │  STAGE 1: Context Builder                                        │   │
-│   │  ─────────────────────────────────────────────────────────────  │   │
-│   │  Extractors:                                                     │   │
-│   │  ├─ extract_company_info    → CompanyInfo (ticker, industry)    │   │
-│   │  ├─ extract_temporal_context → TemporalContext (fiscal year)    │   │
-│   │  ├─ extract_rbc_persona     → PersonaInfo                       │   │
-│   │  └─ extract_client_personas → List[PersonaInfo]                 │   │
-│   └─────────────────────────────────────────────────────────────────┘   │
-│                              │                                           │
-│                              ▼                                           │
-│   ┌─────────────────────────────────────────────────────────────────┐   │
-│   │  STAGE 2: Content Prioritization                                 │   │
-│   │  ─────────────────────────────────────────────────────────────  │   │
-│   │  Steps:                                                          │   │
-│   │  ├─ prioritize_sources → Prioritized data sources               │   │
-│   │  ├─ build_subqueries   → Agent-specific queries                 │   │
-│   │  └─ allocate_tokens    → Token budget per source                │   │
-│   └─────────────────────────────────────────────────────────────────┘   │
-│                              │                                           │
-│                              ▼                                           │
-│   ┌─────────────────────────────────────────────────────────────────┐   │
-│   │  STAGE 3: Response Builder                                       │   │
-│   │  ─────────────────────────────────────────────────────────────  │   │
-│   │  Steps (parallel where possible):                                │   │
-│   │  ├─ fetch_news_data      ─┐                                     │   │
-│   │  ├─ fetch_sec_data        ├─ Parallel agent execution           │   │
-│   │  ├─ fetch_earnings_data  ─┘                                     │   │
-│   │  ├─ parse_agent_responses → Structure raw data                  │   │
-│   │  ├─ build_prompts        → LLM prompts                          │   │
-│   │  ├─ generate_financial_metrics ─┐                               │   │
-│   │  ├─ generate_strategic_analysis ├─ Parallel LLM calls          │   │
-│   │  └─ validate_metrics     → Verify against sources               │   │
-│   └─────────────────────────────────────────────────────────────────┘   │
-│                              │                                           │
-│                              ▼                                           │
-│   OUTPUT: CMPTResult                                                     │
-│   ├─ context_builder: {...}                                             │
-│   ├─ content_prioritization: {...}                                      │
-│   ├─ response_builder: {...}                                            │
-│   └─ timings: {...}                                                     │
+│         ┌────────────────────┼────────────────────┐                     │
+│         │                    │                    │                      │
+│         ▼                    ▼                    ▼                      │
+│  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐             │
+│  │   Redis     │      │   Vector    │      │    Mem0     │             │
+│  │  Service    │      │   Store     │      │   Memory    │             │
+│  │             │      │             │      │             │             │
+│  │ • Caching   │      │ • Upsert    │      │ • Semantic  │             │
+│  │ • Sessions  │      │ • Query     │      │   search    │             │
+│  │ • Offload   │      │ • RAG       │      │ • Cross-    │             │
+│  │             │      │             │      │   session   │             │
+│  └─────────────┘      └─────────────┘      └─────────────┘             │
 │                                                                          │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Context Isolation for Multi-Agent Systems
+
+Prevents context pollution when running multiple agents in parallel:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│              Context Isolation Architecture                              │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │              Coordinator Context (SupervisorAgent)               │    │
+│  │  ├─ request_id, user_query, execution_plan                      │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                    │ Creates isolated namespaces                         │
+│        ┌───────────┼───────────┐                                        │
+│        ↓           ↓           ↓                                        │
+│   ┌─────────┐ ┌─────────┐ ┌─────────┐                                  │
+│   │ Agent 1 │ │ Agent 2 │ │ Agent 3 │                                  │
+│   │Namespace│ │Namespace│ │Namespace│                                  │
+│   │         │ │         │ │         │                                  │
+│   │ - temp  │ │ - temp  │ │ - temp  │  ← Each agent has isolated      │
+│   │ - data  │ │ - data  │ │ - data  │    working storage               │
+│   │ - result│ │ - result│ │ - result│                                  │
+│   └─────────┘ └─────────┘ └─────────┘                                  │
+│        │           │           │                                        │
+│        └───────────┴───────────┘                                        │
+│                    ↓                                                     │
+│        ┌─────────────────────────┐                                      │
+│        │    ResultAggregator     │                                      │
+│        │ - Collect results       │                                      │
+│        │ - Detect conflicts      │                                      │
+│        │ - Synthesize/merge      │                                      │
+│        └─────────────────────────┘                                      │
+│                    ↓                                                     │
+│              Final Response                                              │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Aggregation Strategies
+
+| Strategy | Description | Use Case |
+|----------|-------------|----------|
+| `SYNTHESIZE` | LLM creates narrative from all results | Research, reports |
+| `MERGE` | Deep merge dicts/lists | Structured data |
+| `PRIORITIZE` | Select highest confidence result | Single-answer questions |
+| `VOTE` | Majority voting | Discrete choices |
+| `CHAIN` | Sequential refinement | Iterative improvement |
 
 ---
 
@@ -254,7 +463,7 @@ The built-in Client Meeting Prep (CMPT) chain has 3 stages:
 
 ```
 ┌────────────────────────────────────────────┐
-│            Circuit Breaker                  │
+│            Circuit Breaker Flow            │
 ├────────────────────────────────────────────┤
 │  CLOSED ──(failures)──▶ OPEN               │
 │     ▲                      │               │
@@ -268,29 +477,29 @@ The built-in Client Meeting Prep (CMPT) chain has 3 stages:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    Offload Middleware Flow                           │
+│                    Offload Middleware Flow                          │
 ├─────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│   Step Output (>100KB)                                               │
-│         │                                                            │
-│         ▼                                                            │
-│   ┌──────────────────┐    ┌──────────────────┐                      │
-│   │ Extract Key      │    │ Store in Redis   │                      │
-│   │ Fields & Summary │───▶│ (with TTL)       │                      │
-│   └──────────────────┘    └──────────────────┘                      │
-│         │                          │                                 │
-│         ▼                          ▼                                 │
-│   ┌────────────────────────────────────────┐                        │
-│   │ ContextRef (lightweight reference)      │                        │
-│   │ ├─ ref_id: "ctx:abc123"                │                        │
-│   │ ├─ summary: "Q4 2024 earnings..."      │                        │
-│   │ ├─ key_fields: {ticker: "AAPL", ...}   │                        │
-│   │ └─ original_size: 1.2MB                │                        │
-│   └────────────────────────────────────────┘                        │
-│                                                                      │
-│   Context stays lightweight (~500 bytes per ref)                     │
+│                                                                     │
+│   Step Output (>100KB)                                              │
+│         │                                                           │
+│         ▼                                                           │
+│   ┌──────────────────┐    ┌──────────────────┐                     │
+│   │ Extract Key      │    │ Store in Redis   │                     │
+│   │ Fields & Summary │───▶│ (with TTL)       │                     │
+│   └──────────────────┘    └──────────────────┘                     │
+│         │                          │                                │
+│         ▼                          ▼                                │
+│   ┌────────────────────────────────────────┐                       │
+│   │ ContextRef (lightweight reference)      │                       │
+│   │ ├─ ref_id: "ctx:abc123"                │                       │
+│   │ ├─ summary: "Q4 2024 earnings..."      │                       │
+│   │ ├─ key_fields: {ticker: "AAPL", ...}   │                       │
+│   │ └─ original_size: 1.2MB                │                       │
+│   └────────────────────────────────────────┘                       │
+│                                                                     │
+│   Context stays lightweight (~500 bytes per ref)                    │
 │   Full data retrievable via: store.retrieve(ref)                    │
-│                                                                      │
+│                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -300,54 +509,70 @@ The built-in Client Meeting Prep (CMPT) chain has 3 stages:
 
 ```
 agentorchestrator/
-├── __init__.py          # Public API exports
-├── config.py            # Configuration management
-├── cli.py               # Command-line interface
+├── __init__.py              # Public API exports
+├── config.py                # Configuration management
+├── cli.py                   # Command-line interface
 │
 ├── core/
-│   ├── ao.py         # AgentOrchestrator main class
-│   ├── context.py       # ChainContext & scopes
-│   ├── registry.py      # Component registries
-│   ├── dag.py           # DAG builder & executor
-│   ├── decorators.py    # @step, @agent, @chain
-│   ├── resources.py     # Dependency injection
-│   ├── context_store.py # Redis offloading
-│   ├── run_store.py     # Resumability checkpoints
-│   ├── validation.py    # Input/output contracts
-│   ├── serializers.py   # Context serialization
-│   ├── versioning.py    # Chain versioning
-│   └── visualize.py     # DAG visualization
+│   ├── orchestrator.py      # AgentOrchestrator main class
+│   ├── context.py           # ChainContext & scopes
+│   ├── registry.py          # Component registries
+│   ├── dag.py               # DAG builder & executor
+│   ├── decorators.py        # @step, @agent, @chain
+│   ├── resources.py         # Dependency injection
+│   ├── context_store.py     # Redis offloading
+│   ├── run_store.py         # Resumability checkpoints
+│   ├── validation.py        # Input/output contracts
+│   ├── serializers.py       # Context serialization
+│   ├── versioning.py        # Chain versioning
+│   └── visualize.py         # DAG visualization
 │
 ├── middleware/
-│   ├── base.py          # Middleware base class
-│   ├── cache.py         # Response caching
-│   ├── logger.py        # Structured logging
-│   ├── summarizer.py    # LLM summarization
-│   ├── token_manager.py # Token budgets
-│   ├── offload.py       # Payload offloading
-│   ├── rate_limiter.py  # Rate limiting
-│   └── metrics.py       # Execution metrics
+│   ├── base.py              # Middleware base class
+│   ├── cache.py             # Response caching
+│   ├── logger.py            # Structured logging
+│   ├── summarizer.py        # LLM summarization
+│   ├── token_manager.py     # Token budgets
+│   ├── offload.py           # Payload offloading
+│   ├── rate_limiter.py      # Rate limiting
+│   └── metrics.py           # Execution metrics
 │
 ├── agents/
-│   ├── base.py          # BaseAgent, ResilientAgent
-│   └── data_agents.py   # Pre-built agents
+│   ├── base.py              # BaseAgent, ResilientAgent, AgentResult
+│   └── data_agents.py       # Pre-built data fetching agents
 │
 ├── services/
-│   ├── context_builder.py
-│   ├── content_prioritization.py
-│   ├── response_builder.py
-│   ├── llm_gateway.py
-│   └── models.py
+│   ├── __init__.py          # Service exports
+│   ├── llm_gateway.py       # LLMGatewayClient with OAuth
+│   ├── redis.py             # RedisService
+│   ├── vector_store.py      # VectorStoreService for RAG
+│   └── mem0.py              # Mem0Memory (semantic memory)
 │
-├── chains/
-│   └── cmpt.py          # CMPT chain implementation
+├── squad/                   # Multi-agent orchestration
+│   ├── __init__.py          # Squad exports
+│   ├── orchestrator.py      # MultiAgentOrchestrator
+│   ├── agents/
+│   │   ├── base.py          # Agent base class
+│   │   ├── llm_gateway_agent.py  # LLMGatewayAgent
+│   │   └── supervisor.py    # SupervisorAgent
+│   ├── classifiers/
+│   │   └── llm_gateway.py   # LLMGatewayClassifier
+│   ├── context/
+│   │   ├── isolation.py     # ContextIsolationManager
+│   │   └── aggregator.py    # ResultAggregator
+│   └── storage/
+│       ├── base.py          # ChatStorage interface
+│       ├── memory.py        # InMemoryChatStorage
+│       └── redis.py         # RedisChatStorage
 │
-├── plugins/             # Plugin system
-├── connectors/          # MCP connectors
-├── utils/               # Logging, tracing, config
-├── testing/             # Test utilities
-├── templates/           # Project scaffolding
-└── examples/            # Example chains
+├── connectors/              # MCP connectors
+├── utils/                   # Logging, tracing, circuit breaker, caching
+├── testing/                 # Test utilities
+└── examples/                # Example implementations
+    ├── getting_started/     # Hello world, simple chain, parallel
+    ├── memory/              # Chat storage, semantic memory
+    ├── rag/                 # RAG pipelines
+    └── agents/              # Multi-agent patterns
 ```
 
 ---
@@ -360,44 +585,44 @@ The Squad module provides native multi-agent orchestration that works with corpo
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                      Multi-Agent Squad Module                            │
+│                      Multi-Agent Squad Module                           │
 ├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │                  MultiAgentOrchestrator                          │    │
-│  │  • Agent registration                                            │    │
-│  │  • Request routing                                               │    │
-│  │  • Session management                                            │    │
-│  └─────────────────────────────────────────────────────────────────┘    │
-│                              │                                           │
-│                              ▼                                           │
-│  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │                    LLMGatewayClassifier                          │    │
-│  │  • Intent classification                                         │    │
-│  │  • Agent selection                                               │    │
-│  │  • Confidence scoring                                            │    │
-│  └─────────────────────────────────────────────────────────────────┘    │
-│                              │                                           │
-│         ┌────────────────────┼────────────────────┐                     │
-│         │                    │                    │                      │
-│         ▼                    ▼                    ▼                      │
-│  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐             │
-│  │ LLMGateway  │      │ LLMGateway  │      │ Supervisor  │             │
-│  │   Agent 1   │      │   Agent 2   │      │   Agent     │             │
-│  └─────────────┘      └─────────────┘      └──────┬──────┘             │
-│                                                   │                      │
-│                                            ┌──────┴──────┐              │
-│                                            │  Team of    │              │
-│                                            │  Agents     │              │
-│                                            └─────────────┘              │
-│                              │                                           │
-│                              ▼                                           │
-│  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │                      ChatStorage                                 │    │
-│  │  • InMemoryChatStorage (development)                            │    │
-│  │  • RedisChatStorage (production)                                │    │
-│  └─────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
+│                                                                         │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                  MultiAgentOrchestrator                          │   │
+│  │  • Agent registration                                            │   │
+│  │  • Request routing                                               │   │
+│  │  • Session management                                            │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│                              ▼                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    LLMGatewayClassifier                          │   │
+│  │  • Intent classification                                         │   │
+│  │  • Agent selection                                               │   │
+│  │  • Confidence scoring                                            │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                              │                                          │
+│         ┌────────────────────┼────────────────────┐                    │
+│         │                    │                    │                     │
+│         ▼                    ▼                    ▼                     │
+│  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐            │
+│  │ LLMGateway  │      │ LLMGateway  │      │ Supervisor  │            │
+│  │   Agent 1   │      │   Agent 2   │      │   Agent     │            │
+│  └─────────────┘      └─────────────┘      └──────┬──────┘            │
+│                                                   │                     │
+│                                            ┌──────┴──────┐             │
+│                                            │  Team of    │             │
+│                                            │  Agents     │             │
+│                                            └─────────────┘             │
+│                              │                                          │
+│                              ▼                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                      ChatStorage                                 │   │
+│  │  • InMemoryChatStorage (development)                             │   │
+│  │  • RedisChatStorage (production)                                 │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -410,6 +635,8 @@ The Squad module provides native multi-agent orchestration that works with corpo
 | `SupervisorAgent` | Coordinates team of specialist agents | `squad/agents/supervisor.py` |
 | `LLMGatewayClassifier` | Intent classification | `squad/classifiers/llm_gateway.py` |
 | `ChatStorage` | Conversation persistence | `squad/storage/` |
+| `ContextIsolationManager` | Multi-agent context isolation | `squad/context/isolation.py` |
+| `ResultAggregator` | Multi-agent result aggregation | `squad/context/aggregator.py` |
 
 ### Usage Example
 
@@ -417,30 +644,33 @@ The Squad module provides native multi-agent orchestration that works with corpo
 from agentorchestrator.squad import (
     MultiAgentOrchestrator,
     LLMGatewayAgent,
-    LLMGatewayAgentOptions,
     SupervisorAgent,
-    SupervisorAgentOptions,
     LLMGatewayClassifier,
-    LLMGatewayClassifierOptions,
-    InMemoryChatStorage,
 )
+from agentorchestrator.squad.storage import InMemoryChatStorage
+from agentorchestrator.services import LLMGatewayClient
+
+# Create LLM client
+client = LLMGatewayClient.from_env()
 
 # Create specialist agents
-tech_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+tech_agent = LLMGatewayAgent(
     name="TechAgent",
     description="Handles technical questions",
     system_prompt="You are a helpful technical assistant.",
-))
+    llm_client=client,
+)
 
-finance_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+finance_agent = LLMGatewayAgent(
     name="FinanceAgent",
     description="Handles financial queries",
     system_prompt="You are a helpful financial analyst.",
-))
+    llm_client=client,
+)
 
 # Create orchestrator
 orchestrator = MultiAgentOrchestrator(
-    classifier=LLMGatewayClassifier(LLMGatewayClassifierOptions()),
+    classifier=LLMGatewayClassifier(llm_client=client),
     storage=InMemoryChatStorage(),
 )
 orchestrator.add_agent(tech_agent)
@@ -491,63 +721,6 @@ The SupervisorAgent coordinates a team of specialists:
 
 ---
 
-## Separation of Concerns (6-Layer Model)
-
-For complex deployments, consider organizing code into these layers:
-
-### Layer 1: Orchestration Core
-```
-core/
-├── orchestrator.py      # Main class
-├── dag.py               # DAG execution
-├── context.py           # Context management
-├── registry.py          # Component registration
-└── resources.py         # Resource lifecycle
-```
-
-### Layer 2: Routing & Intent
-```
-routing/
-├── classifier.py        # Intent classification
-├── router.py            # Request routing
-└── planner.py           # Execution planning
-```
-
-### Layer 3: Tool & Agent Execution
-```
-execution/
-├── agent_executor.py    # Agent execution
-├── tool_executor.py     # Tool execution
-└── parallel.py          # Parallel execution
-```
-
-### Layer 4: Memory & Storage
-```
-memory/
-├── context_store.py     # Context persistence
-├── chat_storage.py      # Conversation storage
-└── run_store.py         # Checkpoint storage
-```
-
-### Layer 5: Response Formatting
-```
-response/
-├── formatter.py         # Output formatting
-├── citation.py          # Citation handling
-└── streaming.py         # Streaming support
-```
-
-### Layer 6: Observability
-```
-observability/
-├── metrics.py           # Metrics collection
-├── tracing.py           # Distributed tracing
-├── logging.py           # Structured logging
-└── health.py            # Health checks
-```
-
----
-
 ## Integration: @ao Decorators with Squad
 
 You can combine AgentOrchestrator's `@ao` decorators with the Squad module:
@@ -584,6 +757,5 @@ See [examples/supervisor_chain.py](../examples/supervisor_chain.py) for a comple
 
 - [QUICKSTART.md](QUICKSTART.md) - Get started in 5 minutes
 - [API.md](API.md) - Full API reference
-- [REQUIREMENTS.md](REQUIREMENTS.md) - Dependencies & setup
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues
-- [examples/supervisor_chain.py](../examples/supervisor_chain.py) - Multi-agent example
+- [Troubleshooting](TROUBLESHOOTING.md) - Common issues
+- [examples/](../examples/) - Example implementations
