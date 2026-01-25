@@ -133,16 +133,20 @@ extra_css:
 
 nav:
   - Home: index.md
+
   - Getting Started:
     - Quick Start: QUICKSTART.md
     - Requirements: REQUIREMENTS.md
-  - User Guide:
-    - Overview: USER_GUIDE.md
-  - Architecture:
-    - System Design: ARCHITECTURE.md
-  - API Reference:
-    - API Documentation: API.md
+
+  - Framework Guide:
+    - User Guide: USER_GUIDE.md
+    - Architecture: ARCHITECTURE.md
+    - API Reference: API.md
+
+  - Patterns & Examples:
+    - Feature Examples: FEATURE_EXAMPLES.md
+
   - Help:
     - Troubleshooting: TROUBLESHOOTING.md
 
-copyright: Copyright &copy; 2024 AgentOrchestrator
+copyright: Copyright &copy; 2024-2026 AgentOrchestrator

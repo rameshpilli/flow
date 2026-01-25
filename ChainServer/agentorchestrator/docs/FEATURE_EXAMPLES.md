@@ -1,70 +1,114 @@
-# Feature Examples: What We're Building
+# Feature Examples & Patterns
 
-> Concrete examples of each planned feature - what the code will look like after implementation.
+> Concrete examples showing how to use AgentOrchestrator patterns.
+> For full implementations, see `agentorchestrator/examples/`.
 
 ---
 
-## 1. Deep Research Agent (flow-4l4)
+## 1. Financial Deep Research Agent
 
-**What it does**: Multi-stage research with question decomposition, web search, and report synthesis.
+**What it does**: Multi-stage research with Refinitiv news, SEC filings, and earnings analysis.
 
-### Before (Current State)
+**Full implementation**: [`examples/financial_research_agent.py`](../examples/financial_research_agent.py)
+
+### Quick Start
 ```python
-# You have to manually orchestrate each step
-@ao.step(name="search")
-async def search(ctx):
-    # Manual web search
-    pass
-
-@ao.step(name="synthesize", deps=["search"])
-async def synthesize(ctx):
-    # Manual synthesis
-    pass
-```
-
-### After (With Deep Research Agent)
-```python
-from agentorchestrator.patterns import DeepResearchAgent
-from agentorchestrator.tools import WebSearchTool, TavilySearchTool
-
-# Create a deep research agent in 5 lines
-research_agent = DeepResearchAgent(
-    name="market-researcher",
-    search_tool=TavilySearchTool(api_key=os.getenv("TAVILY_API_KEY")),
-    max_iterations=5,
-    report_format="markdown",
+from agentorchestrator.examples.financial_research_agent import (
+    FinancialResearchAgent,
 )
 
-# Run research on any topic
-result = await research_agent.research(
-    topic="Impact of AI on financial services in 2026",
-    depth="comprehensive",  # or "quick", "detailed"
-)
+# Create agent (connects to Refinitiv, SEC, Earnings MCP servers)
+agent = FinancialResearchAgent()
 
-# Result includes:
-# - result.questions_generated: ["What are the main AI applications?", ...]
-# - result.sources_searched: [{"url": "...", "relevance": 0.95}, ...]
-# - result.report: "# AI in Financial Services\n\n## Executive Summary..."
-# - result.citations: [Citation(...), ...]
-```
-
-### Real-World Use Case
-```python
-# Financial analyst researching a company before a meeting
-from agentorchestrator.patterns import DeepResearchAgent
-
-agent = DeepResearchAgent(name="pre-meeting-research")
-
+# Run deep research
 report = await agent.research(
-    topic="Apple Inc Q4 2025 earnings and strategic outlook",
-    focus_areas=["revenue growth", "AI investments", "supply chain"],
-    sources=["sec_filings", "news", "analyst_reports"],
+    topic="Analyze Tesla's competitive position in the EV market",
+    focus_areas=["market share", "technology", "financials"],
+    depth="comprehensive",
 )
 
-# Output: Comprehensive report with citations from SEC, news, earnings calls
+# Results include:
 print(report.executive_summary)
-print(report.key_findings)
-print(report.risk_factors)
+for finding in report.key_findings:
+    print(f"- [{finding.category}] {finding.finding} ({finding.confidence:.0%})")
+print(f"Sources: {len(report.sources)} from news, SEC, earnings")
+```
+
+### With Persistent Memory (mem0)
+```python
+from app import MemoryStoreClient
+from agentorchestrator.squad.storage import Mem0Memory
+
+# Connect to corporate mem0
+mem0 = MemoryStoreClient(
+    base_url="https://mem0.cfk.devfg.rbc.com",
+    agent_id="research-agent-001"
+)
+
+# Agent remembers past research
+agent = FinancialResearchAgent().with_memory(Mem0Memory(client=mem0))
+
+# First research session
+await agent.research("Tesla EV market analysis")
+
+# Later session - agent recalls previous research
+await agent.research("Compare Tesla to Rivian")
+# Agent: "Based on my previous Tesla analysis..."
+```
+
+### Stream Research Progress
+```python
+async for event in agent.research_stream("Impact of AI on banking"):
+    match event["step"]:
+        case "decompose_question":
+            print(f"📝 Breaking into sub-questions...")
+        case "gather_news":
+            print(f"📰 Searching Refinitiv news...")
+        case "gather_sec":
+            print(f"📋 Fetching SEC filings...")
+        case "analyze_findings":
+            print(f"🔍 Analyzing {event['finding_count']} findings...")
+        case "complete":
+            print(f"✅ Report ready!")
+```
+
+### Architecture
+```
+┌─────────────────────────────────────────────────────────────┐
+│                Financial Research Agent                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Step 1: Decompose Question                                 │
+│  └─ LLM breaks topic into 3-5 focused sub-questions        │
+│                                                              │
+│  Step 2: Gather Data (Parallel)                             │
+│  ├─ RefinitivNewsAgent → news articles, sentiment          │
+│  ├─ SECFilingsAgent → 10-K, 10-Q, 8-K filings             │
+│  └─ EarningsAgent → call transcripts, guidance            │
+│                                                              │
+│  Step 3: Analyze Findings                                   │
+│  └─ LLM extracts key findings with confidence scores       │
+│                                                              │
+│  Step 4: Generate Report                                    │
+│  └─ Executive summary, findings, sources, methodology      │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Environment Variables
+```bash
+# MCP Servers
+REFINITIV_MCP_URL=http://refinitiv-mcp:3001
+SEC_MCP_URL=http://sec-mcp:3002
+EARNINGS_MCP_URL=http://earnings-mcp:3003
+REFINITIV_API_KEY=your_api_key
+
+# LLM Gateway
+LLM_SERVER_URL=https://llm-gateway/v1/chat/completions
+LLM_MODEL_NAME=claude-sonnet-4
+
+# Memory (optional)
+MEM0_URL=https://mem0.cfk.devfg.rbc.com
 ```
 
 ---
