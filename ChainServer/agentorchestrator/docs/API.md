@@ -1,5 +1,110 @@
 # AgentOrchestrator API Reference
 
+## Services
+
+### LLMGatewayClient
+
+Client for LLM API calls with OAuth support (for corporate environments).
+
+```python
+from agentorchestrator.services import LLMGatewayClient, LLMGatewayConfig
+
+# Option 1: Direct configuration
+client = LLMGatewayClient(
+    server_url="https://llm-gateway.corp.com/v1/chat/completions",
+    oauth_endpoint="https://auth.corp.com/token",
+    client_id="my-app",
+    client_secret="secret",
+    model_name="gpt-4",
+    temperature=0.2,
+    max_tokens=4096,
+)
+
+# Option 2: From environment variables
+client = LLMGatewayClient.from_env()
+
+# Option 3: From config object
+config = LLMGatewayConfig.from_env()
+client = LLMGatewayClient.from_config(config)
+```
+
+#### Methods
+
+| Method | Description |
+|--------|-------------|
+| `generate_async(prompt, system_prompt)` | Generate text response |
+| `generate_structured_async(prompt, response_model)` | Generate structured output with Pydantic |
+| `from_env()` | Create client from environment variables |
+| `from_config(config)` | Create client from config object |
+
+#### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `LLM_SERVER_URL` | Gateway endpoint URL |
+| `LLM_MODEL_NAME` | Model to use (default: gpt-4) |
+| `LLM_OAUTH_ENDPOINT` | OAuth token endpoint |
+| `LLM_CLIENT_ID` | OAuth client ID |
+| `LLM_CLIENT_SECRET` | OAuth client secret |
+| `LLM_API_KEY` | API key (alternative to OAuth) |
+| `LLM_TEMPERATURE` | Sampling temperature (default: 0.2) |
+| `LLM_MAX_TOKENS` | Max output tokens (default: 4096) |
+
+### RedisService
+
+```python
+from agentorchestrator.services import RedisService, RedisConfig
+
+# From environment
+redis = RedisService.from_env()
+await redis.connect()
+
+# Direct configuration
+config = RedisConfig(
+    host="redis.corp.com",
+    port=6379,
+    username="service",
+    password="secret",
+    ssl=True,
+)
+redis = RedisService.from_config(config)
+```
+
+### Mem0Memory
+
+Semantic memory for agents (requires corporate MemoryStoreClient).
+
+```python
+from agentorchestrator.services import Mem0Memory
+
+# Create memory with external client
+from your_app import MemoryStoreClient
+
+client = MemoryStoreClient(
+    base_url="https://mem0.corp.com",
+    agent_id="my-agent"
+)
+memory = Mem0Memory(client=client)
+
+# Store and search
+await memory.add("User prefers concise responses")
+results = await memory.search("What are user preferences?")
+```
+
+### VectorStoreService
+
+```python
+from agentorchestrator.services import VectorStoreService, VectorDocument
+
+vs = VectorStoreService()
+await vs.upsert([
+    VectorDocument(id="d1", text="Use async for I/O", metadata={"topic": "python"})
+])
+results = await vs.query("How to handle I/O?", limit=5)
+```
+
+---
+
 ## Core Classes
 
 ### AgentOrchestrator

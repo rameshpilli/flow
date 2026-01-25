@@ -1,0 +1,53 @@
+# Getting Started Examples
+
+Start here if you're new to AgentOrchestrator.
+
+## Examples
+
+### 1. Hello World
+
+The simplest possible chain - just one step.
+
+```bash
+python hello_world.py
+```
+
+**What you'll learn:**
+- Creating an AgentOrchestrator instance
+- Defining a step with `@ao.step()`
+- Defining a chain with `@ao.chain()`
+- Running a chain with `ao.launch()`
+
+### 2. Simple Chain
+
+A multi-step pipeline with dependencies.
+
+```bash
+python simple_chain.py
+```
+
+**What you'll learn:**
+- Step dependencies with `deps=["step_name"]`
+- Passing data between steps via context
+- Chain execution order
+
+### 3. Parallel Steps
+
+Steps without dependencies run in parallel.
+
+```bash
+python parallel_steps.py
+```
+
+**What you'll learn:**
+- Parallel execution optimization
+- Multiple steps feeding into one
+- Performance benefits of DAG execution
+
+## Next Steps
+
+After completing these examples:
+
+1. [Memory examples](../memory/) - Add conversation storage
+2. [RAG examples](../rag/) - Retrieval-augmented generation
+3. [Agent examples](../agents/) - Multi-agent orchestration

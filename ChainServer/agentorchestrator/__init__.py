@@ -79,10 +79,9 @@ from agentorchestrator.utils import (
 )
 
 # =============================================================================
-# LLM - LCEL chain builders (optional, requires langchain-core)
+# LLM Gateway - For LLM calls in corporate environments
 # =============================================================================
-# Import lazily to avoid requiring langchain-core for all users
-# Use: from agentorchestrator.llm import create_extraction_chain
+# Use: from agentorchestrator.services import LLMGatewayClient
 
 __version__ = "0.1.0"
 
@@ -159,12 +158,10 @@ def __getattr__(name: str):
         from agentorchestrator.middleware import summarizer
         return getattr(summarizer, name)
 
-    # LLM module (LCEL chains)
-    if name in ("create_extraction_chain", "create_text_chain", "ChainConfig",
-                "get_default_llm", "get_openai_llm", "get_anthropic_llm",
-                "set_default_llm", "LLMProvider"):
-        from agentorchestrator import llm
-        return getattr(llm, name)
+    # LLM Gateway - redirect to services
+    if name in ("LLMGatewayClient", "get_llm_client", "create_managed_client"):
+        from agentorchestrator import services
+        return getattr(services, name)
 
     # Resources
     if name in ("Resource", "ResourceManager", "ResourceScope",

@@ -345,5 +345,5 @@ for conflict in final.conflicts:
 
 ::: agentorchestrator.squad.context.ResultAggregator
 ::: agentorchestrator.squad.context.AggregationStrategy
-::: agentorchestrator.squad.context.AgentResult
+::: agentorchestrator.squad.context.ContextAgentResult
 ::: agentorchestrator.squad.context.AggregatedResult

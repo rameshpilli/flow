@@ -8,12 +8,20 @@ For corporate environments that require going through an LLM gateway
 with OAuth authentication.
 
 Usage:
-    from agentorchestrator.services import LLMGatewayClient
+    from agentorchestrator.services import LLMGatewayClient, LLMGatewayConfig
 
+    # Option 1: Direct configuration
     client = LLMGatewayClient(
         server_url="https://llm-gateway.corp.com/api/chat",
         api_key="your-api-key",
     )
+
+    # Option 2: From environment variables
+    client = LLMGatewayClient.from_env()
+
+    # Option 3: Using config class
+    config = LLMGatewayConfig.from_env()
+    client = LLMGatewayClient.from_config(config)
 
     response = await client.generate_async("Hello, world!")
 """
@@ -23,6 +31,7 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from agentorchestrator.utils.caching import timed_lru_cache, async_timed_lru_cache
@@ -30,6 +39,67 @@ from agentorchestrator.utils.caching import timed_lru_cache, async_timed_lru_cac
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#                         CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class LLMGatewayConfig:
+    """
+    LLM Gateway configuration.
+
+    Supports both direct configuration and environment variable loading.
+
+    Environment Variables:
+        LLM_SERVER_URL: LLM gateway endpoint URL
+        LLM_MODEL_NAME: Model to use (default: gpt-4)
+        LLM_API_KEY: API key (alternative to OAuth)
+        LLM_OAUTH_ENDPOINT: OAuth token endpoint
+        LLM_CLIENT_ID: OAuth client ID
+        LLM_CLIENT_SECRET: OAuth client secret
+        LLM_TEMPERATURE: Sampling temperature (default: 0.2)
+        LLM_MAX_TOKENS: Max output tokens (default: 4096)
+        LLM_TIMEOUT: Request timeout in seconds (default: 120)
+    """
+
+    server_url: str | None = None
+    model_name: str = "gpt-4"
+    temperature: float = 0.2
+    max_tokens: int = 4096
+    timeout: float = 120.0
+
+    # Authentication - either OAuth or API key
+    api_key: str | None = None
+    oauth_endpoint: str | None = None
+    client_id: str | None = None
+    client_secret: str | None = None
+
+    @classmethod
+    def from_env(cls) -> "LLMGatewayConfig":
+        """Load configuration from environment variables."""
+        return cls(
+            server_url=os.getenv("LLM_SERVER_URL"),
+            model_name=os.getenv("LLM_MODEL_NAME", "gpt-4"),
+            temperature=float(os.getenv("LLM_TEMPERATURE", "0.2")),
+            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4096")),
+            timeout=float(os.getenv("LLM_TIMEOUT", "120.0")),
+            api_key=os.getenv("LLM_API_KEY"),
+            oauth_endpoint=os.getenv("LLM_OAUTH_ENDPOINT"),
+            client_id=os.getenv("LLM_CLIENT_ID"),
+            client_secret=os.getenv("LLM_CLIENT_SECRET"),
+        )
+
+    def is_valid(self) -> bool:
+        """Check if configuration has required fields."""
+        has_auth = bool(self.api_key) or all([
+            self.oauth_endpoint,
+            self.client_id,
+            self.client_secret,
+        ])
+        return bool(self.server_url) and has_auth
 
 
 class OAuthTokenManager:
@@ -160,6 +230,27 @@ class LLMGatewayClient:
         # Lock for async client initialization
         self._async_client_lock = asyncio.Lock()
         self._async_client = None
+
+    @classmethod
+    def from_env(cls) -> "LLMGatewayClient":
+        """Create client from environment variables."""
+        config = LLMGatewayConfig.from_env()
+        return cls.from_config(config)
+
+    @classmethod
+    def from_config(cls, config: LLMGatewayConfig) -> "LLMGatewayClient":
+        """Create client from config object."""
+        return cls(
+            server_url=config.server_url,
+            model_name=config.model_name,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            timeout=config.timeout,
+            api_key=config.api_key,
+            oauth_endpoint=config.oauth_endpoint,
+            client_id=config.client_id,
+            client_secret=config.client_secret,
+        )
 
     def _is_configured(self) -> bool:
         """Check if client is properly configured for real API calls."""
@@ -440,14 +531,19 @@ def create_managed_client(
 
 
 __all__ = [
+    # Config
+    "LLMGatewayConfig",
+    # Client
     "LLMGatewayClient",
     "OAuthTokenManager",
-    "timed_lru_cache",
-    "async_timed_lru_cache",
+    # Factory functions
     "get_llm_client",
     "get_default_llm_client",
     "set_default_llm_client",
     "init_default_llm_client",
     "create_llm_client_from_env",
     "create_managed_client",
+    # Caching utilities (re-exported for convenience)
+    "timed_lru_cache",
+    "async_timed_lru_cache",
 ]

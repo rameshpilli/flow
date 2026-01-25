@@ -17,7 +17,7 @@ from agentorchestrator.services import (
     VectorDocument,
     VectorStoreService,
 )
-from agentorchestrator.squad.storage.memory import InMemoryChatStorage
+from agentorchestrator.squad.storage import InMemoryChatStorage
 from agentorchestrator.examples.supervisor_chain import (
     create_supervisor_orchestrator,
     create_squad_supervisor_orchestrator,

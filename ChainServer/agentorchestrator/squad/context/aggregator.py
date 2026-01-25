@@ -50,8 +50,13 @@ class AggregationStrategy(str, Enum):
 
 
 @dataclass
-class AgentResult:
-    """Result from a single agent."""
+class ContextAgentResult:
+    """
+    Result from a single agent in multi-agent aggregation context.
+
+    This is different from agents.base.AgentResult which is for data fetching.
+    ContextAgentResult includes confidence/priority for aggregation strategies.
+    """
 
     agent_id: str
     data: Any
@@ -76,6 +81,10 @@ class AgentResult:
             "metadata": self.metadata,
             "error": self.error,
         }
+
+
+# Backward compatibility alias
+AgentResult = ContextAgentResult
 
 
 @dataclass
@@ -159,7 +168,7 @@ class ResultAggregator:
         self.strategy = strategy
         self.conflict_resolver = conflict_resolver
 
-        self._results: dict[str, AgentResult] = {}
+        self._results: dict[str, ContextAgentResult] = {}
         self._conflicts: list[ConflictInfo] = []
 
     def add_result(
@@ -182,7 +191,7 @@ class ResultAggregator:
             metadata: Additional metadata
             error: Error message if agent failed
         """
-        self._results[agent_id] = AgentResult(
+        self._results[agent_id] = ContextAgentResult(
             agent_id=agent_id,
             data=data,
             confidence=confidence,
@@ -288,7 +297,7 @@ class ResultAggregator:
 
     async def _synthesize(
         self,
-        results: dict[str, AgentResult],
+        results: dict[str, ContextAgentResult],
         llm: "LLMGatewayClient | None",
         prompt_template: str | None,
     ) -> Any:
@@ -337,7 +346,7 @@ SYNTHESIZED RESPONSE:"""
 
     async def _merge(
         self,
-        results: dict[str, AgentResult],
+        results: dict[str, ContextAgentResult],
         llm: "LLMGatewayClient | None",
         prompt_template: str | None,
     ) -> dict[str, Any]:
@@ -364,7 +373,7 @@ SYNTHESIZED RESPONSE:"""
 
     async def _prioritize(
         self,
-        results: dict[str, AgentResult],
+        results: dict[str, ContextAgentResult],
         llm: "LLMGatewayClient | None",
         prompt_template: str | None,
     ) -> Any:
@@ -381,7 +390,7 @@ SYNTHESIZED RESPONSE:"""
 
     async def _vote(
         self,
-        results: dict[str, AgentResult],
+        results: dict[str, ContextAgentResult],
         llm: "LLMGatewayClient | None",
         prompt_template: str | None,
     ) -> Any:
@@ -407,7 +416,7 @@ SYNTHESIZED RESPONSE:"""
 
     async def _chain(
         self,
-        results: dict[str, AgentResult],
+        results: dict[str, ContextAgentResult],
         llm: "LLMGatewayClient | None",
         prompt_template: str | None,
     ) -> Any:
@@ -433,7 +442,7 @@ SYNTHESIZED RESPONSE:"""
 
     async def _concat(
         self,
-        results: dict[str, AgentResult],
+        results: dict[str, ContextAgentResult],
         llm: "LLMGatewayClient | None",
         prompt_template: str | None,
     ) -> str:
@@ -482,7 +491,7 @@ SYNTHESIZED RESPONSE:"""
             except Exception as e:
                 logger.warning(f"Conflict resolver failed: {e}")
 
-    def _calculate_confidence(self, results: dict[str, AgentResult]) -> float:
+    def _calculate_confidence(self, results: dict[str, ContextAgentResult]) -> float:
         """Calculate overall confidence from agent results."""
         if not results:
             return 0.0
@@ -498,7 +507,7 @@ SYNTHESIZED RESPONSE:"""
     # Utilities
     # =========================================================================
 
-    def get_results(self) -> dict[str, AgentResult]:
+    def get_results(self) -> dict[str, ContextAgentResult]:
         """Get all agent results."""
         return self._results.copy()
 

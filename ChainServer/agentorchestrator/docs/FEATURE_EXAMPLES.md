@@ -3,6 +3,10 @@
 > Concrete examples showing how to use AgentOrchestrator patterns.
 > For full implementations, see `agentorchestrator/examples/`.
 
+> **Note**: Some examples in this document show aspirational patterns that may
+> not be fully implemented yet. Check the actual module exists before using.
+> Currently implemented: `agents`, `services`, `squad`, `middleware`, `utils`.
+
 ---
 
 ## 1. Financial Deep Research Agent
@@ -37,7 +41,7 @@ print(f"Sources: {len(report.sources)} from news, SEC, earnings")
 ### With Persistent Memory (mem0)
 ```python
 from app import MemoryStoreClient
-from agentorchestrator.squad.storage import Mem0Memory
+from agentorchestrator.services import Mem0Memory
 
 # Connect to corporate mem0
 mem0 = MemoryStoreClient(
@@ -539,13 +543,12 @@ print("stock_price" in registry.list_tools())  # True
 
 ```python
 from app import MemoryStoreClient
-from agentorchestrator.memory import (
+from agentorchestrator.services import (
     Mem0Memory,
-    WindowMemory,
-    SummaryMemory,
-    EntityMemory,
     CompositeMemory,
 )
+# Note: WindowMemory, SummaryMemory, EntityMemory are aspirational patterns
+# not yet implemented. Use Mem0Memory for semantic memory.
 
 # Connect to your corporate mem0
 mem0_client = MemoryStoreClient(
@@ -621,7 +624,7 @@ memory = CompositeMemory([
 
 ```python
 from agentorchestrator.squad import LLMGatewayAgent
-from agentorchestrator.memory import Mem0Memory
+from agentorchestrator.services import Mem0Memory
 from app import MemoryStoreClient
 
 # Your corporate memory store
@@ -702,8 +705,8 @@ Putting it all together with your mem0 integration:
 
 ```python
 from agentorchestrator import AgentOrchestrator
-from agentorchestrator.patterns import DeepResearchAgent, ReActAgent
-from agentorchestrator.memory import Mem0Memory, CompositeMemory, EntityMemory
+from agentorchestrator.patterns import DeepResearchAgent, ReActAgent  # aspirational
+from agentorchestrator.services import Mem0Memory, CompositeMemory
 from agentorchestrator.tools import get_tool, ToolRegistry
 from app import MemoryStoreClient
 

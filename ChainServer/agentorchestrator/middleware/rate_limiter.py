@@ -17,20 +17,15 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from enum import Enum
 from typing import Any
 
 from agentorchestrator.core.context import ChainContext, StepResult
 from agentorchestrator.middleware.base import Middleware
 
+# Import CircuitState from utils to avoid duplicate definitions
+from agentorchestrator.utils.circuit_breaker import CircuitState
+
 logger = logging.getLogger(__name__)
-
-
-class CircuitState(Enum):
-    """Circuit breaker states"""
-    CLOSED = "closed"  # Normal operation
-    OPEN = "open"  # Failing, reject requests
-    HALF_OPEN = "half_open"  # Testing if service recovered
 
 
 @dataclass
@@ -53,9 +48,12 @@ class RateLimitConfig:
 
 
 @dataclass
-class CircuitBreakerConfig:
+class MiddlewareCircuitBreakerConfig:
     """
-    Circuit breaker configuration.
+    Circuit breaker configuration for middleware.
+
+    Note: This is separate from utils.CircuitBreakerConfig as it uses
+    different field names optimized for middleware use.
 
     Attributes:
         failure_threshold: Number of consecutive failures to open circuit
@@ -67,6 +65,10 @@ class CircuitBreakerConfig:
     success_threshold: int = 2
     recovery_timeout_seconds: float = 60.0
     half_open_max_requests: int = 1
+
+
+# Backward compatibility alias
+CircuitBreakerConfig = MiddlewareCircuitBreakerConfig
 
 
 @dataclass
@@ -100,7 +102,7 @@ class CircuitBreakerState:
 
     Thread-safe via asyncio primitives.
     """
-    config: CircuitBreakerConfig
+    config: MiddlewareCircuitBreakerConfig
     state: CircuitState = CircuitState.CLOSED
     failure_count: int = 0
     success_count: int = 0
@@ -356,8 +358,8 @@ class CircuitBreakerMiddleware(Middleware):
 
     def __init__(
         self,
-        step_configs: dict[str, CircuitBreakerConfig] | None = None,
-        default_config: CircuitBreakerConfig | None = None,
+        step_configs: dict[str, MiddlewareCircuitBreakerConfig] | None = None,
+        default_config: MiddlewareCircuitBreakerConfig | None = None,
         priority: int = 5,  # Run very early
         on_circuit_open: Callable[[str], None] | None = None,
     ):
@@ -550,9 +552,9 @@ class RateLimitAndCircuitBreakerMiddleware(Middleware):
     def __init__(
         self,
         rate_limits: dict[str, RateLimitConfig] | None = None,
-        circuit_breakers: dict[str, CircuitBreakerConfig] | None = None,
+        circuit_breakers: dict[str, MiddlewareCircuitBreakerConfig] | None = None,
         default_rate_limit: RateLimitConfig | None = None,
-        default_circuit_breaker: CircuitBreakerConfig | None = None,
+        default_circuit_breaker: MiddlewareCircuitBreakerConfig | None = None,
         priority: int = 5,
     ):
         super().__init__(priority=priority)

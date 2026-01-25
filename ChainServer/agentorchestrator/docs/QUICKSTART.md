@@ -13,7 +13,7 @@ pip install -e ./agentorchestrator
 ```python
 from agentorchestrator import AgentOrchestrator
 
-# Create a ao instance
+# Create an orchestrator instance
 ao = AgentOrchestrator(name="my_app")
 
 # Define a step
@@ -103,7 +103,8 @@ class ParallelChain:
 ## Add Middleware
 
 ```python
-from agentorchestrator import AgentOrchestrator, LoggerMiddleware, CacheMiddleware
+from agentorchestrator import AgentOrchestrator
+from agentorchestrator.middleware import LoggerMiddleware, CacheMiddleware
 
 ao = AgentOrchestrator(name="my_app")
 
@@ -112,6 +113,41 @@ ao.use(LoggerMiddleware())
 
 # Add caching (5 minute TTL)
 ao.use(CacheMiddleware(ttl_seconds=300))
+```
+
+## LLM Gateway (Corporate Environments)
+
+For corporate environments that require OAuth authentication:
+
+```python
+from agentorchestrator.services import LLMGatewayClient
+
+# Option 1: Direct configuration
+client = LLMGatewayClient(
+    server_url="https://llm-gateway.corp.com/v1/chat/completions",
+    oauth_endpoint="https://auth.corp.com/token",
+    client_id="my-app",
+    client_secret="secret",
+)
+
+# Option 2: From environment variables
+# Set: LLM_SERVER_URL, LLM_OAUTH_ENDPOINT, LLM_CLIENT_ID, LLM_CLIENT_SECRET
+client = LLMGatewayClient.from_env()
+
+# Generate text
+response = await client.generate_async("What is 2+2?")
+
+# Structured output
+from pydantic import BaseModel
+
+class Answer(BaseModel):
+    result: int
+
+result = await client.generate_structured_async(
+    "What is 2+2?",
+    response_model=Answer,
+)
+print(result.result)  # 4
 ```
 
 ## Testing
@@ -133,12 +169,12 @@ async def test_my_chain():
         assert result["success"]
 ```
 
-## Optional RAG + Chat History (quick peek)
+## Optional RAG + Chat History
 
 ```python
 from agentorchestrator import AgentOrchestrator
 from agentorchestrator.services import VectorStoreService, VectorDocument
-from agentorchestrator.squad.storage.memory import InMemoryChatStorage
+from agentorchestrator.squad.storage import InMemoryChatStorage
 
 vs = VectorStoreService()
 chat = InMemoryChatStorage()
@@ -157,6 +193,29 @@ async def answer(ctx):
 @ao.chain(name="rag_chain")
 class RAGChain:
     steps = ["retrieve", "answer"]
+```
+
+## Semantic Memory with Mem0
+
+```python
+from agentorchestrator.services import Mem0Memory
+
+# Create memory (requires corporate MemoryStoreClient)
+from your_app import MemoryStoreClient
+
+client = MemoryStoreClient(
+    base_url="https://mem0.corp.com",
+    agent_id="my-agent"
+)
+memory = Mem0Memory(client=client)
+
+# Store memories
+await memory.add("User prefers technical explanations")
+
+# Search memories
+results = await memory.search("What are user's preferences?")
+for mem in results:
+    print(mem.content)
 ```
 
 ## CLI
@@ -178,5 +237,6 @@ agentorchestrator graph my_chain
 ## Next Steps
 
 - See [API.md](API.md) for full API reference
-- See [REQUIREMENTS.md](REQUIREMENTS.md) for production setup
+- See [Understanding](understanding/) for core concepts
+- See [Patterns](patterns/) for production patterns
 - See [examples/](../examples/) for more complex examples

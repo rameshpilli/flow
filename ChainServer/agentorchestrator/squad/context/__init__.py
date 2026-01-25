@@ -60,10 +60,11 @@ from agentorchestrator.squad.context.isolation import (
     ContextIsolationManager,
 )
 from agentorchestrator.squad.context.aggregator import (
-    ResultAggregator,
-    AggregationStrategy,
-    AgentResult,
     AggregatedResult,
+    AggregationStrategy,
+    AgentResult,  # Backward compat alias for ContextAgentResult
+    ContextAgentResult,
+    ResultAggregator,
 )
 
 __all__ = [
@@ -75,6 +76,7 @@ __all__ = [
     # Aggregator
     "ResultAggregator",
     "AggregationStrategy",
-    "AgentResult",
+    "ContextAgentResult",
+    "AgentResult",  # Backward compat alias
     "AggregatedResult",
 ]

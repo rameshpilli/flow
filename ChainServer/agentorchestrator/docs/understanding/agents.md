@@ -109,28 +109,37 @@ class DataAgent(BaseAgent):
 
 ## Agent Memory
 
-Agents can remember past interactions:
+Agents can remember past interactions using storage services:
 
 ```python
-from agentorchestrator.squad.storage.memory import ChatMemory
+from agentorchestrator.squad.storage import InMemoryChatStorage
+from agentorchestrator.services import Mem0Memory
 
 class MemoryAgent(BaseAgent):
     name = "assistant"
 
-    def __init__(self):
+    def __init__(self, chat_storage=None, semantic_memory=None):
         super().__init__()
-        self.memory = ChatMemory(max_messages=50)
+        self.chat_storage = chat_storage or InMemoryChatStorage()
+        self.semantic_memory = semantic_memory  # Optional Mem0Memory
 
-    async def process(self, message: str, ctx) -> str:
-        # Add to memory
-        self.memory.add_user_message(message)
+    async def process(self, message: str, user_id: str, session_id: str) -> str:
+        # Fetch history
+        history = await self.chat_storage.fetch_chat(user_id, session_id, self.name)
 
-        # Include history in prompt
-        history = self.memory.get_messages()
-        response = await self.llm.chat(history + [message])
+        # Optionally get semantic context
+        context = ""
+        if self.semantic_memory:
+            context = await self.semantic_memory.get_context_for_query(message, user_id)
 
-        # Remember response
-        self.memory.add_assistant_message(response)
+        # Generate response
+        response = await self.llm.chat(history + [message], context=context)
+
+        # Save to storage
+        await self.chat_storage.save_chat_message(
+            user_id, session_id, self.name,
+            {"role": "assistant", "content": response}
+        )
         return response
 ```
 
@@ -138,10 +147,10 @@ class MemoryAgent(BaseAgent):
 
 | Type | Use Case |
 |------|----------|
-| `ChatMemory` | Short-term conversation history |
-| `SummaryMemory` | Compressed history for long conversations |
-| `VectorMemory` | Semantic search over past interactions |
-| `Mem0Memory` | Persistent, cross-session memory |
+| `InMemoryChatStorage` | Short-term conversation history (development) |
+| `RedisChatStorage` | Persistent chat storage (production) |
+| `Mem0Memory` | Semantic search, cross-session memory |
+| `CompositeMemory` | Combine multiple memory strategies |
 
 ## Resilient Agents
 

@@ -60,8 +60,8 @@ from pydantic import BaseModel
 from agentorchestrator import AgentOrchestrator
 from agentorchestrator.core import ChainContext
 from agentorchestrator.plugins.mcp_adapter import MCPAdapterAgent, MCPAdapterConfig
-from agentorchestrator.services.llm_gateway import LLMGatewayClient
-from agentorchestrator.squad.storage import Mem0Memory, InMemoryChatStorage
+from agentorchestrator.services import LLMGatewayClient, Mem0Memory
+from agentorchestrator.squad.storage import InMemoryChatStorage
 
 # Context management imports
 from agentorchestrator.middleware.summarizer import (

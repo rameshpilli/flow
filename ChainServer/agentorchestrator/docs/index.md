@@ -183,11 +183,18 @@ agentorchestrator/
 ├── core/           # AgentOrchestrator, Context, DAG, Registry
 ├── middleware/     # Cache, Logger, Summarizer, Token Manager
 ├── squad/          # Multi-agent orchestration with supervisors
-├── agents/         # BaseAgent, ResilientAgent
-├── services/       # LLM Gateway, Redis, Vector store
-├── llm/            # LCEL chain builders
+│   ├── agents/     # LLMGatewayAgent for squad coordination
+│   ├── classifiers/# Intent classification (LLMGatewayClassifier)
+│   ├── context/    # Context isolation & result aggregation
+│   └── storage/    # Chat storage (InMemory, Redis)
+├── agents/         # BaseAgent, ResilientAgent for data fetching
+├── services/       # External service integrations
+│   ├── llm_gateway.py   # LLMGatewayClient with OAuth
+│   ├── redis.py         # RedisService
+│   ├── vector_store.py  # VectorStoreService
+│   └── mem0.py          # Mem0Memory (semantic memory)
 ├── connectors/     # MCP and external integrations
-├── utils/          # Logging, tracing, config
+├── utils/          # Logging, tracing, circuit breaker, config
 ├── testing/        # Test utilities
 └── examples/       # Example implementations
 ```

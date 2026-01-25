@@ -61,8 +61,8 @@ import logging
 from typing import Any
 
 from agentorchestrator import AgentOrchestrator, Context
-from agentorchestrator.services.vector_store import VectorStoreService
-from agentorchestrator.squad.storage.memory import InMemoryChatStorage
+from agentorchestrator.services import VectorStoreService
+from agentorchestrator.squad.storage import InMemoryChatStorage
 from agentorchestrator.squad.types import ParticipantRole, TimestampedMessage
 
 try:  # Optional Redis chat storage (production)

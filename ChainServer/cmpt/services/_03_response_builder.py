@@ -4,7 +4,19 @@ Response Builder Service
 Stage 3 of the CMPT chain: Execute agents and build the final response.
 
 This service uses AgentOrchestrator's agent framework (BaseAgent, ResilientAgent)
-and LCEL chains for LLM interactions with built-in retry and type-safe parsing.
+and LLM Gateway for structured LLM interactions.
+
+Usage:
+    from agentorchestrator.services import LLMGatewayClient
+
+    llm = LLMGatewayClient(
+        server_url="https://llm-gateway.corp.com/v1/chat/completions",
+        oauth_endpoint="https://auth.corp.com/token",
+        client_id="my-app",
+        client_secret="secret",
+    )
+    service = ResponseBuilderService(llm_client=llm)
+    output = await service.execute(context_output, prioritization_output)
 """
 
 import json
@@ -57,85 +69,35 @@ class ResponseBuilderService:
 
     This service:
     1. Executes data agents to fetch SEC filings, earnings, news
-    2. Uses LCEL chains to extract financial metrics (with retry/fallback)
-    3. Uses LCEL chains to generate strategic analysis (with retry/fallback)
+    2. Uses LLM Gateway to extract financial metrics (with structured output)
+    3. Uses LLM Gateway to generate strategic analysis (with structured output)
     4. Builds the final prepared content
 
     Usage:
-        # With LCEL chains (recommended)
-        service = ResponseBuilderService(llm=my_langchain_llm)
+        from agentorchestrator.services import LLMGatewayClient
 
-        # With legacy LLM client (backward compatible)
-        service = ResponseBuilderService(llm_client=my_legacy_client)
-
+        llm = LLMGatewayClient(...)
+        service = ResponseBuilderService(llm_client=llm)
         output = await service.execute(context_output, prioritization_output)
     """
 
     def __init__(
         self,
-        llm: Any | None = None,
-        llm_client: Any | None = None,  # Legacy support
+        llm_client: Any | None = None,
         agents: dict[str, Any] | None = None,
-        fallback_llm: Any | None = None,
         retries: int = 3,
     ):
         """
         Initialize the response builder.
 
         Args:
-            llm: LangChain chat model for LCEL chains (recommended)
-            llm_client: Legacy LLM client (backward compatible)
+            llm_client: LLMGatewayClient for LLM calls
             agents: Dictionary of agent name -> agent instance
-            fallback_llm: Optional fallback LLM if primary fails
             retries: Number of retry attempts (default: 3)
         """
-        self.llm = llm
-        self.llm_client = llm_client  # Legacy support
+        self.llm_client = llm_client
         self.agents = agents or {}
-        self.fallback_llm = fallback_llm
         self.retries = retries
-
-        # Build LCEL chains if LLM is provided
-        self._financial_metrics_chain = None
-        self._strategic_analysis_chain = None
-
-        if self.llm is not None:
-            self._build_chains()
-
-    def _build_chains(self) -> None:
-        """Build LCEL chains for LLM interactions."""
-        try:
-            from agentorchestrator.llm import create_extraction_chain, ChainConfig
-
-            config = ChainConfig(retries=self.retries)
-
-            # Financial metrics extraction chain
-            # Note: We use a simplified template here since we build the full prompt dynamically
-            self._financial_metrics_chain = create_extraction_chain(
-                prompt_template="{prompt}",
-                response_model=FinancialMetricsResponse,
-                llm=self.llm,
-                system_prompt=FINANCIAL_METRICS_SYSTEM_PROMPT,
-                fallback_llm=self.fallback_llm,
-                config=config,
-            )
-
-            # Strategic analysis chain
-            self._strategic_analysis_chain = create_extraction_chain(
-                prompt_template="{prompt}",
-                response_model=StrategicAnalysisResponse,
-                llm=self.llm,
-                system_prompt=STRATEGIC_ANALYSIS_SYSTEM_PROMPT,
-                fallback_llm=self.fallback_llm,
-                config=config,
-            )
-
-            logger.info("LCEL chains built successfully (with retry and fallback support)")
-
-        except ImportError as e:
-            logger.warning(f"Could not build LCEL chains: {e}. Falling back to legacy mode.")
-            self._financial_metrics_chain = None
-            self._strategic_analysis_chain = None
 
     async def execute(
         self,
@@ -255,27 +217,13 @@ class ResponseBuilderService:
         return AgentResult(agent=sq.agent, success=True, data={"items": items}, items=items, item_count=len(items), query=sq.query, source="mock")
 
     async def _extract_financial_metrics(self, company_name: str, agent_chunks: dict[str, str]) -> dict[str, Any]:
-        """Extract financial metrics using LCEL chain or legacy client."""
+        """Extract financial metrics using LLM Gateway."""
+        if self.llm_client is None:
+            logger.warning("No LLM client configured, returning empty metrics")
+            return {}
+
         prompt = self._build_financial_metrics_prompt(company_name, agent_chunks)
 
-        # Try LCEL chain first (recommended path)
-        if self._financial_metrics_chain is not None:
-            try:
-                result: FinancialMetricsResponse = await self._financial_metrics_chain.ainvoke({"prompt": prompt})
-                logger.debug("Financial metrics extracted via LCEL chain")
-                return result.model_dump()
-            except Exception as e:
-                logger.warning(f"LCEL chain failed for financial metrics: {e}")
-                # Fall through to legacy if LCEL fails
-
-        # Legacy path (backward compatibility)
-        if self.llm_client is not None:
-            return await self._extract_financial_metrics_legacy(prompt)
-
-        return {}
-
-    async def _extract_financial_metrics_legacy(self, prompt: str) -> dict[str, Any]:
-        """Legacy extraction using llm_client (backward compatibility)."""
         try:
             if hasattr(self.llm_client, 'generate_structured_async'):
                 response = await self.llm_client.generate_structured_async(
@@ -283,40 +231,28 @@ class ResponseBuilderService:
                     system_prompt=FINANCIAL_METRICS_SYSTEM_PROMPT,
                     response_model=FinancialMetricsResponse
                 )
+                logger.debug("Financial metrics extracted via LLM Gateway")
                 return response.model_dump() if hasattr(response, 'model_dump') else dict(response)
             else:
                 response = await self.llm_client.generate_async(
-                    f"{FINANCIAL_METRICS_SYSTEM_PROMPT}\n\n{prompt}"
+                    prompt,
+                    system_prompt=FINANCIAL_METRICS_SYSTEM_PROMPT,
                 )
                 return self._parse_json(response) or {}
         except Exception as e:
-            logger.warning(f"Legacy LLM metrics extraction failed: {e}")
+            logger.warning(f"LLM Gateway metrics extraction failed: {e}")
             return {}
 
     async def _generate_strategic_analysis(
         self, company_name: str, agent_chunks: dict[str, str], priority_distribution: dict[str, int] | None
     ) -> dict[str, Any]:
-        """Generate strategic analysis using LCEL chain or legacy client."""
+        """Generate strategic analysis using LLM Gateway."""
+        if self.llm_client is None:
+            logger.warning("No LLM client configured, returning empty analysis")
+            return {"strength": [], "weakness": [], "opportunity": [], "threat": []}
+
         prompt = self._build_strategic_analysis_prompt(company_name, agent_chunks, priority_distribution)
 
-        # Try LCEL chain first (recommended path)
-        if self._strategic_analysis_chain is not None:
-            try:
-                result: StrategicAnalysisResponse = await self._strategic_analysis_chain.ainvoke({"prompt": prompt})
-                logger.debug("Strategic analysis generated via LCEL chain")
-                return result.model_dump()
-            except Exception as e:
-                logger.warning(f"LCEL chain failed for strategic analysis: {e}")
-                # Fall through to legacy if LCEL fails
-
-        # Legacy path (backward compatibility)
-        if self.llm_client is not None:
-            return await self._generate_strategic_analysis_legacy(prompt)
-
-        return {"strength": [], "weakness": [], "opportunity": [], "threat": []}
-
-    async def _generate_strategic_analysis_legacy(self, prompt: str) -> dict[str, Any]:
-        """Legacy analysis using llm_client (backward compatibility)."""
         try:
             if hasattr(self.llm_client, 'generate_structured_async'):
                 response = await self.llm_client.generate_structured_async(
@@ -324,14 +260,16 @@ class ResponseBuilderService:
                     system_prompt=STRATEGIC_ANALYSIS_SYSTEM_PROMPT,
                     response_model=StrategicAnalysisResponse
                 )
+                logger.debug("Strategic analysis generated via LLM Gateway")
                 return response.model_dump() if hasattr(response, 'model_dump') else dict(response)
             else:
                 response = await self.llm_client.generate_async(
-                    f"{STRATEGIC_ANALYSIS_SYSTEM_PROMPT}\n\n{prompt}"
+                    prompt,
+                    system_prompt=STRATEGIC_ANALYSIS_SYSTEM_PROMPT,
                 )
                 return self._parse_json(response) or {}
         except Exception as e:
-            logger.warning(f"Legacy LLM strategic analysis failed: {e}")
+            logger.warning(f"LLM Gateway strategic analysis failed: {e}")
             return {"strength": [], "weakness": [], "opportunity": [], "threat": []}
 
     def _build_financial_metrics_prompt(self, company_name: str, agent_chunks: dict[str, str]) -> str:
@@ -383,7 +321,7 @@ class ResponseBuilderService:
         return "\n".join(sections)
 
     def _parse_json(self, response: str) -> dict | None:
-        """Parse JSON from LLM response (legacy fallback only)."""
+        """Parse JSON from LLM response."""
         import re
         try:
             return json.loads(response)

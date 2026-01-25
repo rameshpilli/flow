@@ -11,6 +11,7 @@ Usage:
 # Core LLM services (always available)
 from agentorchestrator.services.llm_gateway import (
     LLMGatewayClient,
+    LLMGatewayConfig,
     OAuthTokenManager,
     create_managed_client,
     get_default_llm_client,
@@ -61,6 +62,7 @@ from agentorchestrator.services.mem0 import (
 
 __all__ = [
     # LLM Gateway
+    "LLMGatewayConfig",
     "LLMGatewayClient",
     "OAuthTokenManager",
     "get_llm_client",
