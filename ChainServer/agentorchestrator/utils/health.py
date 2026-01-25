@@ -182,7 +182,7 @@ class HealthAggregator:
         Returns:
             AggregatedHealth with overall status and per-component details
         """
-        from agentorchestrator.utils.config import get_config
+        from agentorchestrator.config import get_config, __version__
 
         start = time.perf_counter()
         config = get_config()
@@ -224,8 +224,8 @@ class HealthAggregator:
             status=overall_status,
             components=list(results),
             total_latency_ms=total_latency,
-            version=config.service_version,
-            environment=config.environment,
+            version=__version__,
+            environment=config.log_level,
         )
 
 
@@ -237,16 +237,15 @@ class HealthAggregator:
 async def check_config_health() -> ComponentHealth:
     """Check if configuration is properly loaded."""
     try:
-        from agentorchestrator.utils.config import get_config
+        from agentorchestrator.config import get_config
         config = get_config()
         return ComponentHealth(
             name="config",
             status=HealthStatus.HEALTHY,
             message="Configuration loaded successfully",
             details={
-                "environment": config.environment,
-                "llm_configured": bool(config.llm_api_key),
-                "otel_enabled": config.otel_enabled,
+                "log_level": config.log_level,
+                "llm_configured": config.llm.is_configured,
             },
         )
     except Exception as e:
@@ -306,50 +305,45 @@ async def check_redis_health() -> ComponentHealth:
 async def check_llm_health() -> ComponentHealth:
     """Check LLM gateway connectivity (basic check)."""
     try:
-        from agentorchestrator.utils.config import get_config
+        from agentorchestrator.config import get_config
         config = get_config()
 
-        if not config.llm_api_key:
+        if not config.llm.is_configured:
             return ComponentHealth(
                 name="llm",
                 status=HealthStatus.DEGRADED,
-                message="LLM API key not configured",
+                message="LLM not configured (missing server URL or credentials)",
             )
 
         # Basic connectivity check - just verify the URL is reachable
-        # A full health check would make an actual API call
-        import aiohttp
+        import httpx
 
-        async with aiohttp.ClientSession() as session:
-            # Try to reach the base URL (may return 404/401, but connection works)
-            try:
-                async with session.get(
-                    f"{config.llm_base_url}/health",
-                    timeout=aiohttp.ClientTimeout(total=5.0),
-                ) as response:
-                    # Any response means connectivity is OK
-                    return ComponentHealth(
-                        name="llm",
-                        status=HealthStatus.HEALTHY,
-                        message="LLM gateway is reachable",
-                        details={
-                            "base_url": config.llm_base_url,
-                            "model": config.llm_model,
-                            "status_code": response.status,
-                        },
-                    )
-            except aiohttp.ClientConnectorError:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                # Try to reach the base URL (may return 404/401, but connection works)
+                response = await client.get(f"{config.llm.server_url.rstrip('/chat/completions')}/health")
                 return ComponentHealth(
                     name="llm",
-                    status=HealthStatus.UNHEALTHY,
-                    message=f"Cannot connect to LLM gateway at {config.llm_base_url}",
+                    status=HealthStatus.HEALTHY,
+                    message="LLM gateway is reachable",
+                    details={
+                        "server_url": config.llm.server_url,
+                        "model": config.llm.model_name,
+                        "status_code": response.status_code,
+                    },
                 )
+        except httpx.ConnectError:
+            return ComponentHealth(
+                name="llm",
+                status=HealthStatus.UNHEALTHY,
+                message=f"Cannot connect to LLM gateway at {config.llm.server_url}",
+            )
 
     except ImportError:
         return ComponentHealth(
             name="llm",
             status=HealthStatus.DEGRADED,
-            message="aiohttp not installed for LLM health check",
+            message="httpx not installed for LLM health check",
         )
     except Exception as e:
         return ComponentHealth(
@@ -550,7 +544,7 @@ async def is_live() -> bool:
     """
     try:
         # Basic check - config loads
-        from agentorchestrator.utils.config import get_config
+        from agentorchestrator.config import get_config
         get_config()
         return True
     except Exception:

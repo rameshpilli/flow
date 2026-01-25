@@ -58,7 +58,7 @@ def print_banner(include_version: bool = True) -> None:
     print(f"  {AO_TAGLINE}")
     if include_version:
         try:
-            from agentorchestrator.utils.config import get_version
+            from agentorchestrator.config import get_version
             version_info = get_version()
             print(f"  v{version_info.get('version', '0.1.0')}")
         except Exception:
@@ -1297,7 +1297,7 @@ def cmd_health(args: argparse.Namespace) -> int:
             return 1
 
     # Basic health check (quick, no external dependencies)
-    from agentorchestrator.utils.config import get_health
+    from agentorchestrator.config import get_health
 
     try:
         health = get_health()
@@ -1342,7 +1342,7 @@ def cmd_health(args: argparse.Namespace) -> int:
 
 def cmd_version(args: argparse.Namespace) -> int:
     """Show version information."""
-    from agentorchestrator.utils.config import get_version
+    from agentorchestrator.config import get_version
 
     try:
         version_info = get_version()
@@ -1546,11 +1546,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 def cmd_config(args: argparse.Namespace) -> int:
     """Show current configuration (secrets masked)."""
-    from agentorchestrator.utils.config import ConfigError, get_config
+    from agentorchestrator.config import ConfigError, get_config
 
     try:
         config = get_config()
-        safe_config = config.to_safe_dict()
+        safe_config = config.to_dict()
 
         print(f"\n{'═' * 50}")
         print("  AgentOrchestrator Configuration")
@@ -1670,7 +1670,7 @@ def cmd_debug(args: argparse.Namespace) -> int:
     """
     import datetime
 
-    from agentorchestrator.utils.config import get_config
+    from agentorchestrator.config import get_config
 
     ao = get_orchestrator()
     config = get_config()

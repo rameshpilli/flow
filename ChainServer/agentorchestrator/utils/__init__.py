@@ -1,4 +1,4 @@
-"""AgentOrchestrator Utilities Module"""
+"""AgentOrchestrator Utilities Module."""
 
 # Circuit breaker
 from agentorchestrator.utils.circuit_breaker import (
@@ -10,28 +10,15 @@ from agentorchestrator.utils.circuit_breaker import (
     reset_all_circuit_breakers,
 )
 
-# Configuration
-from agentorchestrator.utils.config import (
-    AWSSecretsManagerBackend,
-    # Config sub-types
-    CacheConfig,
+# Configuration - re-export from main config module
+from agentorchestrator.config import (
     ConfigError,
-    EnvSecretBackend,
-    AgentOrchestratorConfig,
     HealthStatus,
-    RateLimitConfig,
-    RetryPolicyConfig,
-    # Secret backends
-    SecretBackend,
     SecretString,
-    VaultSecretBackend,
     get_config,
     get_health,
-    get_secret,
-    get_secret_backend,
     get_version,
     set_config,
-    set_secret_backend,
 )
 
 # Health aggregator
@@ -41,7 +28,6 @@ from agentorchestrator.utils.health import (
     HealthAggregator,
     check_agents_health,
     check_chains_health,
-    # Built-in checks
     check_config_health,
     check_llm_health,
     check_redis_health,
@@ -68,8 +54,8 @@ from agentorchestrator.utils.timing import async_timed, timed
 
 # Caching utilities
 from agentorchestrator.utils.caching import (
-    timed_lru_cache,
     async_timed_lru_cache,
+    timed_lru_cache,
 )
 
 # Tracing
@@ -111,8 +97,7 @@ __all__ = [
     "trace_function",
     "noop_context",
     "ChainTracer",
-    # Configuration
-    "AgentOrchestratorConfig",
+    # Configuration (re-exported from main config)
     "ConfigError",
     "SecretString",
     "get_config",
@@ -120,18 +105,6 @@ __all__ = [
     "get_health",
     "get_version",
     "HealthStatus",
-    # Secret backends
-    "SecretBackend",
-    "EnvSecretBackend",
-    "AWSSecretsManagerBackend",
-    "VaultSecretBackend",
-    "set_secret_backend",
-    "get_secret_backend",
-    "get_secret",
-    # Config sub-types
-    "CacheConfig",
-    "RateLimitConfig",
-    "RetryPolicyConfig",
     # Health aggregator
     "HealthAggregator",
     "ComponentHealth",

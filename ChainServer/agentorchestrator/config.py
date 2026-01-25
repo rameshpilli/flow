@@ -18,6 +18,50 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+
+class ConfigError(Exception):
+    """Raised when configuration validation fails."""
+    pass
+
+
+class SecretString:
+    """
+    A string that masks itself in logs and repr.
+
+    Usage:
+        api_key = SecretString(os.getenv("API_KEY"))
+        print(api_key)  # Output: ***REDACTED***
+        str(api_key)    # Returns actual value for use
+    """
+
+    def __init__(self, value: str | None):
+        self._value = value
+
+    def __repr__(self) -> str:
+        if self._value:
+            return "***REDACTED***"
+        return "None"
+
+    def __str__(self) -> str:
+        """Returns actual value - use for passing to APIs."""
+        return self._value or ""
+
+    def __bool__(self) -> bool:
+        return bool(self._value)
+
+    def get_masked(self, show_chars: int = 4) -> str:
+        """Show last N characters for debugging."""
+        if not self._value:
+            return "None"
+        if len(self._value) <= show_chars:
+            return "***"
+        return f"***{self._value[-show_chars:]}"
+
+    @property
+    def value(self) -> str | None:
+        """Explicit access to the actual value."""
+        return self._value
+
 # Load .env file if python-dotenv is available
 try:
     from dotenv import load_dotenv
@@ -431,6 +475,7 @@ class Config:
     # General settings
     log_level: str = "INFO"
     verbose: bool = False
+    debug_snapshot_dir: str = ".agentorchestrator/snapshots"
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -756,8 +801,82 @@ def set_config(config: Config) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#                           CONVENIENCE EXPORTS
+#                           VERSION & HEALTH HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# Package version
+__version__ = "0.1.0"
+
+
+@dataclass
+class HealthStatus:
+    """Health check response."""
+    status: str  # "healthy", "degraded", "unhealthy"
+    version: str
+    environment: str
+    checks: dict[str, bool] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "version": self.version,
+            "environment": self.environment,
+            "checks": self.checks,
+        }
+
+
+def get_version() -> dict[str, str]:
+    """
+    Get version information for /version endpoint.
+
+    Usage:
+        from agentorchestrator.config import get_version
+        info = get_version()
+        print(info["version"])
+    """
+    config = get_config()
+    return {
+        "name": "agentorchestrator",
+        "version": __version__,
+        "environment": config.log_level,  # Use log_level as environment indicator
+    }
+
+
+def get_health() -> HealthStatus:
+    """
+    Get health status for /health endpoint.
+
+    Checks:
+    - Configuration loaded
+    - LLM configured (if needed)
+    """
+    config = get_config()
+    checks = {}
+
+    # Config check
+    checks["config_loaded"] = True
+
+    # LLM check (just verify config exists)
+    checks["llm_configured"] = config.llm.is_configured
+
+    # Determine overall status
+    all_passed = all(checks.values())
+    critical_failed = not checks.get("config_loaded", True)
+
+    if critical_failed:
+        status = "unhealthy"
+    elif not all_passed:
+        status = "degraded"
+    else:
+        status = "healthy"
+
+    return HealthStatus(
+        status=status,
+        version=__version__,
+        environment=config.log_level,
+        checks=checks,
+    )
+
 
 __all__ = [
     # Main config
@@ -774,4 +893,11 @@ __all__ = [
     "SummarizerConfig",
     "CacheConfig",
     "ContextStoreConfig",
+    # Utilities
+    "ConfigError",
+    "SecretString",
+    "HealthStatus",
+    "get_version",
+    "get_health",
+    "__version__",
 ]
