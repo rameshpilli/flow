@@ -1,7 +1,7 @@
 # LlamaIndex Workflows vs AgentOrchestrator: Comprehensive Comparison
 
-**Date:** January 25, 2026  
-**Analysis:** Feature Parity, Gaps, Bugs, and Recommendations
+**Date:** January 26, 2026  
+**Analysis:** Feature Parity, Gaps, Bugs, and Recommendations (updated for typed state + atomic updates in AgentOrchestrator)
 
 ---
 
@@ -36,7 +36,7 @@ AgentOrchestrator is **feature-competitive** with LlamaIndex Workflows and offer
 | **State Management** | ✅ Pydantic models | ⚠️ Dict-based with scopes | **Llama** (type safety) |
 | **Context Scopes** | ❌ No scoping | ✅ STEP/CHAIN/GLOBAL | **AO** ⭐ |
 | **Workflow Class** | ✅ `class MyWorkflow(Workflow)` | ⚠️ Decorator-only | **Llama** (cleaner) |
-| **Atomic State Updates** | ✅ `async with ctx.store.edit_state()` | ❌ No atomic update pattern | **Llama** |
+| **Atomic State Updates** | ✅ `async with ctx.store.edit_state()` | ✅ `async with ctx.edit_state()` | **TIE** |
 
 **Verdict:** Feature parity in core workflows, each has unique strengths.
 
@@ -80,45 +80,20 @@ AgentOrchestrator is **feature-competitive** with LlamaIndex Workflows and offer
 |---------|---------------------|-------------------|--------|
 | **Documentation** | ✅ Excellent (LlamaIndex brand) | ⚠️ Good but less visible | **Llama** |
 | **Examples** | ✅ Well-organized | ✅ Good coverage | **TIE** |
-| **Type Safety** | ✅ Pydantic state models | ⚠️ Dict-based (no type hints) | **Llama** ⭐ |
-| **IDE Support** | ✅ Strong (typed context) | ⚠️ Weaker (dynamic dict) | **Llama** |
+| **Type Safety** | ✅ Pydantic state models | ✅ Pydantic state via `Context[State]` | **TIE** |
+| **IDE Support** | ✅ Strong (typed context) | ✅ Typed context for state; decorators still dynamic | **TIE** |
 | **Error Messages** | ✅ Good | ✅ Good | **TIE** |
 | **Testing Utils** | ❌ Limited | ✅ MockAgent, IsolatedOrchestrator | **AO** ⭐ |
 
-**Verdict:** LlamaIndex has better type safety and documentation; AO has better testing tools.
+**Verdict:** Documentation polish still lags, but type safety and atomic state are now on par; AO retains stronger testing tools.
 
 ---
 
 ## 2. Feature Gaps Analysis
 
-### 2.1 HIGH PRIORITY - Type-Safe State Management
+### 2.1 (Resolved) - Type-Safe State Management
 
-**Issue:** Our context uses dict-based storage without type safety.
-
-```python
-# LlamaIndex Workflows (BETTER)
-class RunState(BaseModel):
-    num_runs: int = Field(default=0)
-    errors: list[str] = Field(default_factory=list)
-
-async def my_step(ctx: Context[RunState], ev: StartEvent):
-    async with ctx.store.edit_state() as state:
-        state.num_runs += 1  # Type-checked!
-
-# AgentOrchestrator (CURRENT)
-ctx.set("num_runs", 0)  # No type checking
-num_runs = ctx.get("num_runs", 0)  # Could be None, string, etc.
-```
-
-**Impact:**
-- ❌ No IDE autocomplete for state keys
-- ❌ Runtime errors instead of type errors
-- ❌ Harder to refactor
-
-**Recommendation:** ⭐ **CRITICAL** - Add Pydantic state model support
-
-**Effort:** 3-4 days
-
+AgentOrchestrator now supports Pydantic state models with typed contexts and atomic updates via `async with ctx.edit_state()` (see `core/state.py`, `core/context.py`). Type safety is at parity with LlamaIndex Workflows.
 ---
 
 ### 2.2 MEDIUM PRIORITY - Workflow Class Pattern
@@ -160,33 +135,9 @@ async def process(ctx):
 
 ---
 
-### 2.3 MEDIUM PRIORITY - Atomic State Updates
+### 2.3 (Resolved) - Atomic State Updates
 
-**Issue:** No context manager for atomic state modifications.
-
-```python
-# LlamaIndex Workflows (BETTER)
-async with ctx.store.edit_state() as state:
-    state.counter += 1
-    state.items.append(new_item)
-    # Atomic - either all changes apply or none
-
-# AgentOrchestrator (CURRENT)
-counter = ctx.get("counter", 0)
-ctx.set("counter", counter + 1)
-items = ctx.get("items", [])
-items.append(new_item)
-ctx.set("items", items)
-# Not atomic - race conditions possible
-```
-
-**Impact:**
-- ⚠️ Potential race conditions in concurrent steps
-- ⚠️ Less safe for parallel execution
-
-**Recommendation:** Add `ctx.edit_state()` context manager
-
-**Effort:** 2-3 days
+AgentOrchestrator now includes `async with ctx.edit_state()` for atomic, validated state edits. Use typed `Context[MyState]` to get IDE support and prevent race conditions in parallel steps.
 
 ---
 
@@ -253,14 +204,9 @@ async def start(ctx):
 
 ---
 
-### 3.2 Missing Pydantic State Examples
+### 3.2 Pydantic State Examples
 
-**Issue:** No examples showing type-safe state management (because we don't have it yet).
-
-**Recommendation:** After implementing Pydantic state support, add:
-1. Type-safe state example in getting started
-2. Migration guide from dict-based to typed state
-3. Best practices doc
+Status: ✅ README and quickstart already show typed state + `ctx.edit_state()`. Nice-to-have: a dedicated migration guide from older dict-based patterns and a short best-practices page.
 
 ---
 
@@ -443,25 +389,19 @@ Current positioning: "DAG-based Chain Orchestration Framework"
    - Highlight unique features (middleware, CLI, etc.)
    - Add "Why AgentOrchestrator?" section
 
-### Phase 2: Type Safety (2 weeks)
+### Phase 2: Type Safety Polish (1 week)
 
-1. **Implement Pydantic state models** (1 week)
-   ```python
-   @ao.step(name="process", state_model=PipelineState)
-   async def process(ctx: Context[PipelineState]):
-       async with ctx.edit_state() as state:
-           state.counter += 1
-   ```
+1. **Docs/examples refresh** (2 days)
+   - Add a short migration guide from dict-based patterns to typed state.
+   - Add a best-practices page for `ctx.edit_state()` usage.
+   - Ensure main examples include typed state where appropriate.
 
-2. **Add atomic state updates** (3 days)
-   - Implement `ctx.edit_state()` context manager
-   - Add tests for concurrent modifications
-   - Document thread-safety guarantees
+2. **Tests** (1 day)
+   - Concurrency tests for `ctx.edit_state()` to guard against regressions.
 
-3. **Documentation and examples** (2 days)
-   - Type-safe state guide
-   - Migration guide from dict-based state
-   - Update all examples with type hints
+3. **DX tweaks** (2 days)
+   - Add IDE/type hints to event handler examples.
+   - Surface typed state patterns in CLI scaffolding templates.
 
 ### Phase 3: Workflow Class Pattern (1-2 weeks)
 
