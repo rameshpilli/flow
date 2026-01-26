@@ -15,6 +15,7 @@ from agentorchestrator.squad.classifiers.base import Classifier
 from agentorchestrator.squad.classifiers.llm_gateway import LLMGatewayClassifier
 from agentorchestrator.squad.storage.base import ChatStorage
 from agentorchestrator.squad.storage.memory import InMemoryChatStorage
+from agentorchestrator.core.event_bus import Event, get_event_bus
 from agentorchestrator.squad.types import (
     ConversationMessage,
     ParticipantRole,
@@ -87,6 +88,7 @@ class MultiAgentOrchestrator:
         storage: Optional[ChatStorage] = None,
         classifier: Optional[Classifier] = None,
         default_agent: Optional[Agent] = None,
+        event_bus=None,
     ):
         """
         Initialize the orchestrator.
@@ -112,6 +114,9 @@ class MultiAgentOrchestrator:
 
         # Execution tracking
         self.execution_times: dict[str, float] = {}
+
+        # Event bus (shared with core) for streaming telemetry
+        self.event_bus = event_bus or get_event_bus(prefer_redis=True)
 
     def add_agent(self, agent: Agent) -> None:
         """
@@ -399,13 +404,36 @@ class MultiAgentOrchestrator:
     ) -> ConversationMessage:
         """Process a streaming response and save the final message."""
         final_message = None
+        accumulated_chunks: list[str] = []
         async for chunk in response:
             if isinstance(chunk, AgentStreamResponse):
+                if chunk.text:
+                    accumulated_chunks.append(chunk.text)
+                    await self._emit_event(
+                        "AgentTokenChunk",
+                        agent.id,
+                        user_id,
+                        session_id,
+                        payload={"text": chunk.text},
+                    )
                 if chunk.final_message:
                     final_message = chunk.final_message
 
+        if not final_message and accumulated_chunks:
+            final_message = ConversationMessage(
+                role=ParticipantRole.ASSISTANT.value,
+                content=[{"text": "".join(accumulated_chunks)}]
+            )
+
         if final_message:
             await self._save_message(final_message, user_id, session_id, agent)
+            await self._emit_event(
+                "AgentStreamCompleted",
+                agent.id,
+                user_id,
+                session_id,
+                payload={"text": final_message.content[0].get("text", "") if final_message.content else ""},
+            )
             return final_message
 
         return ConversationMessage(
@@ -419,12 +447,39 @@ class MultiAgentOrchestrator:
     ) -> ConversationMessage:
         """Consume a stream to get the final message."""
         final_message = None
+        accumulated_chunks: list[str] = []
         async for chunk in response:
             if isinstance(chunk, AgentStreamResponse):
+                if chunk.text:
+                    accumulated_chunks.append(chunk.text)
+                    await self._emit_event(
+                        "AgentTokenChunk",
+                        None,
+                        None,
+                        None,
+                        payload={"text": chunk.text},
+                    )
                 if chunk.final_message:
                     final_message = chunk.final_message
 
-        return final_message or ConversationMessage(
+        if final_message:
+            return final_message
+
+        if accumulated_chunks:
+            msg = ConversationMessage(
+                role=ParticipantRole.ASSISTANT.value,
+                content=[{"text": "".join(accumulated_chunks)}]
+            )
+            await self._emit_event(
+                "AgentStreamCompleted",
+                agent_id=None,
+                user_id=None,
+                session_id=None,
+                payload={"text": msg.content[0].get("text", "")},
+            )
+            return msg
+
+        return ConversationMessage(
             role=ParticipantRole.ASSISTANT.value,
             content=[{"text": ""}]
         )
@@ -468,6 +523,35 @@ class MultiAgentOrchestrator:
             metadata.additional_params["error_type"] = "classification_failed"
 
         return metadata
+
+    async def _emit_event(
+        self,
+        event_type: str,
+        agent_id: str | None,
+        user_id: str | None,
+        session_id: str | None,
+        payload: dict | None = None,
+    ) -> None:
+        """Publish agent streaming/telemetry events."""
+        if not self.event_bus:
+            return
+        try:
+            await self.event_bus.publish(
+                Event(
+                    type=event_type,
+                    payload=payload or {},
+                    step=agent_id,
+                    run_id=session_id,
+                    metadata={
+                        "agent_id": agent_id,
+                        "user_id": user_id,
+                        "session_id": session_id,
+                    },
+                )
+            )
+        except Exception:
+            # Best effort; do not break the flow
+            pass
 
     async def _measure_execution_time(
         self,

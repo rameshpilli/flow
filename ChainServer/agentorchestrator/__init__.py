@@ -30,8 +30,16 @@ For middleware, testing, and advanced features, import from submodules:
 
 # Configuration
 from agentorchestrator.config import Config, get_config
-from agentorchestrator.core.context import ChainContext
-from agentorchestrator.core.orchestrator import Context, AgentOrchestrator
+from agentorchestrator.core.context import ChainContext, Context
+from agentorchestrator.core.event_bus import (
+    Event,
+    EventBus,
+    InMemoryEventBus,
+    RedisEventBus,
+    get_event_bus,
+)
+from agentorchestrator.dsl import Pipeline, StepDef, EventDef
+from agentorchestrator.core.orchestrator import AgentOrchestrator
 
 # =============================================================================
 # MODELS - Citation and data models
@@ -91,6 +99,14 @@ __all__ = [
     "AgentOrchestrator",
     "Context",
     "ChainContext",
+    "Event",
+    "EventBus",
+    "InMemoryEventBus",
+    "RedisEventBus",
+    "get_event_bus",
+    "Pipeline",
+    "StepDef",
+    "EventDef",
     # Config
     "Config",
     "get_config",

@@ -225,6 +225,8 @@ class LLMGatewayClassifier(Classifier):
                         prompt=enriched_prompt,
                         system_prompt=self.system_prompt,
                         max_tokens=self.max_tokens,
+                        model=self.model_name,
+                        temperature=self.temperature,
                     ),
                     timeout=self.timeout_seconds
                 )

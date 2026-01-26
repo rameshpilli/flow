@@ -53,6 +53,257 @@ AgentOrchestrator provides a **layered approach** to context management:
 | **Offloading** | Large payloads you might need later | `OffloadMiddleware` |
 | **Token Budget** | Overall context limit management | `TokenManagerMiddleware` |
 | **Context Isolation** | 5+ agents, prevent pollution | `ContextIsolationManager` |
+| **Type-Safe State** | Workflow progress, counters, flags | `Context[StateModel]` + Pydantic |
+
+---
+
+## 0. Type-Safe State Management (NEW)
+
+**Purpose**: Type-safe, validated state management using Pydantic models for workflow progress, counters, and structured data.
+
+### Why Use Type-Safe State?
+
+Traditional context storage is untyped and flexible:
+
+```python
+ctx.set("counter", 0)
+ctx.set("items", [])
+count = ctx.get("counter")  # No type hints, no validation
+```
+
+**Problems**:
+- No IDE autocomplete
+- No type checking
+- No validation
+- Easy to introduce bugs
+
+**Solution**: Pydantic state models provide:
+- ✅ Type hints and IDE autocomplete
+- ✅ Automatic validation
+- ✅ Atomic updates via context manager
+- ✅ Thread-safe concurrent access
+- ✅ Clean separation of state from context data
+
+### Basic Usage
+
+```python
+from pydantic import BaseModel, Field
+from agentorchestrator import AgentOrchestrator, Context
+
+class PipelineState(BaseModel):
+    counter: int = Field(default=0)
+    items: list[str] = Field(default_factory=list)
+    processed: bool = Field(default=False)
+
+ao = AgentOrchestrator()
+
+@ao.step(name="process", state_model=PipelineState)
+async def process(ctx: Context[PipelineState]):
+    # Type-safe access with IDE autocomplete!
+    async with ctx.edit_state() as state:
+        state.counter += 1  # ← IDE knows this is an int
+        state.items.append("new_item")  # ← IDE knows this is a list
+    
+    # Read-only access
+    count = ctx.state.counter  # ← Typed!
+    return {"count": count}
+```
+
+### Creating Context with State Model
+
+```python
+from agentorchestrator.core.context import ChainContext
+
+# Create context with state model
+ctx = ChainContext("req_123", state_model=PipelineState)
+
+# Access state
+print(ctx.state.counter)  # 0
+
+# Update state atomically
+async with ctx.edit_state() as state:
+    state.counter = 10
+    state.processed = True
+```
+
+### Atomic Updates
+
+State updates are atomic and validated:
+
+```python
+async with ctx.edit_state() as state:
+    state.counter += 1
+    state.items.append("item1")
+    # If an exception occurs here, ALL changes are rolled back
+    # Validation happens on exit
+```
+
+### Validation with Pydantic
+
+Add validation rules to your state model:
+
+```python
+from pydantic import BaseModel, Field
+
+class ValidatedState(BaseModel):
+    progress: int = Field(default=0, ge=0, le=100)  # 0-100
+    email: str = Field(
+        default="user@example.com",
+        pattern=r"^[\w\.-]+@[\w\.-]+\.\w+$"
+    )
+    retries: int = Field(default=0, ge=0, le=3)  # Max 3 retries
+
+# Invalid updates raise ValidationError
+try:
+    async with ctx.edit_state() as state:
+        state.progress = 150  # Exceeds max!
+except ValidationError as e:
+    print("Validation failed:", e)
+    # State is unchanged
+```
+
+### State vs Context Data
+
+**When to use State**:
+- Workflow progress tracking
+- Counters and flags
+- Structured data with validation
+- Data that needs type safety
+
+**When to use Context**:
+- Input data (user queries, parameters)
+- Extracted entities (company names, dates)
+- Step outputs (API responses, results)
+- Flexible, unstructured data
+
+**Example**:
+
+```python
+from agentorchestrator.core.context import ChainContext, ContextScope
+
+class WorkflowState(BaseModel):
+    stage: str = Field(default="init")
+    progress: int = Field(default=0)
+
+ctx = ChainContext(
+    "req_123",
+    initial_data={
+        "user_query": "What is the revenue?",  # ← Context data
+        "company": "Apple Inc",  # ← Context data
+    },
+    state_model=WorkflowState,  # ← State model
+)
+
+# Context data (untyped, flexible)
+query = ctx.get("user_query")
+
+# State (typed, validated)
+async with ctx.edit_state() as state:
+    state.stage = "processing"
+    state.progress = 50
+
+# Step-scoped data (temporary)
+async with ctx.step_scope("process"):
+    ctx.set("temp", {...}, scope=ContextScope.STEP)
+    # Auto-cleaned after step
+```
+
+### Thread-Safe Concurrent Updates
+
+State updates are automatically serialized for thread safety:
+
+```python
+async def worker(worker_id: int):
+    async with ctx.edit_state() as state:
+        state.counter += 1
+        await asyncio.sleep(0.01)  # Simulate work
+
+# Run 10 workers concurrently
+await asyncio.gather(*[worker(i) for i in range(10)])
+
+# Counter will be exactly 10 (no race conditions!)
+assert ctx.state.counter == 10
+```
+
+### Complete Example
+
+```python
+from pydantic import BaseModel, Field
+from agentorchestrator import AgentOrchestrator, Context
+from agentorchestrator.core.context import ChainContext
+
+class DataPipelineState(BaseModel):
+    items_processed: int = Field(default=0)
+    items: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    completed: bool = Field(default=False)
+
+ao = AgentOrchestrator()
+
+@ao.step(name="fetch", state_model=DataPipelineState)
+async def fetch_data(ctx: Context[DataPipelineState]):
+    raw_items = ["item1", "item2", "item3"]
+    async with ctx.edit_state() as state:
+        state.items = raw_items
+    return {"fetched": len(raw_items)}
+
+@ao.step(name="process", deps=["fetch"], state_model=DataPipelineState)
+async def process_items(ctx: Context[DataPipelineState]):
+    for item in ctx.state.items:  # Read-only access
+        try:
+            # Process item
+            async with ctx.edit_state() as state:
+                state.items_processed += 1
+        except Exception as e:
+            async with ctx.edit_state() as state:
+                state.errors.append(str(e))
+    return {"processed": ctx.state.items_processed}
+
+@ao.step(name="finalize", deps=["process"], state_model=DataPipelineState)
+async def finalize(ctx: Context[DataPipelineState]):
+    async with ctx.edit_state() as state:
+        state.completed = True
+    return {
+        "success": ctx.state.items_processed > 0,
+        "processed": ctx.state.items_processed,
+        "errors": len(ctx.state.errors),
+    }
+
+@ao.chain(name="pipeline")
+class DataPipeline:
+    steps = ["fetch", "process", "finalize"]
+
+# Execute
+ctx = ChainContext("req_123", state_model=DataPipelineState)
+# ... execute steps ...
+print(f"Processed: {ctx.state.items_processed}")
+print(f"Errors: {ctx.state.errors}")
+print(f"Completed: {ctx.state.completed}")
+```
+
+### API Reference
+
+**ChainContext**:
+- `ChainContext(request_id, state_model=MyState)` - Create context with state
+- `ctx.state` - Read-only state access (typed)
+- `ctx.edit_state()` - Async context manager for atomic updates
+
+**Context Type Alias**:
+- `Context[StateModel]` - Type hint for steps with state
+
+**StateStore** (advanced):
+- `StateStore(model_class)` - Low-level state management
+- `store.state` - Read-only state
+- `store.edit()` - Atomic updates
+- `store.to_dict()` - Export state
+- `store.from_dict(data)` - Import state
+- `store.reset()` - Reset to initial values
+
+### See Also
+
+- `agentorchestrator/core/state.py` - StateStore implementation
+- `agentorchestrator/examples/pydantic_state.py` - Complete examples
+- `agentorchestrator/tests/unit/test_pydantic_state.py` - Test suite
 
 ---
 

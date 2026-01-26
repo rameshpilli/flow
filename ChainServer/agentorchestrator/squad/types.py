@@ -28,7 +28,7 @@ class ConversationMessage:
 
     Attributes:
         role: The role of the message sender (user, assistant, system)
-        content: List of content blocks (text, images, etc.)
+        content: List of content blocks (text, etc.)
     """
     role: str
     content: list[dict[str, Any]]
@@ -37,7 +37,7 @@ class ConversationMessage:
         """Extract text content from the message."""
         for block in self.content:
             if "text" in block:
-                return block["text"]
+                return block.get("text", "")
         return ""
 
 

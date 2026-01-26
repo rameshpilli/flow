@@ -186,6 +186,8 @@ def step(
     output_model: type | None = None,
     input_key: str | None = None,
     validate_output: bool = True,
+    # Type-safe state management
+    state_model: type | None = None,
 ) -> F | Callable[[F], F]:
     """
     Decorator to register a function as a chain step.
@@ -224,6 +226,8 @@ def step(
         output_model (type | None): Pydantic model to validate step output.
         input_key (str | None): Context key to validate. Default: "request".
         validate_output (bool): Whether to validate output. Default: True.
+        state_model (type | None): Pydantic model for type-safe state management.
+            Enables ctx.state and ctx.edit_state() with IDE autocomplete.
 
     Returns:
         F | Callable[[F], F]: The decorated function or decorator function.
@@ -265,6 +269,19 @@ def step(
         >>> @step(max_concurrency=2, timeout_ms=60000, retry=3)
         ... async def call_external_api(ctx):
         ...     return await slow_api.fetch(...)
+        >>>
+        >>> # With type-safe state
+        >>> from pydantic import BaseModel, Field
+        >>>
+        >>> class PipelineState(BaseModel):
+        ...     counter: int = 0
+        ...     items: list[str] = Field(default_factory=list)
+        >>>
+        >>> @step(state_model=PipelineState)
+        ... async def process(ctx: Context[PipelineState]):
+        ...     async with ctx.edit_state() as state:
+        ...         state.counter += 1  # Type-safe!
+        ...     return {"count": ctx.state.counter}
 
     Note:
         The decorated function will have `_fg_name`, `_fg_type`,
@@ -295,6 +312,7 @@ def step(
             output_model=output_model,
             input_key=input_key,
             validate_output=validate_output,
+            state_model=state_model,
         )
 
     if func is not None:

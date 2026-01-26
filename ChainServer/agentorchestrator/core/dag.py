@@ -22,6 +22,7 @@ from enum import Enum
 from typing import Any, Protocol
 
 from agentorchestrator.core.context import ChainContext, StepResult
+from agentorchestrator.core.event_bus import Event, EventBus, get_event_bus
 from agentorchestrator.core.registry import (
     ChainSpec,
     StepSpec,
@@ -344,12 +345,15 @@ class DAGExecutor:
         max_parallel: int = 10,
         default_timeout_ms: int = 30000,
         enable_tracing: bool = True,
+        event_bus: EventBus | None = None,
     ):
         self.max_parallel = max_parallel
         self.default_timeout_ms = default_timeout_ms
         self.enable_tracing = enable_tracing
         self.builder = DAGBuilder()
         self._middleware: list[Any] = []
+        # Prefer Redis-backed bus if available; otherwise fall back to in-memory
+        self.event_bus = event_bus or get_event_bus(prefer_redis=True)
 
     def add_middleware(self, middleware: Any) -> None:
         """Add middleware to the executor"""
@@ -400,6 +404,8 @@ class DAGExecutor:
 
         # Create tracer for this chain execution
         tracer = ChainTracer(chain_name, ctx.request_id) if self.enable_tracing else None
+        # Tag context with chain name for downstream events
+        ctx.set("_chain_name", chain_name, scope=ContextScope.CHAIN)
 
         # Wrap execution in chain-level tracing span
         with self._chain_span(tracer, plan.total_steps):
@@ -428,6 +434,7 @@ class DAGExecutor:
                     ctx,
                     effective_error_handling,
                     group_concurrency,
+                    chain_name=chain_name,
                     debug_callback=debug_callback,
                     tracer=tracer,
                 )
@@ -435,7 +442,7 @@ class DAGExecutor:
                 # In "continue" mode, propagate failures to dependents
                 # Skip dependents whose dependencies have failed
                 if effective_error_handling == "continue":
-                    await self._propagate_failures_to_dependents(plan.nodes, ctx)
+                    await self._propagate_failures_to_dependents(plan.nodes, ctx, chain_name)
 
         logger.info(f"Chain {chain_name} completed")
         return ctx
@@ -473,6 +480,7 @@ class DAGExecutor:
         self,
         nodes: dict[str, DAGNode],
         ctx: ChainContext,
+        chain_name: str | None = None,
     ) -> None:
         """
         Mark dependents of failed steps as SKIPPED in continue mode.
@@ -511,6 +519,13 @@ class DAGExecutor:
             reason = f"dependency failed: {', '.join(sorted(failed_deps))}"
             await node.set_skipped(reason)
             ctx.add_result(node.result)
+            await self._emit_event(
+                "StepSkipped",
+                chain_name,
+                step_name,
+                ctx.request_id,
+                payload={"reason": reason},
+            )
             logger.warning(
                 f"Skipping step '{step_name}' because {reason}"
             )
@@ -522,6 +537,7 @@ class DAGExecutor:
         ctx: ChainContext,
         error_handling: str,
         concurrency_limit: int,
+        chain_name: str | None = None,
         debug_callback: DebugCallback | None = None,
         tracer: Any = None,
     ) -> list[StepResult]:
@@ -545,6 +561,7 @@ class DAGExecutor:
             async with group_semaphore:
                 return await self._execute_step(
                     nodes[step_name], ctx, error_handling,
+                    chain_name=chain_name,
                     debug_callback=debug_callback,
                     tracer=tracer,
                 )
@@ -552,7 +569,7 @@ class DAGExecutor:
         if error_handling == "fail_fast":
             # TRUE fail-fast: cancel all tasks on first failure
             return await self._execute_group_fail_fast(
-                step_names, bounded_execute
+                step_names, bounded_execute, nodes, ctx, chain_name
             )
         else:
             # Continue mode: wait for all tasks, collect results
@@ -564,6 +581,9 @@ class DAGExecutor:
         self,
         step_names: list[str],
         execute_fn: Callable[[str], Any],
+        nodes: dict[str, DAGNode],
+        ctx: ChainContext,
+        chain_name: str | None = None,
     ) -> list[StepResult]:
         """
         Execute steps with TRUE fail-fast behavior.
@@ -574,6 +594,7 @@ class DAGExecutor:
         tasks: dict[str, asyncio.Task] = {}
         step_results: list[StepResult] = []
         first_exception: Exception | None = None
+        cancelled_steps: set[str] = set()
 
         # Create all tasks
         for name in step_names:
@@ -594,7 +615,9 @@ class DAGExecutor:
                     step_results.append(result)
                 except asyncio.CancelledError:
                     # Task was cancelled, skip it
-                    logger.debug(f"Task {task.get_name()} was cancelled")
+                    step_name = task.get_name()
+                    cancelled_steps.add(step_name)
+                    logger.debug(f"Task {step_name} was cancelled")
                 except Exception as e:
                     # First failure - cancel all pending tasks immediately
                     if first_exception is None:
@@ -604,7 +627,23 @@ class DAGExecutor:
                             f"{len(pending)} pending tasks"
                         )
                         for pending_task in pending:
+                            cancelled_steps.add(pending_task.get_name())
                             pending_task.cancel()
+
+        # Mark cancelled tasks as skipped for traceability
+        if cancelled_steps:
+            for step_name in cancelled_steps:
+                node = nodes.get(step_name)
+                if node and node.state in {StepState.PENDING, StepState.RUNNING}:
+                    await node.set_skipped("cancelled due to fail_fast")
+                    ctx.add_result(node.result)
+                    await self._emit_event(
+                        "StepSkipped",
+                        chain_name,
+                        step_name,
+                        ctx.request_id,
+                        payload={"reason": "cancelled due to fail_fast"},
+                    )
 
         # If we had a failure, raise it after cleanup
         if first_exception is not None:
@@ -639,6 +678,7 @@ class DAGExecutor:
         node: DAGNode,
         ctx: ChainContext,
         error_handling: str,
+        chain_name: str | None = None,
         debug_callback: DebugCallback | None = None,
         tracer: Any = None,
     ) -> StepResult:
@@ -665,6 +705,13 @@ class DAGExecutor:
 
             # Thread-safe state transition to RUNNING
             await node.set_running()
+            await self._emit_event(
+                "StepStarted",
+                chain_name,
+                node.name,
+                ctx.request_id,
+                payload={"attempt": attempt},
+            )
 
             start_time = time.perf_counter()
 
@@ -723,6 +770,16 @@ class DAGExecutor:
                         # Thread-safe state transition to COMPLETED
                         await node.set_completed(step_result)
                         ctx.add_result(step_result)
+                        await self._emit_event(
+                            "StepCompleted",
+                            chain_name,
+                            node.name,
+                            ctx.request_id,
+                            payload={
+                                "duration_ms": duration_ms,
+                                "retry_count": attempt,
+                            },
+                        )
 
                         # Add tracing attributes
                         if span and hasattr(span, 'set_attribute'):
@@ -771,6 +828,30 @@ class DAGExecutor:
 
                         await node.set_failed(step_result)
                         ctx.add_result(step_result)
+                        await self._emit_event(
+                            "StepFailed",
+                            chain_name,
+                            node.name,
+                            ctx.request_id,
+                            payload={
+                                "error": str(e),
+                                "error_type": type(e).__name__,
+                                "duration_ms": duration_ms,
+                                "retry_count": attempt,
+                            },
+                        )
+                        await self._emit_event(
+                            "StepFailed",
+                            chain_name,
+                            node.name,
+                            ctx.request_id,
+                            payload={
+                                "error": str(last_error),
+                                "error_type": "TimeoutError",
+                                "duration_ms": duration_ms,
+                                "retry_count": attempt,
+                            },
+                        )
 
                         if debug_callback is not None:
                             self._invoke_debug_callback(
@@ -853,6 +934,34 @@ class DAGExecutor:
             callback(ctx, step_name, result_dict)
         except Exception as e:
             logger.warning(f"Debug callback failed for step {step_name}: {e}")
+
+    async def _emit_event(
+        self,
+        event_type: str,
+        chain_name: str | None,
+        step_name: str | None,
+        run_id: str | None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Publish orchestration events to the configured event bus.
+
+        Best-effort: failures are logged at debug and do not break execution.
+        """
+        if not self.event_bus:
+            return
+        try:
+            await self.event_bus.publish(
+                Event(
+                    type=event_type,
+                    payload=payload or {},
+                    step=step_name,
+                    run_id=run_id,
+                    metadata={"chain": chain_name} if chain_name else {},
+                )
+            )
+        except Exception as e:
+            logger.debug("Event publish failed (%s): %s", event_type, e)
 
     async def _run_before_middleware(self, ctx: ChainContext, step_name: str) -> None:
         """

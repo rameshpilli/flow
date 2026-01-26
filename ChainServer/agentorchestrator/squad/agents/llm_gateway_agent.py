@@ -84,6 +84,8 @@ from agentorchestrator.services.llm_gateway import (
     get_default_llm_client,
 )
 from agentorchestrator.utils.tracing import trace_span, noop_context
+from agentorchestrator.core.event_bus import Event, get_event_bus
+from agentorchestrator.core.event_bus import Event, get_event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +147,7 @@ class LLMGatewayAgentOptions(AgentOptions):
     context_keys: list[str] = field(default_factory=lambda: ["rag_context", "user_profile", "session_data"])
     timeout_seconds: float = 60.0
     max_retries: int = 2
+    event_bus: Any | None = None
 
 
 class LLMGatewayAgent(Agent):
@@ -265,6 +268,8 @@ class LLMGatewayAgent(Agent):
         self.context_keys = options.context_keys
         self.timeout_seconds = options.timeout_seconds
         self.max_retries = options.max_retries
+        self.event_bus = options.event_bus or get_event_bus(prefer_redis=True)
+        self.event_bus = options.event_bus or get_event_bus(prefer_redis=True)
 
         # Metrics tracking
         self._request_count = 0
@@ -554,6 +559,35 @@ If you don't know something, say so rather than making up information.
             "avg_latency_ms": avg_latency,
         }
 
+    async def _emit_event(
+        self,
+        event_type: str,
+        user_id: str | None,
+        session_id: str | None,
+        tool_name: str | None,
+        payload: dict | None = None,
+    ) -> None:
+        """Publish tool/agent events (best-effort, no throw)."""
+        if not self.event_bus:
+            return
+        try:
+            await self.event_bus.publish(
+                Event(
+                    type=event_type,
+                    payload=payload or {},
+                    step=tool_name,
+                    run_id=session_id,
+                    metadata={
+                        "agent_id": self.id,
+                        "user_id": user_id,
+                        "session_id": session_id,
+                        "tool": tool_name,
+                    },
+                )
+            )
+        except Exception:
+            pass
+
     async def _handle_tool_calls(
         self,
         response: str,
@@ -629,14 +663,35 @@ If you don't know something, say so rather than making up information.
                 if tool.name == tool_name and tool.func:
                     try:
                         self._log_debug(f"Executing tool: {tool_name}", arguments)
+                        await self._emit_event(
+                            "ToolCallStarted",
+                            user_id,
+                            session_id,
+                            tool_name,
+                            arguments,
+                        )
                         if asyncio.iscoroutinefunction(tool.func):
                             result = await tool.func(**arguments)
                         else:
                             result = tool.func(**arguments)
                         tool_results.append(f"{tool_name}: {result}")
+                        await self._emit_event(
+                            "ToolCallResult",
+                            user_id,
+                            session_id,
+                            tool_name,
+                            {"success": True, "result": result},
+                        )
                     except Exception as e:
                         logger.error(f"Tool {tool_name} failed: {e}")
                         tool_results.append(f"{tool_name}: Error - {str(e)}")
+                        await self._emit_event(
+                            "ToolCallResult",
+                            user_id,
+                            session_id,
+                            tool_name,
+                            {"success": False, "error": str(e)},
+                        )
                     break
 
         if tool_results:

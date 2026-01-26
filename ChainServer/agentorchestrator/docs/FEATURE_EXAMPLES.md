@@ -12,9 +12,10 @@
 | **FunctionAgent** | ✅ Implemented | `from agentorchestrator.squad import FunctionAgent` |
 | **Context Isolation** | ✅ Implemented | `from agentorchestrator.squad import IsolationLevel` |
 | **Middleware Suite** | ✅ Implemented | `from agentorchestrator.middleware import *` |
+| **Pydantic State** | ✅ Implemented | `from agentorchestrator import Context` |
+| **Event-Driven Workflows** | ✅ Implemented | `from agentorchestrator.core.event_bus import EventBus` |
 | **Financial Research** | ✅ Implemented | See examples/financial_research_agent.py |
 | **ReAct Pattern** | 🚧 Planned | Coming soon |
-| **Event-Driven Workflows** | 🚧 Planned | Coming soon |
 | **Tool Registry** | 🚧 Planned | Coming soon |
 | **Swarm** | 🚧 Planned | Coming soon |
 | **AgentNetwork** | 🚧 Planned | Coming soon |
@@ -66,7 +67,133 @@ print(result.content)
 
 ---
 
-## 2. Financial Deep Research Agent ✅
+## 2. Type-Safe State Management with Pydantic ✅
+
+**What it does**: Use Pydantic models for validated, type-safe workflow state with IDE autocomplete.
+
+**Full implementation**: [`examples/pydantic_state.py`](../examples/pydantic_state.py)
+
+### Basic Usage
+
+```python
+from pydantic import BaseModel, Field
+from agentorchestrator import AgentOrchestrator, Context
+from agentorchestrator.core.context import ChainContext
+
+class PipelineState(BaseModel):
+    counter: int = Field(default=0)
+    items: list[str] = Field(default_factory=list)
+    processed: bool = Field(default=False)
+
+ao = AgentOrchestrator()
+
+@ao.step(name="process", state_model=PipelineState)
+async def process(ctx: Context[PipelineState]):
+    # Type-safe access with IDE autocomplete!
+    async with ctx.edit_state() as state:
+        state.counter += 1  # ← IDE knows this is an int
+        state.items.append("new_item")  # ← IDE knows this is a list
+    
+    # Read-only access
+    count = ctx.state.counter  # ← Typed!
+    return {"count": count}
+
+# Create context with state model
+ctx = ChainContext("req_123", state_model=PipelineState)
+```
+
+### With Validation
+
+```python
+class ValidatedState(BaseModel):
+    progress: int = Field(default=0, ge=0, le=100)  # 0-100
+    email: str = Field(
+        default="user@example.com",
+        pattern=r"^[\w\.-]+@[\w\.-]+\.\w+$"
+    )
+
+ctx = ChainContext("req_1", state_model=ValidatedState)
+
+# Invalid updates raise ValidationError
+try:
+    async with ctx.edit_state() as state:
+        state.progress = 150  # Exceeds max!
+except ValidationError:
+    print("State unchanged due to validation")
+```
+
+**Benefits**:
+- ✅ IDE autocomplete and type hints
+- ✅ Automatic validation via Pydantic
+- ✅ Atomic updates with rollback on error
+- ✅ Thread-safe concurrent access
+
+**See also**: [Context Management Guide](CONTEXT_MANAGEMENT.md#0-type-safe-state-management-new)
+
+---
+
+## 3. Event-Driven Workflows ✅
+
+**What it does**: Event-driven execution with event handlers and pub/sub via EventBus (Redis or in-memory).
+
+**Full implementation**: [`examples/event_workflow.py`](../examples/event_workflow.py)  
+**Documentation**: [Event Workflows Guide](understanding/EVENT_WORKFLOWS.md)
+
+### Basic Usage
+
+```python
+from agentorchestrator import AgentOrchestrator
+from agentorchestrator.core.event_bus import Event
+from agentorchestrator.core.context import Context
+
+ao = AgentOrchestrator()
+
+# Define event handlers
+@ao.event_handler("ResearchTask")
+async def worker(ctx: Context, event: Event):
+    query = event.payload["query"]
+    finding = f"finding for {query}"
+    return Event(type="Finding", payload={"query": query, "text": finding})
+
+@ao.event_handler("Finding")
+async def collector(ctx: Context, event: Event):
+    print(f"Found: {event.payload}")
+    return None  # Terminal event
+
+# Run event loop
+async def main():
+    ctx = ChainContext("req_1")
+    
+    # Publish events
+    await ao.publish("ResearchTask", {"query": "AI trends"})
+    await ao.publish("ResearchTask", {"query": "ML models"})
+    
+    # Run until no more events
+    await ao.run_event_loop(ctx)
+```
+
+### With Redis Backend
+
+```python
+from agentorchestrator.core.event_bus import get_event_bus
+
+# Use Redis for distributed event bus
+bus = get_event_bus(backend="redis", redis_url="redis://localhost:6379")
+
+ao = AgentOrchestrator(event_bus=bus)
+# ... rest of the code same as above
+```
+
+**Features**:
+- ✅ Event handlers with `@ao.event_handler()`
+- ✅ Event pub/sub with `EventBus`
+- ✅ Redis or in-memory backend
+- ✅ Event loop with `ao.run_event_loop()`
+- ✅ Type-safe event payloads
+
+---
+
+## 4. Financial Deep Research Agent ✅
 
 **What it does**: Multi-stage research with Refinitiv news, SEC filings, and earnings analysis.
 

@@ -43,6 +43,9 @@ docs = [
     "mkdocs>=1.5.0",
     "mkdocs-material>=9.5.0",
 ]
+workflows = [
+    "redis>=5.0.0",
+]
 
 [project.scripts]
 ao = "agentorchestrator.cli:main"

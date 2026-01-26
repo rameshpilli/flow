@@ -762,6 +762,9 @@ def cmd_new_agent(args: argparse.Namespace) -> int:
     name = args.name
     output_dir = Path(args.output_dir or ".")
 
+    # Ensure target directory exists
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     # Create agent file
     agent_file = output_dir / f"{name.lower()}_agent.py"
 
@@ -842,6 +845,9 @@ def cmd_new_chain(args: argparse.Namespace) -> int:
     """Generate a new chain template."""
     name = args.name
     output_dir = Path(args.output_dir or ".")
+
+    # Ensure target directory exists
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Create chain file
     chain_file = output_dir / f"{name.lower()}_chain.py"

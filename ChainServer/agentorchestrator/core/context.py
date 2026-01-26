@@ -76,15 +76,17 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
 
 if TYPE_CHECKING:
     from agentorchestrator.core.serializers import ContextSerializer
+    from agentorchestrator.core.state import StateStore
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "ChainContext",
+    "Context",
     "ContextScope",
     "ContextEntry",
     "ContextManager",
@@ -93,6 +95,7 @@ __all__ = [
 ]
 
 T = TypeVar("T")
+StateModel = TypeVar("StateModel")
 
 # Context variable for tracking current step per async task
 # This is the async-safe equivalent of thread-local storage
@@ -498,7 +501,7 @@ class ExecutionSummary:
         return [r for r in self.step_results if r.success]
 
 
-class ChainContext:
+class ChainContext(Generic[StateModel]):
     """
     Manages shared state and data flow between chain steps.
 
@@ -590,6 +593,7 @@ class ChainContext:
         request_id: str,
         initial_data: dict[str, Any] | None = None,
         max_tokens: int = 100000,
+        state_model: type[StateModel] | None = None,
     ):
         """
         Initialize a new ChainContext.
@@ -601,12 +605,24 @@ class ChainContext:
                 the context with. All keys are stored with CHAIN scope.
             max_tokens (int): Maximum token budget for LLM context management.
                 Default: 100000. Used for tracking context size.
+            state_model (type[StateModel] | None): Optional Pydantic model
+                for type-safe state management. If provided, enables
+                ctx.state and ctx.edit_state() for typed access.
 
         Example:
             >>> ctx = ChainContext(
             ...     request_id="req_abc123",
             ...     initial_data={"company": "Apple", "year": 2024},
             ...     max_tokens=50000,
+            ... )
+            >>>
+            >>> # With Pydantic state model
+            >>> from pydantic import BaseModel
+            >>> class MyState(BaseModel):
+            ...     counter: int = 0
+            >>> ctx = ChainContext(
+            ...     request_id="req_123",
+            ...     state_model=MyState,
             ... )
         """
         self.request_id = request_id
@@ -618,6 +634,18 @@ class ChainContext:
         self._sync_lock = __import__("threading").RLock()  # For sync access
         self.created_at = datetime.utcnow()
         self.metadata: dict[str, Any] = {}
+        
+        # Type-safe state management (optional)
+        self._state_store: "StateStore[StateModel] | None" = None
+        if state_model is not None:
+            try:
+                from agentorchestrator.core.state import StateStore
+                self._state_store = StateStore(state_model)
+            except ImportError:
+                logger.warning(
+                    "Pydantic state model requested but pydantic not installed. "
+                    "Install with: pip install pydantic"
+                )
 
         # Initialize with any provided data
         if initial_data:
@@ -691,6 +719,37 @@ class ChainContext:
         """
         with self._sync_lock:
             return self._results[-1] if self._results else None
+    
+    @property
+    def state(self) -> StateModel:
+        """
+        Get type-safe state (read-only).
+        
+        Only available if context was created with state_model parameter.
+        For modifications, use edit_state() context manager.
+        
+        Returns:
+            StateModel: Current state instance with type hints.
+        
+        Raises:
+            RuntimeError: If context was not created with a state_model.
+        
+        Example:
+            >>> from pydantic import BaseModel
+            >>> class MyState(BaseModel):
+            ...     counter: int = 0
+            >>> ctx = ChainContext("req_1", state_model=MyState)
+            >>> count = ctx.state.counter  # Type-safe access!
+        
+        See Also:
+            edit_state(): For atomic state modifications.
+        """
+        if self._state_store is None:
+            raise RuntimeError(
+                "Context was not created with a state_model. "
+                "Create context with state_model parameter to use typed state."
+            )
+        return self._state_store.state
 
     def set(
         self,
@@ -1102,6 +1161,53 @@ class ChainContext:
             yield self
         finally:
             self.exit_step(token)
+    
+    @asynccontextmanager
+    async def edit_state(self) -> AsyncIterator[StateModel]:
+        """
+        Async context manager for atomic state updates.
+        
+        Provides type-safe, atomic modifications to the Pydantic state model.
+        Changes are validated and committed atomically on exit.
+        
+        Only available if context was created with state_model parameter.
+        
+        Yields:
+            StateModel: Mutable state for modification with type hints.
+        
+        Raises:
+            RuntimeError: If context was not created with a state_model.
+            ValidationError: If modified state fails Pydantic validation.
+        
+        Example:
+            >>> from pydantic import BaseModel, Field
+            >>> class PipelineState(BaseModel):
+            ...     counter: int = 0
+            ...     items: list[str] = Field(default_factory=list)
+            >>>
+            >>> ctx = ChainContext("req_1", state_model=PipelineState)
+            >>>
+            >>> async with ctx.edit_state() as state:
+            ...     state.counter += 1  # Type-checked!
+            ...     state.items.append("new_item")  # IDE autocomplete!
+            ...     # Validated and committed atomically on exit
+        
+        Thread-safety:
+            Uses asyncio.Lock to ensure only one edit at a time.
+            Multiple concurrent edits will be serialized.
+        
+        See Also:
+            state: Read-only state access.
+            StateStore: Underlying state management.
+        """
+        if self._state_store is None:
+            raise RuntimeError(
+                "Context was not created with a state_model. "
+                "Create context with state_model parameter to use typed state."
+            )
+        
+        async with self._state_store.edit() as state:
+            yield state
 
     def to_dict(
         self,
@@ -1344,7 +1450,12 @@ class ChainContext:
 
     def __repr__(self) -> str:
         """Return string representation of the context."""
-        return f"ChainContext(request_id={self.request_id}, keys={len(self._store)}, results={len(self._results)})"
+        state_info = f", state={type(self._state_store.state).__name__}" if self._state_store else ""
+        return f"ChainContext(request_id={self.request_id}, keys={len(self._store)}, results={len(self._results)}{state_info})"
+
+
+# Type alias for better ergonomics
+Context = ChainContext
 
 
 class ContextManager:

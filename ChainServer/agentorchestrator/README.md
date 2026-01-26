@@ -13,12 +13,15 @@ AgentOrchestrator is a lightweight, decorator-driven framework for building data
 | **Decorator-Based Pipelines** | Simple `@ao.step()`, `@ao.chain()`, `@ao.agent()` decorators for intuitive pipeline definition |
 | **DAG Execution Engine** | Automatic dependency resolution with parallel execution for optimal performance |
 | **Multi-Agent Patterns** | Squad, Supervisor, FunctionAgent with handoffs, and intent-based routing |
+| **Type-Safe State Management** | Pydantic models for validated, type-safe workflow state with IDE autocomplete |
 | **LLM Gateway Integration** | OAuth-enabled LLM client for corporate environments with structured output support |
 | **Memory & Storage** | InMemory, Redis, and Mem0 semantic memory for conversation persistence |
 | **Middleware Stack** | Pluggable logging, caching, summarization, rate limiting, and circuit breakers |
 | **Resilience Patterns** | Retry with backoff, circuit breakers, timeouts, and fail-fast cancellation |
 | **Observability** | Structured logging, OpenTelemetry tracing, and metrics collection |
 | **CLI Tools** | Run, validate, visualize, and debug chains from command line |
+| **Event-Driven Workflows** | Event bus (Redis-backed or in-memory), event handlers, streaming step/agent/tool events |
+| **Declarative DSL (Preview)** | Build pipelines via a fluent builder instead of decorators; register steps, chains, and events together |
 
 ---
 
@@ -68,6 +71,9 @@ pip install -e ".[all]"
 
 # With specific extras
 pip install -e ".[redis,langchain]"
+
+# Event-driven workflows (Redis-backed bus, falls back to memory)
+pip install -e ".[workflows]"
 ```
 
 **Requirements**: Python 3.10+
@@ -124,6 +130,43 @@ class DataPipeline:
 result = asyncio.run(ao.launch("data_pipeline", {}))
 # {"sum": 30, "count": 5, ...}
 ```
+
+### Type-Safe State with Pydantic
+
+Use Pydantic models for validated, type-safe workflow state:
+
+```python
+from pydantic import BaseModel, Field
+from agentorchestrator import AgentOrchestrator, Context
+
+class PipelineState(BaseModel):
+    counter: int = Field(default=0)
+    items: list[str] = Field(default_factory=list)
+    processed: bool = Field(default=False)
+
+ao = AgentOrchestrator()
+
+@ao.step(name="process", state_model=PipelineState)
+async def process(ctx: Context[PipelineState]):
+    # Type-safe access with IDE autocomplete!
+    async with ctx.edit_state() as state:
+        state.counter += 1  # ← IDE knows this is an int
+        state.items.append("new_item")  # ← IDE knows this is a list
+    
+    # Read-only access
+    count = ctx.state.counter  # ← Typed!
+    return {"count": count}
+
+# Create context with state model
+from agentorchestrator.core.context import ChainContext
+ctx = ChainContext("req_123", state_model=PipelineState)
+```
+
+**Benefits**:
+- ✅ IDE autocomplete and type hints
+- ✅ Automatic validation via Pydantic
+- ✅ Atomic updates via context manager
+- ✅ Thread-safe concurrent access
 
 ### Parallel Execution
 

@@ -600,15 +600,20 @@ class LLMGatewayClient:
         if not token:
             raise RuntimeError("No authentication token available")
 
+        # Allow per-call overrides while keeping client defaults
+        model = kwargs.pop("model", self.model_name)
+        temperature = kwargs.pop("temperature", self.temperature)
+        max_tokens = kwargs.get("max_tokens", self.max_tokens)
+
         payload = {
-            "model": self.model_name,
+            "model": model,
             "messages": messages,
-            "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+            "max_tokens": max_tokens,
         }
 
         # Add temperature if supported
-        if self.temperature is not None:
-            payload["temperature"] = self.temperature
+        if temperature is not None:
+            payload["temperature"] = temperature
 
         # Add any additional parameters
         for key in ["tools", "tool_choice", "response_format"]:

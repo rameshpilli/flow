@@ -72,11 +72,14 @@ See Also:
 
 import asyncio
 import logging
+import time
+import uuid
 from collections.abc import Callable
 from typing import Any, TypeVar
 
 from agentorchestrator.core.context import ChainContext, ContextManager, ContextScope
 from agentorchestrator.core.dag import ChainRunner, DAGExecutor, DebugCallback
+from agentorchestrator.core.event_bus import Event, EventBus, get_event_bus
 from agentorchestrator.core.registry import (
     AgentRegistry,
     ChainRegistry,
@@ -263,6 +266,7 @@ class AgentOrchestrator:
         # Resumability support
         run_store: RunStore | None = None,
         checkpoint_dir: str | None = None,
+        event_bus: EventBus | None = None,
     ):
         """
         Initialize an AgentOrchestrator instance.
@@ -341,10 +345,15 @@ class AgentOrchestrator:
             self._step_registry = get_step_registry()
             self._chain_registry = get_chain_registry()
 
+        # Event bus (Redis-backed if available, otherwise in-memory)
+        self._event_bus = event_bus or get_event_bus(prefer_redis=True)
+        self._event_handlers: dict[str, list[Any]] = {}
+
         # Executor & Runner
         self._executor = DAGExecutor(
             max_parallel=max_parallel,
             default_timeout_ms=default_timeout_ms,
+            event_bus=self._event_bus,
         )
         # Pass registries to executor for proper isolation
         self._executor.builder.step_registry = self._step_registry
@@ -592,6 +601,7 @@ class AgentOrchestrator:
         output_model: type | None = None,
         input_key: str | None = None,
         validate_output: bool = True,
+        state_model: type | None = None,
     ) -> F | Callable[[F], F]:
         """
         Register a chain step (similar to Dagster's @asset).
@@ -723,6 +733,7 @@ class AgentOrchestrator:
             func._fg_resources = resources or []
             func._fg_input_model = input_model
             func._fg_output_model = output_model
+            func._fg_state_model = state_model
             return func
 
         if func is not None:
@@ -1001,6 +1012,116 @@ class AgentOrchestrator:
                 spec.produces = produces
 
         return wrapper_name
+
+    # ══════════════════════════════════════════════════════════════════
+    #                         EVENT HANDLERS
+    # ══════════════════════════════════════════════════════════════════
+
+    def event_handler(
+        self,
+        events: str | list[str],
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """
+        Decorator to register an event handler for one or more event types.
+
+        Handler signature:
+            async def handler(ctx: ChainContext, event: Event) -> Event | list[Event] | None
+        """
+
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            event_list = [events] if isinstance(events, str) else list(events)
+            for event_type in event_list:
+                self._event_handlers.setdefault(event_type, []).append(func)
+            return func
+
+        return decorator
+
+    async def emit_event(self, event: Event) -> None:
+        """Publish a single event to the configured event bus."""
+        if event.run_id is None:
+            event.run_id = f"evt_{uuid.uuid4().hex[:8]}"
+        await self._event_bus.publish(event)
+
+    async def _dispatch_event(self, event: Event, ctx: ChainContext) -> None:
+        """Invoke handlers for an incoming event and publish any emitted events."""
+        handlers = self._event_handlers.get(event.type, [])
+        for handler in handlers:
+            result = handler(ctx, event)
+            if asyncio.iscoroutine(result):
+                result = await result
+            if result:
+                events = result if isinstance(result, list) else [result]
+                for ev in events:
+                    if isinstance(ev, Event):
+                        if ev.run_id is None:
+                            ev.run_id = event.run_id
+                        await self._event_bus.publish(ev)
+
+    async def run_event_loop(
+        self,
+        seed_events: list[Event] | None = None,
+        *,
+        max_events: int = 100,
+        timeout_s: float = 30.0,
+        run_id: str | None = None,
+        stop_when: Callable[[Event, ChainContext], bool] | None = None,
+        min_events: int = 0,
+    ) -> dict[str, Any]:
+        """
+        Minimal event-driven runner. Publishes seed events and processes inbound
+        events with registered handlers until:
+        - stop_when returns True, or
+        - processed >= max_events, or
+        - timeout reached.
+        """
+        run_id = run_id or f"event_{uuid.uuid4().hex[:8]}"
+        ctx = ChainContext(request_id=run_id)
+
+        sub = self._event_bus.subscribe()
+
+        # Publish seeds
+        if seed_events:
+            for ev in seed_events:
+                if ev.run_id is None:
+                    ev.run_id = run_id
+                await self._event_bus.publish(ev)
+
+        processed = 0
+        start = time.time()
+
+        try:
+            while processed < max_events:
+                remaining = timeout_s - (time.time() - start)
+                if remaining <= 0:
+                    break
+                try:
+                    event = await asyncio.wait_for(sub.__anext__(), timeout=remaining)
+                except (asyncio.TimeoutError, StopAsyncIteration):
+                    break
+
+                processed += 1
+                await self._dispatch_event(event, ctx)
+
+                if stop_when and processed >= min_events:
+                    try:
+                        if stop_when(event, ctx):
+                            break
+                    except Exception:
+                        # ignore predicate errors; keep running
+                        pass
+        finally:
+            if hasattr(sub, "aclose"):
+                try:
+                    await sub.aclose()
+                except Exception:
+                    pass
+
+        return {
+            "run_id": run_id,
+            "processed": processed,
+            "handlers": {k: len(v) for k, v in self._event_handlers.items()},
+            "duration_ms": (time.time() - start) * 1000,
+        }
 
     # ══════════════════════════════════════════════════════════════════
     #                    PROGRAMMATIC REGISTRATION
@@ -2171,6 +2292,7 @@ class AgentOrchestrator:
         self,
         request_id: str,
         data: dict[str, Any] | None = None,
+        state_model: type | None = None,
     ) -> ChainContext:
         """
         Create a new chain context.
@@ -2178,14 +2300,23 @@ class AgentOrchestrator:
         Args:
             request_id (str): Unique request identifier.
             data (dict[str, Any] | None): Initial context data.
+            state_model (type | None): Optional Pydantic model for type-safe state.
 
         Returns:
             ChainContext: The new context.
 
         Example:
             >>> ctx = ao.create_context("req_123", {"query": "Apple"})
+            >>>
+            >>> # With type-safe state
+            >>> from pydantic import BaseModel
+            >>> class MyState(BaseModel):
+            ...     counter: int = 0
+            >>> ctx = ao.create_context("req_123", state_model=MyState)
         """
-        return self._context_manager.create_context(request_id, data)
+        ctx = ChainContext(request_id=request_id, initial_data=data, state_model=state_model)
+        self._context_manager._contexts[request_id] = ctx
+        return ctx
 
     def get_context(self, request_id: str) -> ChainContext | None:
         """
