@@ -14,6 +14,30 @@ from agentorchestrator.core.context_store import (
 )
 from agentorchestrator.core.dag import DAGExecutor
 from agentorchestrator.core.decorators import agent, chain, middleware, step
+from agentorchestrator.core.exceptions import (
+    AgentError,
+    AgentExecutionError,
+    AgentHandoffError,
+    AgentNotFoundError,
+    AgentOrchestratorError,
+    ChainExecutionError,
+    ChainNotFoundError,
+    CircularDependencyError,
+    ConfigurationError,
+    EventError,
+    EventPublishError,
+    ExecutionError,
+    MaxIterationsExceededError,
+    MaxRetriesExceededError,
+    ResourceError,
+    ResourceInitializationError,
+    ResourceNotFoundError,
+    ServiceUnavailableError,
+    StepExecutionError,
+    StepNotFoundError,
+    StepTimeoutError,
+    ValidationError,
+)
 from agentorchestrator.core.orchestrator import AgentOrchestrator
 from agentorchestrator.core.registry import AgentRegistry, ChainRegistry, StepRegistry
 from agentorchestrator.core.resources import (
@@ -44,6 +68,15 @@ from agentorchestrator.core.serializers import (
     create_summary_serializer,
 )
 from agentorchestrator.core.validation import ContractValidationError
+from agentorchestrator.core.constants import (
+    AgentCapability,
+    ContextScope,
+    ErrorHandling,
+    MergeMode,
+    ResourceScope as ResourceScopeEnum,  # Alias to avoid conflict
+    RunStatus,
+    StorageBackend,
+)
 
 __all__ = [
     "AgentOrchestrator",
@@ -92,4 +125,34 @@ __all__ = [
     "create_summary_serializer",
     # Validation
     "ContractValidationError",
+    # Exceptions
+    "AgentOrchestratorError",
+    "ConfigurationError",
+    "ChainNotFoundError",
+    "StepNotFoundError",
+    "AgentNotFoundError",
+    "ResourceNotFoundError",
+    "CircularDependencyError",
+    "ExecutionError",
+    "StepExecutionError",
+    "StepTimeoutError",
+    "ChainExecutionError",
+    "MaxRetriesExceededError",
+    "ValidationError",
+    "ResourceError",
+    "ResourceInitializationError",
+    "ServiceUnavailableError",
+    "AgentError",
+    "AgentExecutionError",
+    "AgentHandoffError",
+    "MaxIterationsExceededError",
+    "EventError",
+    "EventPublishError",
+    # Constants and Enums
+    "ErrorHandling",
+    "MergeMode",
+    "StorageBackend",
+    "ContextScope",
+    "RunStatus",
+    "AgentCapability",
 ]

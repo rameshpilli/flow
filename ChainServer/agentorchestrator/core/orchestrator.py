@@ -965,15 +965,22 @@ class AgentOrchestrator:
                 
                 else:  # "safe" mode (default)
                     # Only merge new keys, never overwrite
+                    skipped_keys = []
                     for key, value in subchain_ctx_data.items():
                         target_key = _merge_map.get(key, key) if _merge_map else key
                         if target_key not in parent_keys:
                             ctx.set(target_key, value, scope=ContextScope.CHAIN)
                         else:
-                            logger.debug(
-                                f"Subchain '{subchain_name}' skipped overwriting "
-                                f"parent key: {target_key}"
-                            )
+                            skipped_keys.append(target_key)
+                    
+                    # Log at warning level when data is being skipped - this could indicate
+                    # a configuration issue that users should be aware of
+                    if skipped_keys:
+                        logger.warning(
+                            f"Subchain '{subchain_name}' skipped overwriting parent keys: "
+                            f"{skipped_keys}. Use merge_mode='all' to overwrite or "
+                            f"merge_map to rename keys."
+                        )
 
             if not result.get("success"):
                 error_info = result.get("error", {})
@@ -1197,9 +1204,7 @@ class AgentOrchestrator:
         events_since_checkpoint = 0
         processed_event_types: list[str] = []
 
-        sub = self._event_bus.subscribe()
-
-        # Publish seeds
+        # Publish seeds before subscribing
         if seed_events:
             for ev in seed_events:
                 if ev.run_id is None:
@@ -1210,6 +1215,8 @@ class AgentOrchestrator:
         skipped = 0
         start = time.time()
 
+        # Use async context manager for proper subscription cleanup
+        sub = await self._event_bus.subscribe()
         try:
             while processed < max_events:
                 remaining = timeout_s - (time.time() - start)
@@ -1218,6 +1225,9 @@ class AgentOrchestrator:
                 try:
                     event = await asyncio.wait_for(sub.__anext__(), timeout=remaining)
                 except (asyncio.TimeoutError, StopAsyncIteration):
+                    break
+                except asyncio.CancelledError:
+                    logger.debug(f"Event loop cancelled for run_id={run_id}")
                     break
 
                 # Run isolation: skip events from other runs on shared bus
@@ -1257,11 +1267,8 @@ class AgentOrchestrator:
                         # ignore predicate errors; keep running
                         pass
         finally:
-            if hasattr(sub, "aclose"):
-                try:
-                    await sub.aclose()
-                except Exception:
-                    pass
+            # Always close subscription to prevent leaks
+            await sub.aclose()
             
             # Final checkpoint on completion
             if run_store:
@@ -2588,9 +2595,9 @@ class AgentOrchestrator:
             >>> removed = ao.cleanup_old_contexts(max_age_seconds=1800)
             >>> logger.info(f"Cleaned up {removed} old contexts")
         """
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
         
-        cutoff = datetime.utcnow() - timedelta(seconds=max_age_seconds)
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)
         removed = 0
         
         # Get list of keys to avoid modifying dict during iteration
@@ -2598,14 +2605,89 @@ class AgentOrchestrator:
         
         for request_id in context_ids:
             ctx = self._context_manager._contexts.get(request_id)
-            if ctx and ctx.created_at < cutoff:
-                self._context_manager.remove_context(request_id)
-                removed += 1
+            if ctx:
+                # Get created_at, ensure it's timezone-aware for comparison
+                created_at = ctx.created_at
+                if created_at.tzinfo is None:
+                    # Assume UTC if naive
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+                if created_at < cutoff:
+                    self._context_manager.remove_context(request_id)
+                    removed += 1
         
         if removed > 0:
             logger.info(f"Cleaned up {removed} old contexts (older than {max_age_seconds}s)")
         
         return removed
+
+    async def start_auto_cleanup(
+        self,
+        interval_seconds: float = 300,
+        max_age_seconds: float = 3600,
+    ) -> asyncio.Task:
+        """
+        Start a background task that periodically cleans up old contexts.
+        
+        This prevents memory leaks in long-running processes by automatically
+        removing contexts older than max_age_seconds every interval_seconds.
+        
+        Args:
+            interval_seconds (float): How often to run cleanup. Default: 300 (5 min).
+            max_age_seconds (float): Maximum context age. Default: 3600 (1 hour).
+            
+        Returns:
+            asyncio.Task: The background cleanup task. Cancel it to stop cleanup.
+            
+        Example:
+            >>> # Start auto cleanup
+            >>> cleanup_task = await ao.start_auto_cleanup(
+            ...     interval_seconds=60,  # Every minute
+            ...     max_age_seconds=1800,  # Remove contexts older than 30 min
+            ... )
+            >>>
+            >>> # Later, stop the cleanup
+            >>> cleanup_task.cancel()
+            
+        Note:
+            The task runs indefinitely until cancelled. Store the returned task
+            if you need to cancel it later (e.g., during shutdown).
+        """
+        async def _cleanup_loop():
+            while True:
+                try:
+                    await asyncio.sleep(interval_seconds)
+                    self.cleanup_old_contexts(max_age_seconds)
+                except asyncio.CancelledError:
+                    logger.debug("Auto context cleanup task cancelled")
+                    break
+                except Exception as e:
+                    logger.warning(f"Error in auto context cleanup: {e}")
+                    # Continue running despite errors
+        
+        task = asyncio.create_task(_cleanup_loop())
+        self._cleanup_task = task  # Store reference
+        logger.info(
+            f"Started auto context cleanup (interval={interval_seconds}s, "
+            f"max_age={max_age_seconds}s)"
+        )
+        return task
+
+    def stop_auto_cleanup(self) -> bool:
+        """
+        Stop the background context cleanup task.
+        
+        Returns:
+            bool: True if task was running and stopped, False otherwise.
+            
+        Example:
+            >>> ao.stop_auto_cleanup()
+        """
+        if hasattr(self, "_cleanup_task") and self._cleanup_task:
+            self._cleanup_task.cancel()
+            self._cleanup_task = None
+            logger.info("Stopped auto context cleanup")
+            return True
+        return False
 
     # ══════════════════════════════════════════════════════════════════
     #                         UTILITIES

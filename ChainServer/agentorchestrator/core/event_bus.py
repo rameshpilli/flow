@@ -87,6 +87,59 @@ class EventBus:
 # =============================================================================
 
 
+class EventSubscription:
+    """
+    Async context manager for event subscriptions.
+    
+    Ensures proper cleanup of subscriptions even if errors occur.
+    
+    Usage:
+        async with bus.subscribe() as sub:
+            async for event in sub:
+                process(event)
+    """
+    
+    def __init__(
+        self,
+        bus: "InMemoryEventBus",
+        queue: asyncio.Queue,
+        filters: set[str] | None,
+    ):
+        self._bus = bus
+        self._queue = queue
+        self._filters = filters
+        self._closed = False
+    
+    async def __aenter__(self) -> "EventSubscription":
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        await self.aclose()
+    
+    def __aiter__(self) -> "EventSubscription":
+        return self
+    
+    async def __anext__(self) -> Event:
+        if self._closed:
+            raise StopAsyncIteration
+        try:
+            event = await self._queue.get()
+            return event
+        except asyncio.CancelledError:
+            self._closed = True
+            raise StopAsyncIteration
+    
+    async def aclose(self) -> None:
+        """Explicitly close the subscription and clean up."""
+        if self._closed:
+            return
+        self._closed = True
+        async with self._bus._lock:
+            self._bus._subscribers = [
+                (q, f) for (q, f) in self._bus._subscribers if q is not self._queue
+            ]
+
+
 class InMemoryEventBus(EventBus):
     """Process-local pub/sub using asyncio queues."""
 
@@ -110,21 +163,40 @@ class InMemoryEventBus(EventBus):
 
     async def subscribe(
         self, event_types: Optional[Sequence[str]] = None
-    ) -> AsyncIterator[Event]:
+    ) -> EventSubscription:
+        """
+        Subscribe to events with proper cleanup via async context manager.
+        
+        Returns an EventSubscription that can be used as an async iterator
+        and supports proper cleanup via aclose() or async with.
+        
+        Usage:
+            # As async context manager (recommended)
+            async with bus.subscribe() as sub:
+                async for event in sub:
+                    process(event)
+            
+            # Manual cleanup
+            sub = await bus.subscribe()
+            try:
+                async for event in sub:
+                    process(event)
+            finally:
+                await sub.aclose()
+        
+        Args:
+            event_types: Optional list of event types to filter for.
+                         If None, receives all events.
+        
+        Returns:
+            EventSubscription: Async iterator with proper cleanup support.
+        """
         filters = set(event_types) if event_types else None
         queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=self._max_queue_size)
         async with self._lock:
             self._subscribers.append((queue, filters))
-
-        try:
-            while True:
-                event = await queue.get()
-                yield event
-        finally:
-            async with self._lock:
-                self._subscribers = [
-                    (q, f) for (q, f) in self._subscribers if q is not queue
-                ]
+        
+        return EventSubscription(self, queue, filters)
 
     async def close(self) -> None:
         async with self._lock:
@@ -246,6 +318,7 @@ def get_event_bus(
 __all__ = [
     "Event",
     "EventBus",
+    "EventSubscription",
     "InMemoryEventBus",
     "RedisEventBus",
     "get_event_bus",

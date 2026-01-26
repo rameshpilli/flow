@@ -68,6 +68,21 @@ from agentorchestrator.utils.tracing import (
     trace_span,
 )
 
+# Pydantic v1/v2 compatibility
+from agentorchestrator.utils.compat import (
+    PYDANTIC_V1,
+    PYDANTIC_V2,
+    PYDANTIC_VERSION,
+    get_field_default,
+    get_model_fields,
+    is_pydantic_model,
+    model_copy,
+    model_dump,
+    model_json,
+    model_json_schema,
+    validate_model,
+)
+
 __all__ = [
     # Timing
     "timed",
@@ -122,4 +137,16 @@ __all__ = [
     # Caching
     "timed_lru_cache",
     "async_timed_lru_cache",
+    # Pydantic v1/v2 compatibility
+    "PYDANTIC_VERSION",
+    "PYDANTIC_V1",
+    "PYDANTIC_V2",
+    "validate_model",
+    "model_dump",
+    "model_json",
+    "model_json_schema",
+    "model_copy",
+    "get_model_fields",
+    "get_field_default",
+    "is_pydantic_model",
 ]

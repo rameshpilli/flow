@@ -168,7 +168,10 @@ Middleware wraps step execution: `before()` → step → `after()` / `on_error()
 ### Near-Term (High Priority)
 | Feature | Why It Matters |
 |---------|----------------|
-| **Developer Docs Overhaul** | LlamaIndex-quality docs for 100+ user adoption |
+| **Human-in-the-Loop Workflows** | Production approval workflows, Slack integration |
+| **Memory Pattern Strategies** | Sliding window, summary, entity extraction for chat |
+| **Workflow Debugger UI** | Visual debugging, breakpoints, real-time events |
+| **Test Coverage Expansion** | Tests for EventBus, ReAct, Reflection components |
 
 ### Recently Implemented
 | Feature | Location | Notes |
@@ -267,31 +270,38 @@ bd close <id>
 bd sync               # Sync with git
 ```
 
-### Priority 1 - Core Agent Capabilities
-- `flow-4l4` - **Deep Research Agent Pattern** (new)
-- `flow-5t6` - **Agent Handoff Protocol** (new)
-- `flow-9hm` - Human-in-the-Loop Workflows (partial)
-- `flow-c3z` - Developer Documentation Overhaul (epic)
+### Priority 1 - Core Enhancements
+- `flow-9hm` - **Human-in-the-Loop Workflows** (partial) - Need `@ao.approval_step()` decorator
+- `flow-01k` - **Conversation Memory Patterns** - Need sliding window, summary strategies
+- `flow-hwk` - **Workflow Debugger UI** (partial) - Need web UI, breakpoints
 
-### Priority 2 - Enhanced Patterns
-- `flow-mly` - **ReAct Agent Pattern** (new)
-- `flow-2u5` - **Event-Driven Step Execution** (new)
-- `flow-yp7` - **Tool Hub / Registry** (new)
-- `flow-01k` - **Conversation Memory Patterns** (new)
-- `flow-p7y` - Tool Result Streaming (partial)
-- `flow-954` - Agent Reflection/Self-Critique (partial)
+### Priority 2 - Production Hardening
+- Test coverage for new features (EventBus, ReAct, Reflection)
+- Distributed execution support
+- Plugin system via entry_points
 
-### Priority 3
-- `flow-hwk` - Workflow Debugger UI (partial)
+### Priority 3 - Nice to Have
+- Prometheus/StatsD metrics export
+- Schema registry for multi-agent systems
 
-### Recently Closed (Already Implemented)
-- **Pydantic State Management** - Type-safe workflow state with validation ✓
-- **Event-Driven Workflows** - Event bus, handlers, pub/sub ✓
-- **Declarative DSL** - Pipeline builder without decorators ✓
-- `flow-znf` - Long-term Memory/Vector Stores ✓
-- `flow-8gn` - OpenTelemetry Integration ✓
-- `flow-8ey` - Structured Tool Definitions ✓
-- `flow-b1u` - Pre-built Agent Templates ✓
+### Recently Implemented ✓
+| Feature | Location | Status |
+|---------|----------|--------|
+| **Deep Research Agent** | `examples/deep_research_agent.py` | ✓ Complete |
+| **Agent Handoff Protocol** | `squad/orchestrator.py` | ✓ Complete |
+| **ReAct Agent Pattern** | `agents/react.py` | ✓ Complete |
+| **Event-Driven Workflows** | `core/event_bus.py`, `core/orchestrator.py` | ✓ Complete |
+| **Tool Hub / Registry** | `agents/tools.py` | ✓ Complete |
+| **Agent Reflection** | `middleware/reflection.py` | ✓ Complete |
+| **Pydantic State Management** | `core/state.py`, `core/context.py` | ✓ Complete |
+| **Declarative DSL** | `dsl/pipeline.py` | ✓ Complete |
+| **Long-term Memory/Vector** | `services/vector_store.py`, `services/mem0.py` | ✓ Complete |
+| **OpenTelemetry Integration** | `utils/tracing.py` | ✓ Complete |
+| **Structured Tool Definitions** | `plugins/capability.py`, `squad/types.py` | ✓ Complete |
+| **Pre-built Agent Templates** | `templates/scaffolding.py` | ✓ Complete |
+| **Exception Hierarchy** | `core/exceptions.py` | ✓ Complete |
+| **Pydantic v1/v2 Compat** | `utils/compat.py` | ✓ Complete |
+| **Constants/Enums** | `core/constants.py` | ✓ Complete |
 
 ---
 

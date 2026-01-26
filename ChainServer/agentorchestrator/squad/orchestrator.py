@@ -426,9 +426,13 @@ class MultiAgentOrchestrator:
 
             # If we exceeded max handoffs
             logger.warning(f"Exceeded maximum handoffs ({max_handoffs}) for session {session_id}")
+            # classifier_result may be None if we got here without ever having a valid result
+            safe_classifier_result = classifier_result if classifier_result else ClassifierResult(
+                selected_agent=None, confidence=0.0
+            )
             return AgentResponse(
                 metadata=self._create_metadata(
-                    classifier_result, current_input, user_id, session_id, additional_params
+                    safe_classifier_result, current_input, user_id, session_id, additional_params
                 ),
                 output=ConversationMessage(
                     role=ParticipantRole.ASSISTANT.value,

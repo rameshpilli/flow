@@ -453,6 +453,25 @@ class DAGExecutor:
                     # Check if any step requested a DAG rebuild
                     if ctx.get("__dag_needs_rebuild__"):
                         ctx.delete("__dag_needs_rebuild__")
+                        
+                        # ══════════════════════════════════════════════════════════════
+                        # PERFORMANCE NOTE: Full DAG Rebuild
+                        # ══════════════════════════════════════════════════════════════
+                        # Currently, we rebuild the entire DAG when dynamic steps are
+                        # injected. For large DAGs (100+ steps), this can be expensive.
+                        #
+                        # OPTIMIZATION OPPORTUNITY: Implement incremental DAG updates
+                        # that only modify affected portions of the execution plan:
+                        #
+                        # 1. Track which nodes need recalculation based on new deps
+                        # 2. Only recompute execution_order for affected subgraph
+                        # 3. Use a dirty flag to avoid unnecessary rebuilds
+                        # 4. Consider lazy rebuilding (defer until next group)
+                        #
+                        # For typical use cases (<50 steps), the current implementation
+                        # is fast enough (~1-5ms rebuild time).
+                        # ══════════════════════════════════════════════════════════════
+                        
                         # Rebuild plan and execution order, preserving existing node states
                         plan = self.builder.build(chain_name, existing_nodes=plan.nodes)
                         # We stay at same group_idx but group content changed

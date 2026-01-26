@@ -38,15 +38,23 @@ langchain = [
     "langchain-text-splitters>=0.0.1",
     "tiktoken>=0.5.0",
 ]
+secrets = [
+    "hvac>=1.0.0",  # HashiCorp Vault client
+]
+memory = [
+    "mem0ai>=0.1.0",  # Mem0 semantic memory
+]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.1.0",
     "ruff>=0.1.0",
+    "mypy>=1.0.0",
 ]
 docs = [
     "mkdocs>=1.5.0",
     "mkdocs-material>=9.5.0",
+    "mkdocs-minify-plugin>=0.7.0",
 ]
 workflows = [
     "redis>=5.0.0",
@@ -68,7 +76,9 @@ ao = "agentorchestrator.cli:main"
 agentorchestrator = "agentorchestrator.cli:main"
 
 [project.urls]
-Repository = "https://github.com/your-org/agentorchestrator"
+# TODO: Update with actual repository URL before publishing
+Repository = "https://github.com/agentorchestrator/agentorchestrator"
+Documentation = "https://agentorchestrator.github.io/docs/"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agentorchestrator"]

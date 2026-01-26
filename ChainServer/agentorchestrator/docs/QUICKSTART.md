@@ -218,6 +218,134 @@ for mem in results:
     print(mem.content)
 ```
 
+## Type-Safe State with Pydantic
+
+Use Pydantic models for validated, type-safe state management:
+
+```python
+from pydantic import BaseModel, Field
+from agentorchestrator import AgentOrchestrator, Context
+
+class PipelineState(BaseModel):
+    """Type-safe state for the pipeline."""
+    counter: int = Field(default=0)
+    items: list[str] = Field(default_factory=list)
+    status: str = "pending"
+
+ao = AgentOrchestrator(name="typed_app")
+
+@ao.step(name="process", state_model=PipelineState)
+async def process(ctx: Context[PipelineState]):
+    # Type-safe with IDE autocomplete!
+    async with ctx.edit_state() as state:
+        state.counter += 1
+        state.items.append("processed")
+        state.status = "complete"
+    
+    return {"count": ctx.state.counter}
+
+@ao.chain(name="typed_pipeline")
+class TypedPipeline:
+    steps = ["process"]
+```
+
+## Event-Driven Workflows
+
+Build reactive workflows with the event bus:
+
+```python
+from agentorchestrator import AgentOrchestrator
+from agentorchestrator.core.event_bus import Event
+
+ao = AgentOrchestrator(name="event_app")
+
+# Define event handlers
+@ao.event_handler("TaskCreated")
+async def handle_task(ctx, event: Event):
+    task_id = event.payload.get("task_id")
+    # Process the task...
+    return Event(type="TaskCompleted", payload={"task_id": task_id})
+
+@ao.event_handler("TaskCompleted")
+async def handle_completion(ctx, event: Event):
+    print(f"Task {event.payload['task_id']} completed!")
+
+# Run the event loop
+async def main():
+    result = await ao.run_event_loop(
+        seed_events=[
+            Event(type="TaskCreated", payload={"task_id": "task-001"})
+        ],
+        stop_when=lambda e, ctx: e.type == "TaskCompleted",
+        timeout_s=30.0,
+    )
+    print(f"Processed {result['processed']} events")
+
+asyncio.run(main())
+```
+
+## ReAct Agent Pattern
+
+Build reasoning agents with the ReAct (Reasoning + Acting) pattern:
+
+```python
+from agentorchestrator.agents.react import ReActAgent, Tool, ReActConfig
+from agentorchestrator.services import LLMGatewayClient
+
+# Define tools
+def search(query: str) -> str:
+    return f"Search results for: {query}"
+
+def calculate(expression: str) -> str:
+    return str(eval(expression))
+
+# Create agent with tools
+llm = LLMGatewayClient.from_env()
+agent = ReActAgent(
+    llm_client=llm,
+    tools=[
+        Tool("search", "Search the web for information", search),
+        Tool("calculate", "Evaluate a math expression", calculate),
+    ],
+    config=ReActConfig(max_iterations=5),
+)
+
+# Run the agent
+async def main():
+    result = await agent.run("What is the population of France divided by 3?")
+    print(f"Answer: {result.final_answer}")
+    print(f"Reasoning trace:\n{result.thought_trace}")
+
+asyncio.run(main())
+```
+
+## Agent Reflection (Self-Critique)
+
+Improve output quality with agent reflection:
+
+```python
+from agentorchestrator.middleware import ReflectionMiddleware, ReflectionConfig
+
+# Add reflection to improve outputs
+reflection = ReflectionMiddleware(
+    llm_client=llm,
+    config=ReflectionConfig(
+        quality_threshold=0.8,  # Require 80% quality score
+        max_revisions=2,        # Allow up to 2 revisions
+    ),
+)
+ao.use(reflection)
+
+# Or apply to specific steps with the decorator
+from agentorchestrator.middleware.reflection import reflect
+
+@ao.step(name="generate_report")
+@reflect(llm_client=llm, quality_threshold=0.85)
+async def generate_report(ctx):
+    # This output will be reflected upon and revised if needed
+    return {"report": "..."}
+```
+
 ## CLI
 
 The CLI is available as `ao` (recommended) or `agentorchestrator` (full name):

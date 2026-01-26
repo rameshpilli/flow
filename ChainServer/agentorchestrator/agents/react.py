@@ -490,7 +490,8 @@ class ReActAgent:
                 )
             else:
                 # Run sync function in executor
-                loop = asyncio.get_event_loop()
+                # Use get_running_loop() (Python 3.10+) instead of deprecated get_event_loop()
+                loop = asyncio.get_running_loop()
                 result = await asyncio.wait_for(
                     loop.run_in_executor(None, lambda: tool.func(**args)),
                     timeout=timeout_s,
