@@ -9,6 +9,7 @@ Supports HashiCorp Vault and falls back to environment variables.
 import asyncio
 import os
 import logging
+import atexit
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Thread pool for blocking I/O operations (like hvac)
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="secrets")
+atexit.register(_executor.shutdown, wait=False)
 
 
 class SecretProvider(ABC):
@@ -120,8 +122,9 @@ def get_secret_service() -> SecretService:
         # Auto-configure Vault if env vars present
         vault_url = os.getenv("VAULT_URL")
         vault_token = os.getenv("VAULT_TOKEN")
+        vault_mount = os.getenv("VAULT_MOUNT_POINT", "secret")
         vp = None
         if vault_url and vault_token:
-            vp = VaultSecretProvider(vault_url, vault_token)
+            vp = VaultSecretProvider(vault_url, vault_token, mount_point=vault_mount)
         _instance = SecretService(vault_provider=vp)
     return _instance

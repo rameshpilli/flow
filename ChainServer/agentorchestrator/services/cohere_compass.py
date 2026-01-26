@@ -25,12 +25,13 @@ class CohereCompassService:
         api_key: str,
         index_name: str,
         timeout: float = 30.0,
+        verify_ssl: bool = True,
     ):
         self.server_url = server_url.rstrip('/')
         self.api_key = api_key
         self.index_name = index_name
         self.timeout = timeout
-        self._client = httpx.AsyncClient(timeout=timeout)
+        self._client = httpx.AsyncClient(timeout=timeout, verify=verify_ssl)
 
     async def upsert(self, documents: List[Dict[str, Any]]) -> bool:
         """

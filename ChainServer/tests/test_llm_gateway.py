@@ -160,7 +160,7 @@ class TestLLMGatewayClient:
             client_id="test-client",
             client_secret="test-secret",
         )
-        assert client._oauth_manager is not None
+        assert client._token_manager is not None
 
     def test_stub_mode_when_not_configured(self):
         """Test client operates in stub mode without credentials."""
@@ -200,8 +200,10 @@ class TestLLMGatewayClient:
             api_key="test-key",
         )
         
-        with patch.object(client, "_call_api_async") as mock_call:
-            mock_call.return_value = {"content": "Response"}
+        with patch.object(client, "_call_llm_api", AsyncMock()) as mock_call:
+            mock_call.return_value = {
+                "choices": [{"message": {"content": "Response"}}]
+            }
             
             await client.generate_async(
                 prompt="User message",
@@ -210,7 +212,7 @@ class TestLLMGatewayClient:
             
             # Check messages were formatted correctly
             call_args = mock_call.call_args
-            messages = call_args[1].get("messages", call_args[0][0] if call_args[0] else [])
+            messages = call_args[0][0]
             
             assert any(m.get("role") == "system" for m in messages)
             assert any(m.get("role") == "user" for m in messages)

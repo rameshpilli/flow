@@ -124,9 +124,10 @@ async def generate(ctx):
 ### Environment Variables
 
 ```bash
-# For remote vector store
-VECTOR_PROVIDER=cohere_compass # or 'redis', 'pinecone'
+# For Cohere Compass vector store
+VECTOR_PROVIDER=cohere_compass
 COHERE_COMPASS_URL=https://compass.corp.com
 COHERE_COMPASS_API_KEY=your-key
 COHERE_COMPASS_INDEX_NAME=my-index
+VECTOR_VERIFY_SSL=true
 ```

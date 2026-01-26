@@ -865,8 +865,29 @@ class LLMGatewayClient:
                 stop: list[str] | None = None,
                 **kwargs: Any,
             ) -> ChatResult:
-                """Sync generation - runs async in new loop."""
+                """
+                Sync generation helper.
+
+                If an event loop is already running (common in notebooks or async
+                frameworks), we fail fast with a clear error instead of attempting
+                to nest event loops. Callers should use async LangChain interfaces
+                (e.g., `.ainvoke`) in those environments.
+                """
                 import asyncio
+
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+
+                if loop and loop.is_running():
+                    raise RuntimeError(
+                        "LLMGatewayLangChainWrapper._generate cannot run while an event loop "
+                        "is active. Use the async interface instead (e.g., .ainvoke())."
+                    )
+
+                if loop:
+                    return loop.run_until_complete(self._agenerate(messages, stop, **kwargs))
                 return asyncio.run(self._agenerate(messages, stop, **kwargs))
 
             async def _agenerate(
@@ -992,7 +1013,16 @@ class LLMGatewayClient:
                 data = json.loads(response_text.strip())
 
                 if response_model:
-                    return response_model(**data)
+                    try:
+                        return response_model(**data)
+                    except Exception as validation_error:
+                        logger.warning(
+                            f"Failed to parse response into {response_model.__name__}: {validation_error}"
+                        )
+                        try:
+                            return response_model()
+                        except Exception:
+                            return {"raw_response": response_text, "parsed": data}
                 return data
 
             except json.JSONDecodeError:
@@ -1140,9 +1170,11 @@ def create_llm_client_from_env() -> LLMGatewayClient:
         oauth_endpoint=os.getenv("LLM_OAUTH_ENDPOINT"),
         client_id=os.getenv("LLM_CLIENT_ID"),
         client_secret=os.getenv("LLM_CLIENT_SECRET"),
+        api_key=os.getenv("LLM_API_KEY"),
         model_name=os.getenv("LLM_MODEL_NAME", "gpt-4"),
         max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4096")),
         temperature=float(os.getenv("LLM_TEMPERATURE", "0.2")),
+        timeout=float(os.getenv("LLM_TIMEOUT", "120.0")),
     )
 
 

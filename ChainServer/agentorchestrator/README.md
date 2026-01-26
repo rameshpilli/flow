@@ -868,6 +868,7 @@ from agentorchestrator.utils import (
 | `LLM_TEMPERATURE` | Sampling temperature | `0.2` |
 | `LLM_MAX_TOKENS` | Max output tokens | `4096` |
 | `LLM_TIMEOUT` | Request timeout in seconds | `120` |
+| `LLM_VERIFY_SSL` | Verify TLS certificates to the LLM gateway | `true` |
 
 ### Chain Execution
 
@@ -906,6 +907,7 @@ from agentorchestrator.utils import (
 | `COHERE_COMPASS_INDEX_NAME` | Index name | - |
 | `COHERE_COMPASS_PARSER_URL` | Parser service URL (optional) | - |
 | `COHERE_COMPASS_PARSER_API_KEY` | Parser API key (optional) | - |
+| `VECTOR_VERIFY_SSL` | Verify TLS certificates for remote vector calls | `true` |
 
 ### Secret Management (Vault)
 
@@ -913,6 +915,7 @@ from agentorchestrator.utils import (
 |----------|-------------|---------|
 | `VAULT_URL` | HashiCorp Vault URL | - |
 | `VAULT_TOKEN` | Vault authentication token | - |
+| `VAULT_MOUNT_POINT` | Vault KV mount point name | `secret` |
 
 ### Observability
 
@@ -921,6 +924,9 @@ from agentorchestrator.utils import (
 | `AO_ENABLE_TRACING` | Enable OpenTelemetry tracing | `false` |
 | `AO_TRACE_SERVICE` | Service name for traces | `agentorchestrator` |
 | `LOG_LEVEL` | Logging level | `INFO` |
+
+Note: ObservabilityService currently wraps standard logging and tracing hooks;
+add your own OpenTelemetry/metric backend in `services/observability.py` as needed.
 
 ### Summarizer
 

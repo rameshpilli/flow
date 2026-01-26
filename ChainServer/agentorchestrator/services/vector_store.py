@@ -2,13 +2,16 @@
 AgentOrchestrator Vector Store Service
 ======================================
 
-This module provides a lightweight vector store service with both in-memory
-and remote storage options for semantic search and similarity matching.
+This module provides a lightweight vector store service with in-memory
+storage for development and Cohere Compass for enterprise RAG scenarios.
+It acts as the single façade that callers import so they can switch between
+local memory and Compass without changing code, centralizing config (env),
+TLS/health handling, and future cross-backend behaviors.
 
 The VectorStoreService offers:
 - In-memory vector storage for development and testing
-- HTTP-based remote vector database integration
-- Pluggable embedding functions
+- Cohere Compass integration for managed enterprise deployments
+- Pluggable embedding functions for in-memory mode
 - Simple upsert and query API
 
 Classes:
@@ -29,12 +32,12 @@ Usage:
     ])
     results = await store.query("programming languages", top_k=5)
 
-    # Remote vector database
+    # Cohere Compass (enterprise RAG)
     store = VectorStoreService(config=VectorStoreConfig(
-        host="https://vector-db.corp.com/api",
+        host="https://compass.corp.com",
         api_key="sk-xxx",
         namespace="my-app",
-        provider="pinecone",
+        provider="cohere_compass",
     ))
 
 Example:
@@ -153,14 +156,15 @@ class VectorStoreConfig:
     Configuration for vector store connectivity.
 
     Supports both in-memory storage (for development) and remote
-    vector databases (for production).
+    Cohere Compass deployments (for production).
     """
 
     host: str | None = None
     api_key: str | None = None
     namespace: str = "default"
     timeout: float = 30.0
-    provider: str = "memory"  # "memory", "redis", "pinecone", "cohere_compass"
+    provider: str = "memory"  # "memory", "cohere_compass"
+    verify_ssl: bool = True
 
     # Cohere Compass specific (overrides common settings if provider is cohere_compass)
     compass_index_name: str | None = None
@@ -173,19 +177,20 @@ class VectorStoreConfig:
         def getenv(key: str, default: Any = None) -> Any:
             return os.getenv(f"{prefix}_{key}", default)
 
-        timeout_val = getenv("TIMEOUT")
-        timeout = float(timeout_val) if timeout_val else 30.0
+            timeout_val = getenv("TIMEOUT")
+            timeout = float(timeout_val) if timeout_val else 30.0
 
-        return cls(
-            host=getenv("HOST") or os.getenv("COHERE_COMPASS_URL"),
-            api_key=getenv("API_KEY") or os.getenv("COHERE_COMPASS_API_KEY"),
-            namespace=getenv("NAMESPACE", "default"),
-            timeout=timeout,
-            provider=getenv("PROVIDER", "memory") or "memory",
-            compass_index_name=getenv("COMPASS_INDEX_NAME") or os.getenv("COHERE_COMPASS_INDEX_NAME"),
-            parser_url=getenv("PARSER_URL") or os.getenv("COHERE_COMPASS_PARSER_URL"),
-            parser_api_key=getenv("PARSER_API_KEY") or os.getenv("COHERE_COMPASS_PARSER_API_KEY"),
-        )
+            return cls(
+                host=getenv("HOST") or os.getenv("COHERE_COMPASS_URL"),
+                api_key=getenv("API_KEY") or os.getenv("COHERE_COMPASS_API_KEY"),
+                namespace=getenv("NAMESPACE", "default"),
+                timeout=timeout,
+                provider=getenv("PROVIDER", "memory") or "memory",
+                compass_index_name=getenv("COMPASS_INDEX_NAME") or os.getenv("COHERE_COMPASS_INDEX_NAME"),
+                parser_url=getenv("PARSER_URL") or os.getenv("COHERE_COMPASS_PARSER_URL"),
+                parser_api_key=getenv("PARSER_API_KEY") or os.getenv("COHERE_COMPASS_PARSER_API_KEY"),
+                verify_ssl=(getenv("VERIFY_SSL", "true").lower() != "false"),
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -435,10 +440,10 @@ class VectorStoreService:
         >>> from agentorchestrator.services import VectorStoreService, VectorStoreConfig
         >>>
         >>> config = VectorStoreConfig(
-        ...     host="https://vector-api.corp.com",
+        ...     host="https://compass.corp.com",
         ...     api_key="sk-xxx",
         ...     namespace="production",
-        ...     provider="pinecone",
+        ...     provider="cohere_compass",
         ... )
         >>> store = VectorStoreService(config=config)
         >>> await store.connect()
@@ -478,7 +483,8 @@ class VectorStoreService:
                 server_url=self.config.host,
                 api_key=self.config.api_key,
                 index_name=self.config.compass_index_name or self.config.namespace,
-                timeout=self.config.timeout
+                timeout=self.config.timeout,
+                verify_ssl=self.config.verify_ssl,
             )
             
         self._http_client = None
@@ -498,13 +504,13 @@ class VectorStoreService:
             raise RuntimeError("httpx is required for remote vector store usage") from None
         return True
 
-    async def upsert(self, docs: Iterable[VectorDocument]) -> None:
+    async def upsert(self, docs: Iterable[VectorDocument]) -> bool:
         """
         Add or update documents in the store.
         """
         if self._memory_store:
             await self._memory_store.add_documents(docs)
-            return
+            return True
 
         if self._cohere_compass:
             compass_docs = [
@@ -512,7 +518,7 @@ class VectorStoreService:
                 for doc in docs
             ]
             await self._cohere_compass.upsert(compass_docs)
-            return
+            return True
 
         client = await self._get_http_client()
         payload = {
@@ -525,6 +531,7 @@ class VectorStoreService:
             headers=self._auth_headers(),
         )
         resp.raise_for_status()
+        return True
 
     async def query(self, query_text: str, top_k: int = 5) -> list[VectorMatch]:
         """
@@ -598,8 +605,16 @@ class VectorStoreService:
             import httpx
         except ImportError as exc:
             raise RuntimeError("httpx is required for remote vector store usage") from exc
-        self._http_client = httpx.AsyncClient(timeout=self.config.timeout, verify=False)
+        self._http_client = httpx.AsyncClient(timeout=self.config.timeout, verify=self.config.verify_ssl)
         return self._http_client
+
+    async def close(self):
+        """Close any underlying HTTP clients."""
+        if self._cohere_compass:
+            await self._cohere_compass.close()
+        if self._http_client:
+            await self._http_client.aclose()
+            self._http_client = None
 
     def _auth_headers(self) -> dict[str, str]:
         """Build authentication headers for remote API."""
