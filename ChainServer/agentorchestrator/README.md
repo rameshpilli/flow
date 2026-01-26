@@ -41,6 +41,9 @@ AgentOrchestrator is a lightweight, decorator-driven framework for building data
 | **Shared Squad Memory** | Cross-agent shared context for collaborative multi-agent teams |
 | **Secret Management** | Standardized HashiCorp Vault integration with environment fallback |
 | **Middleware Stack** | Pluggable logging, caching, summarization, rate limiting, and circuit breakers |
+| **Self-Critique (Reflection)** | Agent self-critique with quality scoring, automatic revision, and `@reflect` decorator |
+| **Citation Tracking** | Automatic source attribution and citation reports for RAG pipelines |
+| **MCP Connectors** | Model Context Protocol integration for external tool servers (HTTP, stdio, SSE) |
 | **Resilience Patterns** | Retry with backoff, circuit breakers, timeouts, and fail-fast cancellation |
 | **Observability** | Standardized observability service for tracing, metrics, and application logs |
 | **CLI Tools** | Run, validate, visualize, and debug chains from command line |
@@ -627,6 +630,104 @@ print(result.final_answer)
 
 ---
 
+## MCP Connectors (Model Context Protocol)
+
+Connect to external MCP servers to extend your agents with custom tools and data sources:
+
+```python
+from agentorchestrator.plugins import MCPAdapterAgent, MCPAdapterConfig
+
+# Create MCP adapter for an external tool server
+config = MCPAdapterConfig(
+    name="my_mcp_server",
+    server_url="http://localhost:3000/mcp",
+    transport="http",  # "http", "stdio", or "sse"
+    timeout_seconds=30.0,
+    cache_enabled=True,        # Cache tool responses
+    cache_ttl_seconds=3600,    # 1 hour cache
+)
+
+agent = MCPAdapterAgent(config)
+await agent.initialize()
+
+# List available tools from the MCP server
+tools = await agent.list_tools()
+for tool in tools:
+    print(f"Tool: {tool.name} - {tool.description}")
+
+# Call a tool
+result = await agent.call_tool("search", {"query": "AI trends 2024"})
+print(result)
+
+# Or use the fetch interface
+result = await agent.fetch("search", tool_args={"query": "AI trends"})
+```
+
+### MCP Transport Types
+
+| Transport | Use Case | Configuration |
+|-----------|----------|---------------|
+| `http` | Remote MCP servers | `server_url="https://..."` |
+| `stdio` | Local subprocess servers | `server_command="npx", server_args=["-y", "@modelcontextprotocol/server"]` |
+| `sse` | Server-sent events | `server_url="https://..."` (streaming) |
+
+### Creating Custom MCP Agents
+
+```python
+from agentorchestrator.connectors import MCPAgent, ConnectorConfig
+from agentorchestrator import ao
+
+@ao.agent(name="my_data_source")
+class MyDataAgent(MCPAgent):
+    """Custom agent wrapping an MCP server."""
+
+    connector_config = ConnectorConfig(
+        name="my_mcp",
+        base_url="http://localhost:8000",
+    )
+
+    async def fetch(self, query: str, **kwargs) -> AgentResult:
+        result = await self.connector.call_tool("search", {"query": query})
+        return AgentResult(data=result, source="my_mcp", query=query)
+```
+
+### Factory Function
+
+```python
+from agentorchestrator.plugins import create_mcp_agent
+
+# Quick creation with factory function
+agent = create_mcp_agent(
+    name="financial_data",
+    server_url="http://localhost:3000",
+    transport="http",
+    headers={"Authorization": "Bearer token"},
+    cache_enabled=True,
+)
+
+await agent.initialize()
+result = await agent.call_tool("get_stock_price", {"symbol": "AAPL"})
+```
+
+### MCP with Deep Research Agent
+
+```python
+from agentorchestrator.examples.financial_research_agent import FinancialResearchAgent
+
+# The financial research agent uses MCP servers for data sources
+agent = FinancialResearchAgent(config)
+
+# MCP servers provide real-time financial data
+report = await agent.research(
+    topic="Analyze Tesla's Q4 earnings",
+    focus_areas=["revenue", "margins", "guidance"],
+)
+```
+
+See: [MCP Connectors Documentation](docs/MCP_CONNECTORS.md) for complete reference.
+
+---
+
 ## Middleware
 
 Add cross-cutting concerns to your pipelines:
@@ -639,6 +740,11 @@ from agentorchestrator.middleware import (
     RateLimiterMiddleware,
     MiddlewareCircuitBreakerConfig,
     CircuitBreakerMiddleware,
+    ReflectionMiddleware,
+    CitationMiddleware,
+    TokenManagerMiddleware,
+    MetricsMiddleware,
+    IdempotencyMiddleware,
 )
 
 ao = AgentOrchestrator(name="my_app")
@@ -661,6 +767,126 @@ ao.use(RateLimiterMiddleware({
 ao.use(CircuitBreakerMiddleware({
     "external_api": MiddlewareCircuitBreakerConfig(failure_threshold=5),
 }))
+
+# Self-critique / reflection (see section below)
+ao.use(ReflectionMiddleware(quality_threshold=0.8, max_revisions=2))
+
+# Citation tracking for RAG
+ao.use(CitationMiddleware())
+
+# Token budget management
+ao.use(TokenManagerMiddleware(max_tokens=8000))
+
+# Metrics collection
+ao.use(MetricsMiddleware())
+
+# Idempotent step execution (prevent duplicates)
+ao.use(IdempotencyMiddleware())
+```
+
+### Available Middleware
+
+| Middleware | Purpose |
+|------------|---------|
+| `LoggerMiddleware` | Structured logging for step execution |
+| `CacheMiddleware` | Response caching with TTL |
+| `SummarizerMiddleware` | LLM-based summarization (stuff, map_reduce, refine) |
+| `RateLimiterMiddleware` | Request rate limiting per step |
+| `CircuitBreakerMiddleware` | Failure protection (CLOSED → OPEN → HALF_OPEN) |
+| `ReflectionMiddleware` | Agent self-critique with quality scoring |
+| `CitationMiddleware` | Source attribution tracking for RAG |
+| `TokenManagerMiddleware` | Token budget management |
+| `MetricsMiddleware` | Execution metrics (latency, success rate) |
+| `IdempotencyMiddleware` | Prevent duplicate step execution |
+| `OffloadMiddleware` | Auto-offload large payloads to Redis |
+| `UsageAnalyticsMiddleware` | Usage tracking and analytics |
+
+---
+
+## Self-Critique / Reflection
+
+Enable agents to review and revise their own outputs using the ReflectionMiddleware:
+
+```python
+from agentorchestrator.middleware import (
+    ReflectionMiddleware,
+    ReflectionConfig,
+    reflect,
+)
+
+# Option 1: Apply middleware globally
+ao.use(ReflectionMiddleware(
+    config=ReflectionConfig(
+        quality_threshold=0.8,  # Minimum score (0.0-1.0) to accept
+        max_revisions=2,        # Max revision attempts
+    ),
+))
+
+# Option 2: Use @reflect decorator on specific steps
+@ao.step(name="generate_report")
+@reflect(
+    critique_prompt="Review this report for accuracy, clarity, and completeness.",
+    quality_threshold=0.85,
+    max_revisions=3,
+)
+async def generate_report(ctx):
+    data = ctx.get("research_findings")
+    report = await generate_report_content(data)
+    return {"report": report}
+```
+
+### How Reflection Works
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    REFLECTION CYCLE                          │
+│                                                              │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐              │
+│  │ Generate │ →  │ Critique │ →  │  Score   │              │
+│  │  Output  │    │  (LLM)   │    │ (0.0-1.0)│              │
+│  └──────────┘    └──────────┘    └────┬─────┘              │
+│                                       │                     │
+│                    ┌──────────────────┴──────────────────┐  │
+│                    │                                     │  │
+│               score >= threshold?                        │  │
+│                    │                                     │  │
+│              Yes ──┴── No                                │  │
+│               │        │                                 │  │
+│               ▼        ▼                                 │  │
+│         ┌─────────┐  ┌─────────┐                        │  │
+│         │ Return  │  │ Revise  │ → (loop up to max)     │  │
+│         │ Output  │  │  Output │                        │  │
+│         └─────────┘  └─────────┘                        │  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Reflection Configuration
+
+```python
+from agentorchestrator.middleware import ReflectionConfig
+
+config = ReflectionConfig(
+    quality_threshold=0.8,      # Score needed to pass (0.0-1.0)
+    max_revisions=2,            # Max revision attempts
+    critique_prompt=None,       # Custom critique prompt (optional)
+    revision_prompt=None,       # Custom revision prompt (optional)
+    enabled=True,               # Enable/disable reflection
+    store_trace=True,           # Store reflection trace in context
+    applies_to=["step1"],       # Only apply to specific steps
+    excludes=["step2"],         # Exclude specific steps
+)
+```
+
+### Accessing Reflection Results
+
+```python
+# After step execution, access the reflection trace
+traces = ctx.get("_reflection_trace", default={})
+step_trace = traces.get("generate_report")
+
+print(f"Quality Score: {step_trace['quality_score']}")
+print(f"Revisions: {step_trace['revision_count']}")
+print(f"Passed Threshold: {step_trace['passed_threshold']}")
 ```
 
 ---
@@ -746,6 +972,7 @@ See [CLI Reference](docs/cli/index.md) for complete documentation.
 | [Patterns](docs/patterns/) | Production patterns: Isolation, Summarization, Routing |
 | [API Reference](docs/API.md) | Full API documentation |
 | [Architecture](docs/ARCHITECTURE.md) | System design & diagrams |
+| [MCP Connectors](docs/MCP_CONNECTORS.md) | Model Context Protocol integration guide |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues & solutions |
 
 ### Build Documentation Site
@@ -835,12 +1062,42 @@ from agentorchestrator.squad import (
 
 # Middleware
 from agentorchestrator.middleware import (
+    # Core middleware
     CacheMiddleware,
     LoggerMiddleware,
     SummarizerMiddleware,
     RateLimiterMiddleware,
     CircuitBreakerMiddleware,
     MiddlewareCircuitBreakerConfig,
+    # Self-critique / Reflection
+    ReflectionMiddleware,
+    ReflectionConfig,
+    reflect,
+    # Citation tracking
+    CitationMiddleware,
+    cite,
+    get_citation_report,
+    # Token & metrics
+    TokenManagerMiddleware,
+    MetricsMiddleware,
+    # Idempotency
+    IdempotencyMiddleware,
+    # Offload large payloads
+    OffloadMiddleware,
+    # Usage analytics
+    UsageAnalyticsMiddleware,
+)
+
+# MCP Connectors (Model Context Protocol)
+from agentorchestrator.plugins import (
+    MCPAdapterAgent,
+    MCPAdapterConfig,
+    create_mcp_agent,
+)
+from agentorchestrator.connectors import (
+    MCPConnector,
+    MCPAgent,
+    ConnectorConfig,
 )
 
 # Utilities

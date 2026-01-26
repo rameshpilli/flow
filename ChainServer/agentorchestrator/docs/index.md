@@ -33,7 +33,19 @@ AgentOrchestrator is a lightweight, decorator-driven framework for building data
 
     ---
 
-    Logging, caching, summarization, token management, and more out of the box
+    Logging, caching, summarization, token management, reflection/self-critique, and more
+
+-   :material-brain:{ .lg .middle } **Self-Critique (Reflection)**
+
+    ---
+
+    Agent self-critique with quality scoring, automatic revision cycles, and `@reflect` decorator
+
+-   :material-connection:{ .lg .middle } **MCP Connectors**
+
+    ---
+
+    Model Context Protocol integration for external tool servers (HTTP, stdio, SSE)
 
 -   :material-database:{ .lg .middle } **Context Management**
 
@@ -235,6 +247,7 @@ agentorchestrator/
 | [Architecture](ARCHITECTURE.md) | System design & diagrams |
 | [API Reference](API.md) | Full API documentation |
 | [Context Management](CONTEXT_MANAGEMENT.md) | Deep dive into context patterns |
+| [MCP Connectors](MCP_CONNECTORS.md) | Model Context Protocol integration guide |
 | [Feature Examples](FEATURE_EXAMPLES.md) | Code examples for all features |
 | [Troubleshooting](TROUBLESHOOTING.md) | Common issues & solutions |
 
