@@ -909,6 +909,8 @@ from agentorchestrator.utils import (
 | `COHERE_COMPASS_PARSER_API_KEY` | Parser API key (optional) | - |
 | `VECTOR_VERIFY_SSL` | Verify TLS certificates for remote vector calls | `true` |
 
+**Remote providers (Compass/custom HTTP) require:** `VECTOR_HOST` (or `COHERE_COMPASS_URL`) **and** `VECTOR_API_KEY` (or `COHERE_COMPASS_API_KEY`). Missing values raise a configuration error at service initialization. The in-memory backend remains default and is namespace-isolated per `VECTOR_NAMESPACE`.
+
 ### Secret Management (Vault)
 
 | Variable | Description | Default |
