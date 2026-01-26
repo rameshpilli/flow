@@ -454,14 +454,29 @@ class AgentOrchestrator:
         """
         Synchronously cleanup resources with timeout.
 
+        Handles both cases:
+        - Called from sync context: uses asyncio.run()
+        - Called from async context: schedules cleanup task
+
         Args:
             timeout_seconds (float): Maximum time to wait for cleanup.
                 Default: 30.0 seconds.
         """
         try:
             loop = asyncio.get_running_loop()
-            # We're in an async context - use ensure_future for safer scheduling
-            asyncio.ensure_future(self.cleanup_resources(timeout_seconds))
+            # We're in an async context - schedule the cleanup
+            # Create a task and let it run (fire-and-forget in sync __exit__)
+            # The async __aexit__ will properly await cleanup
+            task = loop.create_task(self.cleanup_resources(timeout_seconds))
+            # Add callback to log errors
+            def _on_done(t):
+                try:
+                    t.result()
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    logger.warning(f"Background resource cleanup failed: {e}")
+            task.add_done_callback(_on_done)
         except RuntimeError:
             # No running loop, safe to use asyncio.run
             try:
@@ -1857,12 +1872,13 @@ class AgentOrchestrator:
         start_time = time.perf_counter()
 
         try:
-            # Execute the step handler directly
+            # Execute the step handler within step_scope for proper STEP-scoped cleanup
             handler = step_spec.handler
-            if asyncio.iscoroutinefunction(handler):
-                output = await handler(ctx)
-            else:
-                output = handler(ctx)
+            async with ctx.step_scope(step_name):
+                if asyncio.iscoroutinefunction(handler):
+                    output = await handler(ctx)
+                else:
+                    output = handler(ctx)
 
             duration_ms = (time.perf_counter() - start_time) * 1000
 

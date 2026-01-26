@@ -351,7 +351,11 @@ class OAuthTokenManager:
                     self._token = result.get("access_token")
                     # Use expires_in from response, or default
                     expires_in = result.get("expires_in", self.token_expiry_seconds)
-                    self._expires_at = time.time() + min(expires_in - 60, self.token_expiry_seconds)
+                    # Ensure we don't go negative - floor at 60 seconds minimum
+                    # This prevents rapid refresh loops with short-lived tokens
+                    buffer_seconds = min(60, expires_in // 2)  # Use half of expires_in if < 120s
+                    effective_expiry = max(expires_in - buffer_seconds, 60)
+                    self._expires_at = time.time() + min(effective_expiry, self.token_expiry_seconds)
 
                     logger.info(f"OAuth token refreshed, expires in {expires_in}s")
                     return self._token
@@ -635,6 +639,8 @@ class LLMGatewayClient:
         response.raise_for_status()
         return response.json()
 
+    _tiktoken_warning_logged: bool = False
+
     def _estimate_tokens(self, text: str) -> int:
         """Estimate token count using tiktoken (if available) or fallback to heuristic."""
         try:
@@ -647,6 +653,13 @@ class LLMGatewayClient:
                 encoding = tiktoken.get_encoding("cl100k_base")
             return len(encoding.encode(text))
         except ImportError:
+            # Log warning once about inaccurate token counting
+            if not LLMGatewayClient._tiktoken_warning_logged:
+                logger.warning(
+                    "tiktoken not installed - using character-based token estimation (~4 chars/token). "
+                    "For accurate token counts, install tiktoken: pip install tiktoken"
+                )
+                LLMGatewayClient._tiktoken_warning_logged = True
             # Fallback to rough heuristic (~4 chars per token)
             return len(text) // 4
 
@@ -756,6 +769,98 @@ class LLMGatewayClient:
         except Exception as e:
             logger.error(f"LLM API call failed: {e}")
             raise
+
+    def get_langchain_llm(self) -> Any:
+        """
+        Get a LangChain-compatible LLM wrapper for this client.
+
+        This method returns a LangChain BaseChatModel that delegates to this
+        LLMGatewayClient. Useful for integrating with LangChain chains,
+        summarizers, and other LangChain components.
+
+        Returns:
+            BaseChatModel: A LangChain-compatible LLM wrapper.
+
+        Raises:
+            ImportError: If langchain-core is not installed.
+
+        Example:
+            >>> client = LLMGatewayClient.from_env()
+            >>> llm = client.get_langchain_llm()
+            >>>
+            >>> # Use with LangChain
+            >>> from langchain_core.prompts import ChatPromptTemplate
+            >>> chain = ChatPromptTemplate.from_template("{text}") | llm
+            >>> result = await chain.ainvoke({"text": "Hello"})
+        """
+        try:
+            from langchain_core.language_models.chat_models import BaseChatModel
+            from langchain_core.messages import BaseMessage, AIMessage, HumanMessage, SystemMessage
+            from langchain_core.outputs import ChatResult, ChatGeneration
+        except ImportError:
+            raise ImportError(
+                "langchain-core is required for LangChain integration. "
+                "Install with: pip install langchain-core"
+            )
+
+        client = self
+
+        class LLMGatewayLangChainWrapper(BaseChatModel):
+            """LangChain wrapper for LLMGatewayClient."""
+
+            @property
+            def _llm_type(self) -> str:
+                return "llm-gateway"
+
+            @property
+            def _identifying_params(self) -> dict[str, Any]:
+                return {
+                    "server_url": client.server_url,
+                    "model_name": client.model_name,
+                }
+
+            def _generate(
+                self,
+                messages: list[BaseMessage],
+                stop: list[str] | None = None,
+                **kwargs: Any,
+            ) -> ChatResult:
+                """Sync generation - runs async in new loop."""
+                import asyncio
+                return asyncio.run(self._agenerate(messages, stop, **kwargs))
+
+            async def _agenerate(
+                self,
+                messages: list[BaseMessage],
+                stop: list[str] | None = None,
+                **kwargs: Any,
+            ) -> ChatResult:
+                """Async generation using LLMGatewayClient."""
+                # Convert LangChain messages to OpenAI format
+                formatted_messages = []
+                for msg in messages:
+                    if isinstance(msg, SystemMessage):
+                        formatted_messages.append({"role": "system", "content": msg.content})
+                    elif isinstance(msg, HumanMessage):
+                        formatted_messages.append({"role": "user", "content": msg.content})
+                    elif isinstance(msg, AIMessage):
+                        formatted_messages.append({"role": "assistant", "content": msg.content})
+                    else:
+                        formatted_messages.append({"role": "user", "content": str(msg.content)})
+
+                # Call the gateway
+                response = await client._call_llm_api(formatted_messages, **kwargs)
+
+                # Parse response
+                choice = response.get("choices", [{}])[0]
+                message = choice.get("message", {})
+                content = message.get("content", "")
+
+                return ChatResult(
+                    generations=[ChatGeneration(message=AIMessage(content=content))]
+                )
+
+        return LLMGatewayLangChainWrapper()
 
     async def generate_structured_async(
         self,

@@ -69,15 +69,27 @@ AgentOrchestrator provides multiple patterns for building AI agents:
 # Basic installation
 pip install -e .
 
-# With all optional features
+# With all optional features (Redis, LangChain, observability, mem0, vault)
 pip install -e ".[all]"
 
 # With specific extras
-pip install -e ".[redis,langchain]"
+pip install -e ".[redis]"              # Redis for context store and chat storage
+pip install -e ".[langchain]"          # LangChain integration for summarization
+pip install -e ".[observability]"      # OpenTelemetry tracing
+pip install -e ".[workflows]"          # Event-driven workflows (Redis-backed bus)
 
-# Event-driven workflows (Redis-backed bus, falls back to memory)
-pip install -e ".[workflows]"
+# Multiple extras
+pip install -e ".[redis,langchain,observability]"
 ```
+
+**Available Extras:**
+- `redis` - Redis for context store, chat storage, and event bus
+- `langchain` - LangChain integration (summarizers, text splitters, tiktoken)
+- `observability` - OpenTelemetry tracing and structured logging
+- `workflows` - Event-driven workflows (includes Redis)
+- `all` - Everything above plus mem0 and hvac (Vault)
+- `dev` - Development tools (pytest, ruff)
+- `docs` - Documentation tools (mkdocs)
 
 **Requirements**: Python 3.10+
 
@@ -707,6 +719,8 @@ from agentorchestrator.utils import (
 
 ## Environment Variables
 
+### LLM Gateway
+
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `LLM_SERVER_URL` | LLM Gateway endpoint | - |
@@ -717,8 +731,69 @@ from agentorchestrator.utils import (
 | `LLM_API_KEY` | API key (alternative to OAuth) | - |
 | `LLM_TEMPERATURE` | Sampling temperature | `0.2` |
 | `LLM_MAX_TOKENS` | Max output tokens | `4096` |
-| `REDIS_HOST` | Redis server host | `localhost` |
-| `REDIS_PORT` | Redis server port | `6379` |
+| `LLM_TIMEOUT` | Request timeout in seconds | `120` |
+
+### Chain Execution
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CHAIN_MAX_PARALLEL_STEPS` | Max concurrent steps | `5` |
+| `CHAIN_DEFAULT_TIMEOUT_MS` | Step timeout in milliseconds | `30000` |
+| `CHAIN_DEFAULT_RETRIES` | Default retry count | `3` |
+| `CHAIN_ERROR_HANDLING` | Error strategy: `fail_fast`, `continue`, `retry` | `fail_fast` |
+
+### Context Store (Redis/Mem0)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CONTEXT_STORE_BACKEND` | Backend: `memory`, `redis`, `mem0` | `memory` |
+| `CONTEXT_STORE_REDIS_HOST` | Redis host | `localhost` |
+| `CONTEXT_STORE_REDIS_PORT` | Redis port | `6379` |
+| `CONTEXT_STORE_REDIS_PASSWORD` | Redis password | - |
+| `CONTEXT_STORE_REDIS_DB` | Redis database number | `0` |
+| `CONTEXT_STORE_REDIS_SSL` | Enable TLS | `false` |
+| `CONTEXT_STORE_REDIS_SSL_CERT_REQS` | SSL cert requirements | - |
+| `CONTEXT_STORE_REDIS_MAXMEMORY` | Memory limit (e.g., `128mb`) | - |
+| `CONTEXT_STORE_REDIS_MAXMEMORY_POLICY` | Eviction policy | `allkeys-lru` |
+| `CONTEXT_STORE_TTL` | Default TTL in seconds | `3600` |
+| `CONTEXT_STORE_MEM0_API_KEY` | Mem0 cloud API key | - |
+| `CONTEXT_STORE_MEM0_HOST` | Self-hosted Mem0 URL | - |
+| `CONTEXT_STORE_MEM0_USER_ID` | User ID for scoped memory | - |
+
+### Cohere Compass (RAG)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `VECTOR_PROVIDER` | Provider: `memory`, `cohere_compass` | `memory` |
+| `COHERE_COMPASS_URL` | Compass server URL | - |
+| `COHERE_COMPASS_API_KEY` | Compass API key | - |
+| `COHERE_COMPASS_INDEX_NAME` | Index name | - |
+| `COHERE_COMPASS_PARSER_URL` | Parser service URL (optional) | - |
+| `COHERE_COMPASS_PARSER_API_KEY` | Parser API key (optional) | - |
+
+### Secret Management (Vault)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `VAULT_URL` | HashiCorp Vault URL | - |
+| `VAULT_TOKEN` | Vault authentication token | - |
+
+### Observability
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AO_ENABLE_TRACING` | Enable OpenTelemetry tracing | `false` |
+| `AO_TRACE_SERVICE` | Service name for traces | `agentorchestrator` |
+| `LOG_LEVEL` | Logging level | `INFO` |
+
+### Summarizer
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SUMMARIZER_MAX_TOKENS` | Max tokens for summaries | `4000` |
+| `SUMMARIZER_CHUNK_SIZE` | Chunk size for splitting | `2000` |
+| `SUMMARIZER_CHUNK_OVERLAP` | Overlap between chunks | `200` |
+| `SUMMARIZER_STRATEGY` | Strategy: `stuff`, `map_reduce`, `refine` | `map_reduce` |
 
 ---
 

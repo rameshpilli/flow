@@ -804,13 +804,41 @@ class Mem0ContextStore(ContextStore):
         raise ContextRefNotFoundError(ref.ref_id)
 
     async def delete(self, ref: ContextRef) -> bool:
+        """Delete stored data from both local cache and Redis (if configured)."""
+        deleted = False
+        
+        # Delete from Redis cache if available
+        if self._redis:
+            try:
+                redis_deleted = await self._redis.delete(f"mem0_ref:{ref.ref_id}")
+                if redis_deleted:
+                    deleted = True
+            except Exception as e:
+                logger.warning(f"Failed to delete from Redis cache: {e}")
+        
+        # Delete from local cache
         if ref.ref_id in self._ref_cache:
             del self._ref_cache[ref.ref_id]
-            return True
-        return False
+            deleted = True
+            
+        return deleted
 
     async def exists(self, ref: ContextRef) -> bool:
-        return ref.ref_id in self._ref_cache
+        """Check if data exists in local cache or Redis (if configured)."""
+        # Check local cache first
+        if ref.ref_id in self._ref_cache:
+            return True
+            
+        # Check Redis cache if available
+        if self._redis:
+            try:
+                cached = await self._redis.get_json(f"mem0_ref:{ref.ref_id}")
+                if cached:
+                    return True
+            except Exception as e:
+                logger.debug(f"Redis cache check failed: {e}")
+                
+        return False
 
     async def search(
         self,

@@ -6,26 +6,40 @@ Provides a unified interface for retrieving secrets from multiple providers.
 Supports HashiCorp Vault and falls back to environment variables.
 """
 
+import asyncio
 import os
 import logging
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from typing import Optional, Any
 from agentorchestrator.config import SecretString
 
 logger = logging.getLogger(__name__)
+
+# Thread pool for blocking I/O operations (like hvac)
+_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="secrets")
+
 
 class SecretProvider(ABC):
     @abstractmethod
     async def get_secret(self, key: str) -> Optional[str]:
         pass
 
+
 class EnvSecretProvider(SecretProvider):
     """Retrieves secrets from environment variables."""
     async def get_secret(self, key: str) -> Optional[str]:
         return os.getenv(key)
 
+
 class VaultSecretProvider(SecretProvider):
-    """Retrieves secrets from HashiCorp Vault."""
+    """
+    Retrieves secrets from HashiCorp Vault.
+    
+    Note: hvac is a synchronous library, so calls are wrapped in run_in_executor
+    to avoid blocking the event loop in high-concurrency scenarios.
+    """
     
     def __init__(self, url: str, token: str, mount_point: str = "secret"):
         self.url = url
@@ -43,11 +57,8 @@ class VaultSecretProvider(SecretProvider):
                 raise RuntimeError("hvac not installed")
         return self._client
 
-    async def get_secret(self, key: str) -> Optional[str]:
-        """
-        Retrieves a secret from Vault. 
-        Expects key in format 'path/to/secret:data_key'
-        """
+    def _read_secret_sync(self, key: str) -> Optional[str]:
+        """Synchronous secret read - runs in thread pool."""
         try:
             client = self._get_client()
             if ":" not in key:
@@ -62,6 +73,16 @@ class VaultSecretProvider(SecretProvider):
         except Exception as e:
             logger.error(f"Failed to retrieve secret {key} from Vault: {e}")
             return None
+
+    async def get_secret(self, key: str) -> Optional[str]:
+        """
+        Retrieves a secret from Vault. 
+        Expects key in format 'path/to/secret:data_key'
+        
+        Uses run_in_executor to avoid blocking the event loop since hvac is synchronous.
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(_executor, partial(self._read_secret_sync, key))
 
 class SecretService:
     """

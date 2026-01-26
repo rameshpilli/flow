@@ -6,6 +6,9 @@ Core services for LLM integration, gateway management, and external connections.
 Usage:
     from agentorchestrator.services import LLMGatewayClient, get_llm_client
     from agentorchestrator.services import RedisService, get_redis_client
+    from agentorchestrator.services import CohereCompassService
+    from agentorchestrator.services import SecretService, get_secret_service
+    from agentorchestrator.services import ObservabilityService, get_observability_service
 """
 
 # Core LLM services (always available)
@@ -52,6 +55,24 @@ from agentorchestrator.services.vector_store import (
     VectorStoreService,
 )
 
+# Cohere Compass service (for enterprise RAG)
+from agentorchestrator.services.cohere_compass import CohereCompassService
+
+# Secret management service (Vault + env fallback)
+from agentorchestrator.services.secrets import (
+    SecretService,
+    SecretProvider,
+    EnvSecretProvider,
+    VaultSecretProvider,
+    get_secret_service,
+)
+
+# Observability service (tracing, metrics, logging facade)
+from agentorchestrator.services.observability import (
+    ObservabilityService,
+    get_observability_service,
+)
+
 # Mem0 semantic memory service
 from agentorchestrator.services.mem0 import (
     BaseMemory,
@@ -85,6 +106,17 @@ __all__ = [
     "VectorDocument",
     "VectorMatch",
     "InMemoryVectorStore",
+    # Cohere Compass
+    "CohereCompassService",
+    # Secret Management
+    "SecretService",
+    "SecretProvider",
+    "EnvSecretProvider",
+    "VaultSecretProvider",
+    "get_secret_service",
+    # Observability
+    "ObservabilityService",
+    "get_observability_service",
     # Mem0 Memory
     "BaseMemory",
     "Mem0Memory",
