@@ -97,10 +97,12 @@ class AgentResponse:
         metadata: Processing metadata
         output: The actual response (message or stream)
         streaming: Whether this is a streaming response
+        handoff_to: ID of an agent to hand off the conversation to
     """
     metadata: AgentProcessingResult
     output: Union[ConversationMessage, Any]
     streaming: bool = False
+    handoff_to: Optional[str] = None
 
 
 @dataclass

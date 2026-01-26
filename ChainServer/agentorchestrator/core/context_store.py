@@ -659,6 +659,7 @@ class Mem0ContextStore(ContextStore):
         user_id: str | None = None,
         org_id: str | None = None,
         agent_id: str | None = None,
+        redis_service: Any = None,
     ):
         """
         Initialize mem0 context store.
@@ -669,6 +670,7 @@ class Mem0ContextStore(ContextStore):
             user_id: User ID for scoped memory (recommended)
             org_id: Organization ID for shared memory
             agent_id: Agent ID for agent-specific memory
+            redis_service: Optional RedisService for distributed ref cache
         """
         self._api_key = api_key
         self._host = host
@@ -676,7 +678,8 @@ class Mem0ContextStore(ContextStore):
         self._org_id = org_id
         self._agent_id = agent_id
         self._client = None
-        self._ref_cache: dict[str, dict] = {}  # Local cache for ref metadata
+        self._redis = redis_service
+        self._ref_cache: dict[str, dict] = {}  # Fallback local cache
 
     async def _get_client(self):
         """Lazy initialization of mem0 client."""
@@ -754,12 +757,19 @@ class Mem0ContextStore(ContextStore):
         result = client.add(**add_kwargs)
         logger.debug(f"Stored in mem0: {result}")
 
-        # Cache the full data locally (mem0 is for semantic search, not raw storage)
-        self._ref_cache[ref_id] = {
-            "data": serialized,
+        # Cache the full data (mem0 is for semantic search, not raw storage)
+        cache_data = {
+            "data": serialized.hex() if isinstance(serialized, bytes) else serialized,
             "content_type": "application/json",
-            "mem0_result": result,
+            "mem0_result": str(result),
         }
+        
+        if self._redis:
+            # Use Redis for distributed cache
+            await self._redis.set_json(f"mem0_ref:{ref_id}", cache_data, ttl=ttl_seconds)
+        else:
+            # Fallback to local cache (warn in non-local environments)
+            self._ref_cache[ref_id] = cache_data
 
         ref = ContextRef(
             ref_id=ref_id,
@@ -778,10 +788,18 @@ class Mem0ContextStore(ContextStore):
         return ref
 
     async def retrieve(self, ref: ContextRef) -> Any:
-        # First check local cache
+        # First check Redis if available
+        if self._redis:
+            cached = await self._redis.get_json(f"mem0_ref:{ref.ref_id}")
+            if cached:
+                data = bytes.fromhex(cached["data"]) if isinstance(cached["data"], str) else cached["data"]
+                return self._deserialize(data, cached.get("content_type", "application/json"))
+
+        # Then check local cache
         if ref.ref_id in self._ref_cache:
             cached = self._ref_cache[ref.ref_id]
-            return self._deserialize(cached["data"], cached.get("content_type", "application/json"))
+            data = bytes.fromhex(cached["data"]) if isinstance(cached["data"], str) else cached["data"]
+            return self._deserialize(data, cached.get("content_type", "application/json"))
 
         raise ContextRefNotFoundError(ref.ref_id)
 

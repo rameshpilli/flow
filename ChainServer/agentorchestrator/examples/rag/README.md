@@ -125,6 +125,8 @@ async def generate(ctx):
 
 ```bash
 # For remote vector store
-VECTOR_STORE_URL=https://vectordb.corp.com
-VECTOR_STORE_API_KEY=your-key
+VECTOR_PROVIDER=cohere_compass # or 'redis', 'pinecone'
+COHERE_COMPASS_URL=https://compass.corp.com
+COHERE_COMPASS_API_KEY=your-key
+COHERE_COMPASS_INDEX_NAME=my-index
 ```

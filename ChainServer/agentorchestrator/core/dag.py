@@ -157,8 +157,14 @@ class DAGBuilder:
         self.step_registry = get_step_registry()
         self.chain_registry = get_chain_registry()
 
-    def build(self, chain_name: str) -> ExecutionPlan:
-        """Build an execution plan for a chain"""
+    def build(self, chain_name: str, existing_nodes: dict[str, DAGNode] | None = None) -> ExecutionPlan:
+        """
+        Build an execution plan for a chain.
+        
+        Args:
+            chain_name: Name of the chain
+            existing_nodes: Optional dict of existing nodes to preserve state
+        """
         chain_spec = self.chain_registry.get_spec(chain_name)
         if not chain_spec:
             raise ValueError(f"Chain not found: {chain_name}")
@@ -166,6 +172,11 @@ class DAGBuilder:
         # Build nodes
         nodes: dict[str, DAGNode] = {}
         for step_name in chain_spec.steps:
+            # Preserve existing node if available
+            if existing_nodes and step_name in existing_nodes:
+                nodes[step_name] = existing_nodes[step_name]
+                continue
+
             step_spec = self.step_registry.get_spec(step_name)
             if not step_spec:
                 raise ValueError(f"Step not found: {step_name}")
@@ -174,7 +185,7 @@ class DAGBuilder:
                 name=step_name,
                 spec=step_spec,
                 dependencies=set(step_spec.dependencies),
-                max_concurrency=step_spec.max_concurrency,  # Now a proper field
+                max_concurrency=step_spec.max_concurrency,
             )
 
         # Build dependency graph (add dependents)
@@ -409,7 +420,9 @@ class DAGExecutor:
 
         # Wrap execution in chain-level tracing span
         with self._chain_span(tracer, plan.total_steps):
-            for group_idx, group in enumerate(plan.execution_order):
+            group_idx = 0
+            while group_idx < len(plan.execution_order):
+                group = plan.execution_order[group_idx]
                 logger.debug(
                     f"Executing group {group_idx + 1}/{len(plan.execution_order)}: "
                     f"{group} (max_parallel={self.max_parallel})"
@@ -421,28 +434,42 @@ class DAGExecutor:
                     if plan.nodes[name].state == StepState.PENDING
                 ]
 
-                if not pending_steps:
-                    continue
+                if pending_steps:
+                    # Check for per-group concurrency limits
+                    group_concurrency = self._get_group_concurrency(plan.nodes, pending_steps)
 
-                # Check for per-group concurrency limits
-                group_concurrency = self._get_group_concurrency(plan.nodes, pending_steps)
+                    # Execute steps in parallel within the group
+                    await self._execute_group(
+                        plan.nodes,
+                        pending_steps,
+                        ctx,
+                        effective_error_handling,
+                        group_concurrency,
+                        chain_name=chain_name,
+                        debug_callback=debug_callback,
+                        tracer=tracer,
+                    )
 
-                # Execute steps in parallel within the group
-                await self._execute_group(
-                    plan.nodes,
-                    pending_steps,
-                    ctx,
-                    effective_error_handling,
-                    group_concurrency,
-                    chain_name=chain_name,
-                    debug_callback=debug_callback,
-                    tracer=tracer,
-                )
+                    # Check if any step requested a DAG rebuild
+                    if ctx.get("__dag_needs_rebuild__"):
+                        ctx.delete("__dag_needs_rebuild__")
+                        # Rebuild plan and execution order, preserving existing node states
+                        plan = self.builder.build(chain_name, existing_nodes=plan.nodes)
+                        # We stay at same group_idx but group content changed
+                        # and len(execution_order) might have increased
+                        logger.info(f"DAG rebuilt dynamically. New order: {plan.execution_order}")
+                        # We don't increment group_idx here because we need to 
+                        # process the newly built plan from the beginning of 
+                        # what's now 'pending'
+                        group_idx = 0 
+                        continue
 
-                # In "continue" mode, propagate failures to dependents
-                # Skip dependents whose dependencies have failed
-                if effective_error_handling == "continue":
-                    await self._propagate_failures_to_dependents(plan.nodes, ctx, chain_name)
+                    # In "continue" mode, propagate failures to dependents
+                    # Skip dependents whose dependencies have failed
+                    if effective_error_handling == "continue":
+                        await self._propagate_failures_to_dependents(plan.nodes, ctx, chain_name)
+
+                group_idx += 1
 
         logger.info(f"Chain {chain_name} completed")
         return ctx
@@ -742,6 +769,17 @@ class DAGExecutor:
                             result = handler(ctx)
 
                         # ══════════════════════════════════════════════════════
+                        #              DYNAMIC STEP INJECTION
+                        # ══════════════════════════════════════════════════════
+                        # Check if result contains dynamic steps to be added to the DAG
+                        if isinstance(result, dict) and "__dynamic_steps__" in result:
+                            dynamic_steps = result.pop("__dynamic_steps__")
+                            if isinstance(dynamic_steps, list):
+                                await self._handle_dynamic_steps(
+                                    dynamic_steps, node, ctx, chain_name
+                                )
+
+                        # ══════════════════════════════════════════════════════
                         #              OUTPUT CONTRACT VALIDATION
                         # ══════════════════════════════════════════════════════
                         if (
@@ -962,6 +1000,61 @@ class DAGExecutor:
             )
         except Exception as e:
             logger.debug("Event publish failed (%s): %s", event_type, e)
+
+    async def _handle_dynamic_steps(
+        self,
+        dynamic_steps: list[Any],
+        parent_node: DAGNode,
+        ctx: ChainContext,
+        chain_name: str | None,
+    ) -> None:
+        """
+        Handle dynamic steps returned by a step handler.
+        Dynamically adds new steps to the registry and updates the execution plan.
+        """
+        from agentorchestrator.core.registry import StepSpec
+        
+        new_step_names = []
+        for i, step_data in enumerate(dynamic_steps):
+            if isinstance(step_data, dict) and "handler" in step_data:
+                # It's a raw step definition
+                name = step_data.get("name") or f"{parent_node.name}_dyn_{i}"
+                handler = step_data["handler"]
+                deps = step_data.get("deps", [])
+                # Register the new step dynamically
+                self.builder.step_registry.register_step(
+                    name=name,
+                    handler=handler,
+                    dependencies=deps,
+                    produces=step_data.get("produces"),
+                )
+                new_step_names.append(name)
+            elif isinstance(step_data, str):
+                # It's an existing step name
+                new_step_names.append(step_data)
+        
+        if new_step_names:
+            logger.info(f"Step {parent_node.name} injected dynamic steps: {new_step_names}")
+            # Note: The current execution loop in execute() is sequential across groups.
+            # To support true dynamic DAG expansion, we'd need to rebuild the plan 
+            # and continue execution. For now, we'll mark these as injected
+            # and they will be handled by the next group if they were added to the chain spec.
+            # Actually, we need to update the chain spec dynamically.
+            if chain_name:
+                chain_spec = self.builder.chain_registry.get_spec(chain_name)
+                if chain_spec:
+                    # Add new steps to chain if not already there
+                    for name in new_step_names:
+                        if name not in chain_spec.steps:
+                            chain_spec.steps.append(name)
+                    
+                    # Re-build the plan for remaining steps
+                    # This is a bit expensive but necessary for dynamic DAGs
+                    new_plan = self.builder.build(chain_name)
+                    # We can't easily replace the 'plan' variable in execute() 
+                    # because we're inside a recursive-like call structure.
+                    # Instead, we'll signal the executor to re-evaluate.
+                    ctx.set("__dag_needs_rebuild__", True, scope=ContextScope.CHAIN)
 
     async def _run_before_middleware(self, ctx: ChainContext, step_name: str) -> None:
         """

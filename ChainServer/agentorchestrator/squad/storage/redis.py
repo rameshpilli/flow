@@ -60,6 +60,7 @@ class RedisChatStorage(ChatStorage):
     # Default key prefix for chat data
     KEY_PREFIX = "squad:chat"
     INDEX_PREFIX = "squad:chat_index"
+    SHARED_MEMORY_PREFIX = "squad:shared_memory"
 
     def __init__(
         self,
@@ -84,6 +85,7 @@ class RedisChatStorage(ChatStorage):
         self.ttl_seconds = ttl_seconds
         self.key_prefix = key_prefix or self.KEY_PREFIX
         self.index_prefix = f"{self.key_prefix}_index"
+        self.shared_memory_prefix = f"{self.key_prefix}_shared"
 
     def _chat_key(self, user_id: str, session_id: str, agent_id: str) -> str:
         """Generate Redis key for agent chat history."""
@@ -92,6 +94,45 @@ class RedisChatStorage(ChatStorage):
     def _index_key(self, user_id: str, session_id: str) -> str:
         """Generate Redis key for session's agent index."""
         return f"{self.index_prefix}:{user_id}:{session_id}"
+
+    def _shared_memory_key(self, user_id: str, session_id: str) -> str:
+        """Generate Redis key for shared session memory."""
+        return f"{self.shared_memory_prefix}:{user_id}:{session_id}"
+
+    async def update_shared_memory(
+        self,
+        user_id: str,
+        session_id: str,
+        key: str,
+        value: Any
+    ) -> bool:
+        """Update shared memory for a session (e.g. summaries, context)."""
+        await self._ensure_connected()
+        try:
+            shared_key = self._shared_memory_key(user_id, session_id)
+            existing = await self.redis.get(shared_key)
+            memory = json.loads(existing) if existing else {}
+            memory[key] = value
+            await self.redis.set(shared_key, json.dumps(memory), ttl=self.ttl_seconds)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update shared memory: {e}")
+            return False
+
+    async def get_shared_memory(
+        self,
+        user_id: str,
+        session_id: str
+    ) -> dict[str, Any]:
+        """Retrieve shared memory for a session."""
+        await self._ensure_connected()
+        try:
+            shared_key = self._shared_memory_key(user_id, session_id)
+            data = await self.redis.get(shared_key)
+            return json.loads(data) if data else {}
+        except Exception as e:
+            logger.error(f"Failed to get shared memory: {e}")
+            return {}
 
     def _message_to_dict(
         self,

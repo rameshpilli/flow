@@ -15,10 +15,13 @@ AgentOrchestrator is a lightweight, decorator-driven framework for building data
 | **Multi-Agent Patterns** | Squad, Supervisor, FunctionAgent with handoffs, and intent-based routing |
 | **Type-Safe State Management** | Pydantic models for validated, type-safe workflow state with IDE autocomplete |
 | **LLM Gateway Integration** | OAuth-enabled LLM client for corporate environments with structured output support |
+| **RAG with Cohere Compass** | Built-in support for Cohere Compass for high-performance enterprise document retrieval |
 | **Memory & Storage** | InMemory, Redis, and Mem0 semantic memory for conversation persistence |
+| **Shared Squad Memory** | Cross-agent shared context for collaborative multi-agent teams |
+| **Secret Management** | Standardized HashiCorp Vault integration with environment fallback |
 | **Middleware Stack** | Pluggable logging, caching, summarization, rate limiting, and circuit breakers |
 | **Resilience Patterns** | Retry with backoff, circuit breakers, timeouts, and fail-fast cancellation |
-| **Observability** | Structured logging, OpenTelemetry tracing, and metrics collection |
+| **Observability** | Standardized observability service for tracing, metrics, and application logs |
 | **CLI Tools** | Run, validate, visualize, and debug chains from command line |
 | **Event-Driven Workflows** | Event bus (Redis-backed or in-memory), event handlers, streaming step/agent/tool events |
 | **Declarative DSL (Preview)** | Build pipelines via a fluent builder instead of decorators; register steps, chains, and events together |

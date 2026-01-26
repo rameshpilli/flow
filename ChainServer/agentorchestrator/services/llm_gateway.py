@@ -636,8 +636,19 @@ class LLMGatewayClient:
         return response.json()
 
     def _estimate_tokens(self, text: str) -> int:
-        """Estimate token count (~4 chars per token for most models)."""
-        return len(text) // 4
+        """Estimate token count using tiktoken (if available) or fallback to heuristic."""
+        try:
+            import tiktoken
+            # Attempt to get encoding for the specific model
+            try:
+                encoding = tiktoken.encoding_for_model(self.model_name or "gpt-4")
+            except KeyError:
+                # Fallback to cl100k_base for newer/unknown models
+                encoding = tiktoken.get_encoding("cl100k_base")
+            return len(encoding.encode(text))
+        except ImportError:
+            # Fallback to rough heuristic (~4 chars per token)
+            return len(text) // 4
 
     def _truncate_if_needed(
         self,

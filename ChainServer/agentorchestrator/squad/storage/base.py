@@ -376,41 +376,25 @@ class ChatStorage(ABC):
         session_id: str,
         agent_id: Optional[str] = None
     ) -> bool:
-        """
-        Clear chat history for a session.
+        """Clear chat history for a session."""
+        pass
 
-        Removes stored messages. Can clear for a specific agent
-        or all agents in the session.
+    @abstractmethod
+    async def update_shared_memory(
+        self,
+        user_id: str,
+        session_id: str,
+        key: str,
+        value: Any
+    ) -> bool:
+        """Update shared memory for a session (e.g. summaries, context)."""
+        pass
 
-        Args:
-            user_id (str): Unique identifier for the user.
-            session_id (str): Unique identifier for the session.
-            agent_id (str | None): If provided, only clears history
-                for this agent. If None, clears all agents.
-
-        Returns:
-            bool: True if cleared successfully. Returns True even
-                if no history existed to clear.
-
-        Raises:
-            NotImplementedError: If not overridden by subclass.
-
-        Example:
-            >>> # Clear specific agent's history
-            >>> await storage.clear_chat(
-            ...     user_id="user-1",
-            ...     session_id="session-1",
-            ...     agent_id="support-agent",
-            ... )
-            >>>
-            >>> # Clear entire session
-            >>> await storage.clear_chat(
-            ...     user_id="user-1",
-            ...     session_id="session-1",
-            ... )
-
-        Warning:
-            This operation is irreversible. Consider implementing
-            soft deletes in production systems.
-        """
+    @abstractmethod
+    async def get_shared_memory(
+        self,
+        user_id: str,
+        session_id: str
+    ) -> dict[str, Any]:
+        """Retrieve shared memory for a session."""
         pass

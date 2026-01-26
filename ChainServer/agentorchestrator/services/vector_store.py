@@ -154,77 +154,22 @@ class VectorStoreConfig:
 
     Supports both in-memory storage (for development) and remote
     vector databases (for production).
-
-    Attributes:
-        host (str | None): Base URL for remote vector service. Default: None.
-            Example: "https://vector-db.corp.com/api"
-        api_key (str | None): API key or token for authentication. Default: None.
-        namespace (str): Namespace/collection name for isolation. Default: "default".
-        timeout (float): HTTP timeout in seconds. Default: 30.0.
-        provider (str): Storage provider. Default: "memory".
-            Options: "memory" for in-memory, or remote provider ID.
-
-    Environment Variables:
-        VECTOR_HOST: Base URL for the vector service
-        VECTOR_API_KEY: API key or token
-        VECTOR_NAMESPACE: Namespace/collection name
-        VECTOR_TIMEOUT: HTTP timeout seconds
-        VECTOR_PROVIDER: Provider identifier ("memory" or remote)
-
-    Methods:
-        from_env(): Load configuration from environment variables.
-
-    Example:
-        >>> # In-memory configuration (default)
-        >>> config = VectorStoreConfig()
-        >>> print(config.provider)  # "memory"
-        >>>
-        >>> # Remote configuration
-        >>> config = VectorStoreConfig(
-        ...     host="https://vector-db.corp.com/api",
-        ...     api_key="sk-xxx",
-        ...     namespace="my-app-prod",
-        ...     provider="pinecone",
-        ... )
-        >>>
-        >>> # From environment
-        >>> config = VectorStoreConfig.from_env()
-
-    See Also:
-        VectorStoreService: Service that uses this configuration.
     """
 
     host: str | None = None
     api_key: str | None = None
     namespace: str = "default"
     timeout: float = 30.0
-    provider: str = "memory"  # "memory" or remote provider identifier
+    provider: str = "memory"  # "memory", "redis", "pinecone", "cohere_compass"
+
+    # Cohere Compass specific (overrides common settings if provider is cohere_compass)
+    compass_index_name: str | None = None
+    parser_url: str | None = None
+    parser_api_key: str | None = None
 
     @classmethod
     def from_env(cls, prefix: str = "VECTOR") -> "VectorStoreConfig":
-        """
-        Load configuration from environment variables.
-
-        Reads environment variables with the specified prefix and creates
-        a configuration instance.
-
-        Args:
-            prefix (str): Environment variable prefix. Default: "VECTOR".
-                Variables are read as {prefix}_{KEY}, e.g., VECTOR_HOST.
-
-        Returns:
-            VectorStoreConfig: Configuration loaded from environment.
-
-        Example:
-            >>> import os
-            >>> os.environ["VECTOR_HOST"] = "https://vector-db.corp.com"
-            >>> os.environ["VECTOR_API_KEY"] = "sk-xxx"
-            >>> os.environ["VECTOR_PROVIDER"] = "pinecone"
-            >>>
-            >>> config = VectorStoreConfig.from_env()
-            >>> print(config.host)  # "https://vector-db.corp.com"
-        """
-
+        """Load configuration from environment variables."""
         def getenv(key: str, default: Any = None) -> Any:
             return os.getenv(f"{prefix}_{key}", default)
 
@@ -232,11 +177,14 @@ class VectorStoreConfig:
         timeout = float(timeout_val) if timeout_val else 30.0
 
         return cls(
-            host=getenv("HOST"),
-            api_key=getenv("API_KEY"),
+            host=getenv("HOST") or os.getenv("COHERE_COMPASS_URL"),
+            api_key=getenv("API_KEY") or os.getenv("COHERE_COMPASS_API_KEY"),
             namespace=getenv("NAMESPACE", "default"),
             timeout=timeout,
             provider=getenv("PROVIDER", "memory") or "memory",
+            compass_index_name=getenv("COMPASS_INDEX_NAME") or os.getenv("COHERE_COMPASS_INDEX_NAME"),
+            parser_url=getenv("PARSER_URL") or os.getenv("COHERE_COMPASS_PARSER_URL"),
+            parser_api_key=getenv("PARSER_API_KEY") or os.getenv("COHERE_COMPASS_PARSER_API_KEY"),
         )
 
 
@@ -518,43 +466,32 @@ class VectorStoreService:
                 If None, uses in-memory storage with default settings.
             embedder (Callable | None): Custom embedding function.
                 Only used for in-memory mode. Signature: (text: str) -> list[float]
-
-        Example:
-            >>> # In-memory with defaults
-            >>> store = VectorStoreService()
-            >>>
-            >>> # In-memory with custom embedder
-            >>> store = VectorStoreService(embedder=my_embedding_func)
-            >>>
-            >>> # Remote with config
-            >>> config = VectorStoreConfig.from_env()
-            >>> store = VectorStoreService(config=config)
         """
         self.config = config or VectorStoreConfig()
         self.embedder = embedder
         self._memory_store = InMemoryVectorStore(embedder) if self.config.provider == "memory" else None
+        self._cohere_compass = None
+        
+        if self.config.provider == "cohere_compass":
+            from agentorchestrator.services.cohere_compass import CohereCompassService
+            self._cohere_compass = CohereCompassService(
+                server_url=self.config.host,
+                api_key=self.config.api_key,
+                index_name=self.config.compass_index_name or self.config.namespace,
+                timeout=self.config.timeout
+            )
+            
         self._http_client = None
 
     async def connect(self) -> bool:
         """
         Initialize connection to vector store.
-
-        For in-memory mode, this is a no-op. For remote providers,
-        verifies that the HTTP client is available.
-
-        Returns:
-            bool: True if connection is ready.
-
-        Raises:
-            RuntimeError: If httpx is not installed for remote mode.
-
-        Example:
-            >>> store = VectorStoreService(config=remote_config)
-            >>> await store.connect()
-            >>> # Now ready for operations
         """
         if self._memory_store:
             return True
+        if self._cohere_compass:
+            return await self._cohere_compass.health_check()
+            
         try:
             import httpx  # noqa: F401
         except ImportError:
@@ -564,31 +501,17 @@ class VectorStoreService:
     async def upsert(self, docs: Iterable[VectorDocument]) -> None:
         """
         Add or update documents in the store.
-
-        Documents with existing IDs are updated; new IDs are added.
-        In memory mode, documents are embedded locally. In remote mode,
-        documents are sent to the vector service.
-
-        Args:
-            docs (Iterable[VectorDocument]): Documents to upsert.
-
-        Raises:
-            httpx.HTTPStatusError: If remote API returns error.
-
-        Example:
-            >>> docs = [
-            ...     VectorDocument(id="1", text="First document"),
-            ...     VectorDocument(id="2", text="Second document"),
-            ... ]
-            >>> await store.upsert(docs)
-            >>>
-            >>> # Update existing document
-            >>> await store.upsert([
-            ...     VectorDocument(id="1", text="Updated first document"),
-            ... ])
         """
         if self._memory_store:
             await self._memory_store.add_documents(docs)
+            return
+
+        if self._cohere_compass:
+            compass_docs = [
+                {"id": doc.id, "text": doc.text, "metadata": doc.metadata}
+                for doc in docs
+            ]
+            await self._cohere_compass.upsert(compass_docs)
             return
 
         client = await self._get_http_client()
@@ -606,30 +529,22 @@ class VectorStoreService:
     async def query(self, query_text: str, top_k: int = 5) -> list[VectorMatch]:
         """
         Search for similar documents.
-
-        Finds documents most similar to the query text using
-        vector similarity search.
-
-        Args:
-            query_text (str): Query text to search for.
-            top_k (int): Maximum number of results. Default: 5.
-
-        Returns:
-            list[VectorMatch]: Matches sorted by similarity (highest first).
-
-        Raises:
-            httpx.HTTPStatusError: If remote API returns error.
-
-        Example:
-            >>> matches = await store.query("machine learning", top_k=3)
-            >>> for match in matches:
-            ...     print(f"ID: {match.id}")
-            ...     print(f"Text: {match.text[:50]}...")
-            ...     print(f"Score: {match.score:.3f}")
-            ...     print()
         """
         if self._memory_store:
             return await self._memory_store.query(query_text, top_k=top_k)
+
+        if self._cohere_compass:
+            results = await self._cohere_compass.query(query_text, top_k=top_k)
+            matches = []
+            for item in results:
+                # Compass might return slightly different fields
+                matches.append(VectorMatch(
+                    id=item.get("id", item.get("doc_id", "")),
+                    text=item.get("text", ""),
+                    score=float(item.get("score", 0.0)),
+                    metadata=item.get("metadata", {}) or {},
+                ))
+            return matches
 
         client = await self._get_http_client()
         payload = {
@@ -657,21 +572,12 @@ class VectorStoreService:
     async def health_check(self) -> bool:
         """
         Check if vector store is healthy.
-
-        For in-memory mode, always returns True. For remote mode,
-        pings the health endpoint.
-
-        Returns:
-            bool: True if service is healthy.
-
-        Example:
-            >>> if await store.health_check():
-            ...     print("Vector store is ready")
-            ... else:
-            ...     print("Vector store is unavailable")
         """
         if self._memory_store:
             return True
+        if self._cohere_compass:
+            return await self._cohere_compass.health_check()
+            
         try:
             client = await self._get_http_client()
             resp = await client.get(

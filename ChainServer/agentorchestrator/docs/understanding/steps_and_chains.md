@@ -116,20 +116,36 @@ result = ao.run_sync("my_chain", {"input": "data"})
 
 ## Advanced Patterns
 
-### Dynamic Step Selection
+### Dynamic DAG Modification (NEW)
+
+Steps can dynamically inject new steps into the DAG during execution. This is useful for map-reduce patterns or conditional branching.
+
+To inject steps, return a dictionary containing the special `__dynamic_steps__` key:
 
 ```python
-@ao.chain(name="conditional_chain")
-class ConditionalChain:
-    steps = ["analyze", "route"]
-
-    async def on_step_complete(self, step_name, result, ctx):
-        if step_name == "route":
-            if result.get("needs_review"):
-                ctx.add_steps(["human_review"])
-            else:
-                ctx.add_steps(["auto_approve"])
+@ao.step(name="planner")
+async def planner(ctx):
+    tasks = ["task_1", "task_2", "task_3"]
+    
+    # Create dynamic steps
+    dynamic_steps = []
+    for i, t in enumerate(tasks):
+        dynamic_steps.append({
+            "name": f"worker_{i}",
+            "handler": my_worker_func,
+            "deps": ["planner"]
+        })
+    
+    return {
+        "plan_complete": True,
+        "__dynamic_steps__": dynamic_steps
+    }
 ```
+
+The executor will automatically:
+1. Register the new steps
+2. Rebuild the execution plan
+3. Continue execution including the new steps
 
 ### Sub-Chains
 

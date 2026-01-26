@@ -135,18 +135,35 @@ class InMemoryChatStorage(ChatStorage):
     def __init__(self):
         """
         Initialize empty in-memory storage with thread safety.
-
-        Creates an empty nested defaultdict structure and an asyncio
-        lock for thread-safe operations.
-
-        Example:
-            >>> storage = InMemoryChatStorage()
-            >>> # Storage is ready to use
         """
         self._storage: dict[str, dict[str, dict[str, list[ConversationMessage]]]] = defaultdict(
             lambda: defaultdict(lambda: defaultdict(list))
         )
+        self._shared_memory: dict[str, dict[str, dict[str, Any]]] = defaultdict(
+            lambda: defaultdict(dict)
+        )
         self._lock = asyncio.Lock()
+
+    async def update_shared_memory(
+        self,
+        user_id: str,
+        session_id: str,
+        key: str,
+        value: Any
+    ) -> bool:
+        """Update shared memory for a session."""
+        async with self._lock:
+            self._shared_memory[user_id][session_id][key] = value
+            return True
+
+    async def get_shared_memory(
+        self,
+        user_id: str,
+        session_id: str
+    ) -> dict[str, Any]:
+        """Retrieve shared memory for a session."""
+        async with self._lock:
+            return self._shared_memory[user_id][session_id].copy()
 
     def _get_storage_key(self, user_id: str, session_id: str, agent_id: str) -> list[ConversationMessage]:
         """

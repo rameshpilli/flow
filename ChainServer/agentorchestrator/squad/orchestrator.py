@@ -303,7 +303,10 @@ class MultiAgentOrchestrator:
 
         This is the main entry point for processing user requests.
         It classifies the intent, routes to the right agent,
-        and manages conversation storage.
+        and manages conversation storage. 
+        
+        Supports Agent Handoffs: If an agent returns a handoff request,
+        the orchestrator will automatically route the input to the new agent.
 
         Args:
             user_input: User's input text
@@ -316,70 +319,105 @@ class MultiAgentOrchestrator:
             AgentResponse with metadata and output
         """
         self.execution_times.clear()
+        max_handoffs = 3
+        current_handoff = 0
+        current_input = user_input
+        current_agent_id = None
 
         try:
-            # Step 1: Classify
+            # Step 1: Classify (initial)
             classifier_result = await self.classify_request(
-                user_input, user_id, session_id
+                current_input, user_id, session_id
             )
 
-            # Step 2: Check if we have an agent
-            if not classifier_result.selected_agent:
+            while current_handoff <= max_handoffs:
+                # Step 2: Check if we have an agent
+                if not classifier_result.selected_agent:
+                    return AgentResponse(
+                        metadata=self._create_metadata(
+                            None, current_input, user_id, session_id, additional_params
+                        ),
+                        output=ConversationMessage(
+                            role=ParticipantRole.ASSISTANT.value,
+                            content=[{"text": self.config.NO_SELECTED_AGENT_MESSAGE}]
+                        ),
+                        streaming=False
+                    )
+
+                # Step 3: Dispatch to agent
+                agent = classifier_result.selected_agent
+                current_agent_id = agent.id
+                agent_response_msg = await self.dispatch_to_agent(
+                    current_input, user_id, session_id,
+                    classifier_result, additional_params
+                )
+
+                # Check if the agent wants to hand off (special metadata or return type)
+                # For now, we look at the message content for a handoff signal 
+                # or we can check if agent_response_msg has a handoff attribute if we wrapped it
+                handoff_target_id = None
+                if hasattr(agent_response_msg, "handoff_to") and agent_response_msg.handoff_to:
+                    handoff_target_id = agent_response_msg.handoff_to
+                
+                if handoff_target_id and handoff_target_id in self.agents:
+                    logger.info(f"Agent {agent.id} requested handoff to {handoff_target_id}")
+                    classifier_result = ClassifierResult(
+                        selected_agent=self.agents[handoff_target_id],
+                        confidence=1.0
+                    )
+                    current_handoff += 1
+                    continue # Loop to the next agent
+
+                # Step 4: Save conversation
+                # Save user message
+                await self._save_message(
+                    ConversationMessage(
+                        role=ParticipantRole.USER.value,
+                        content=[{"text": current_input}]
+                    ),
+                    user_id, session_id, agent
+                )
+
+                # Handle streaming vs non-streaming
+                if agent.is_streaming_enabled() and stream_response:
+                    # Return streaming response
+                    final_response = await self._process_streaming_response(
+                        agent_response_msg, user_id, session_id, agent
+                    )
+                else:
+                    # Non-streaming
+                    if isinstance(agent_response_msg, AsyncIterable):
+                        # Consume stream to get final message
+                        final_response = await self._consume_stream(agent_response_msg)
+                    else:
+                        final_response = agent_response_msg
+
+                    # Save assistant message
+                    await self._save_message(final_response, user_id, session_id, agent)
+
+                # Step 5: Log execution times
+                if self.config.LOG_EXECUTION_TIMES:
+                    self._log_execution_times()
+
                 return AgentResponse(
                     metadata=self._create_metadata(
-                        None, user_input, user_id, session_id, additional_params
+                        classifier_result, current_input, user_id, session_id, additional_params
                     ),
-                    output=ConversationMessage(
-                        role=ParticipantRole.ASSISTANT.value,
-                        content=[{"text": self.config.NO_SELECTED_AGENT_MESSAGE}]
-                    ),
-                    streaming=False
+                    output=final_response,
+                    streaming=agent.is_streaming_enabled() and stream_response
                 )
 
-            # Step 3: Dispatch to agent
-            agent = classifier_result.selected_agent
-            agent_response = await self.dispatch_to_agent(
-                user_input, user_id, session_id,
-                classifier_result, additional_params
-            )
-
-            # Step 4: Save conversation
-            # Save user message
-            await self._save_message(
-                ConversationMessage(
-                    role=ParticipantRole.USER.value,
-                    content=[{"text": user_input}]
-                ),
-                user_id, session_id, agent
-            )
-
-            # Handle streaming vs non-streaming
-            if agent.is_streaming_enabled() and stream_response:
-                # Return streaming response
-                final_response = await self._process_streaming_response(
-                    agent_response, user_id, session_id, agent
-                )
-            else:
-                # Non-streaming
-                if isinstance(agent_response, AsyncIterable):
-                    # Consume stream to get final message
-                    final_response = await self._consume_stream(agent_response)
-                else:
-                    final_response = agent_response
-
-                # Save assistant message
-                await self._save_message(final_response, user_id, session_id, agent)
-
-            # Step 5: Log execution times
-            if self.config.LOG_EXECUTION_TIMES:
-                self._log_execution_times()
-
+            # If we exceeded max handoffs
+            logger.warning(f"Exceeded maximum handoffs ({max_handoffs}) for session {session_id}")
             return AgentResponse(
                 metadata=self._create_metadata(
-                    classifier_result, user_input, user_id, session_id, additional_params
+                    classifier_result, current_input, user_id, session_id, additional_params
                 ),
-                output=final_response,
-                streaming=agent.is_streaming_enabled() and stream_response
+                output=ConversationMessage(
+                    role=ParticipantRole.ASSISTANT.value,
+                    content=[{"text": "I'm sorry, I'm having trouble routing your request. Please try again."}]
+                ),
+                streaming=False
             )
 
         except Exception as e:

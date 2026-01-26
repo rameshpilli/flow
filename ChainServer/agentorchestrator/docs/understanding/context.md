@@ -126,7 +126,10 @@ When offloaded, context stores a `ContextRef` that transparently retrieves data 
 
 ## Context in Multi-Agent Systems
 
-For multi-agent scenarios, each agent can have isolated context via namespaces:
+AgentOrchestrator provides two ways to manage state in multi-agent systems:
+
+### 1. Context Isolation (Namespaces)
+Prevent context pollution by giving each agent its own isolated namespace:
 
 ```python
 from agentorchestrator.squad.context import ContextIsolationManager
@@ -138,6 +141,21 @@ isolation = ContextIsolationManager(coordinator_context=ctx)
 for agent in team:
     namespace = isolation.create_namespace(agent.id)
     # Agent only sees its own data + explicitly shared keys
+```
+
+### 2. Shared Squad Memory (NEW)
+When using `RedisChatStorage`, agents in a squad can share a persistent "session memory" that survives across different agents and chains in the same session.
+
+```python
+# Save to shared memory
+await storage.update_shared_memory(
+    user_id, session_id, 
+    key="user_mood", value="frustrated"
+)
+
+# Retrieve from shared memory
+memory = await storage.get_shared_memory(user_id, session_id)
+print(memory.get("user_mood"))
 ```
 
 See [Multi-Agent Systems](multi_agent.md) for full details on context isolation.

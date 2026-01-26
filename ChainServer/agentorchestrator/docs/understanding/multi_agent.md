@@ -191,6 +191,9 @@ response = await orchestrator.route_request(
 
 ## Agent Handoffs ✅
 
+AgentOrchestrator supports two types of handoffs:
+
+### 1. Explicit Handoff (FunctionAgent)
 Use `FunctionAgent` for explicit agent-to-agent delegation with context transfer:
 
 ```python
@@ -215,11 +218,21 @@ handoff = await researcher.handoff(
     context={"findings": findings, "sources": sources},
     message="Research complete. Please write a summary.",
 )
-
-# Orchestrator uses handoff.to_agent to route to Writer
-print(f"{handoff.from_agent} → {handoff.to_agent}")
-# "Researcher → Writer"
 ```
+
+### 2. Automatic Signal Handoff (MultiAgentOrchestrator)
+Agents can now signal a handoff in their response metadata. The `MultiAgentOrchestrator` will automatically re-route to the new agent without user intervention.
+
+```python
+# In your agent's process_request:
+return ConversationMessage(
+    role="assistant",
+    content=[{"text": "I'm handing you over to the Finance expert."}],
+    handoff_to="finance-agent"  # Signal automatic handoff
+)
+```
+
+The orchestrator allows up to 3 consecutive automatic handoffs to prevent loops.
 
 ## Context Isolation ✅
 

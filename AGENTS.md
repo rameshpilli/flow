@@ -131,25 +131,22 @@ Middleware wraps step execution: `before()` → step → `after()` / `on_error()
 
 | Feature | Location | Notes |
 |---------|----------|-------|
-| DAG Execution | `core/dag.py` | Automatic parallelization |
+| DAG Execution | `core/dag.py` | Automatic parallelization with **Dynamic Steps** ✓ |
 | Context Management | `core/context.py` | 3 scopes, thread-safe, token tracking |
 | **Pydantic State** | `core/state.py` | Type-safe state with validation, atomic updates |
 | **Event-Driven Workflows** | `core/event_bus.py` | Event handlers, pub/sub, Redis or in-memory |
 | **Declarative DSL** | `dsl/pipeline.py` | Build pipelines without decorators |
 | Middleware Pipeline | `middleware/` | Cache, Logger, Summarizer, TokenManager, etc. |
-| LLM Integration | `services/llm_gateway.py` | OAuth + API key, structured output |
-| Vector Store | `services/vector_store.py` | In-memory + HTTP remote provider |
-| Multi-Agent Routing | `squad/orchestrator.py` | Intent classification, routing |
+| LLM Integration | `services/llm_gateway.py` | OAuth + API key, structured output, **tiktoken** ✓ |
+| Vector Store | `services/vector_store.py` | In-memory + **Cohere Compass** integration ✓ |
+| Multi-Agent Routing | `squad/orchestrator.py` | Intent classification, **Agent Handoffs** ✓ |
 | Supervisor Pattern | `squad/agents/supervisor.py` | Team coordination, validation |
+| Shared Memory | `squad/storage/redis.py` | **Cross-agent shared context** ✓ |
+| Secret Management | `services/secrets.py` | **HashiCorp Vault** + Env fallback ✓ |
 | Resilience | `agents/resilient.py` | Timeout, retry, circuit breaker |
 | Streaming | `squad/agents/` | LLM token streaming |
 | OpenTelemetry | `utils/tracing.py` | Spans, traces, graceful fallback |
-| Tool Schemas | `plugins/capability.py` | JSON Schema, validation, @capability |
-| Checkpointing | `core/run_store.py` | Resume from last successful step |
-| CLI | `cli.py` | run, check, list, graph, new |
-| Scaffolding | `templates/scaffolding.py` | Full project generation |
-| MCP Connector | `connectors/mcp.py` | Tool discovery, execution |
-| Citations | `models/citation.py` | Collection, verification |
+| Observability | `services/observability.py`| **Standardized service placeholder** ✓ |
 
 ---
 
@@ -159,7 +156,6 @@ Middleware wraps step execution: `before()` → step → `after()` / `on_error()
 | Feature | Why It Matters |
 |---------|----------------|
 | **Deep Research Agent** | Multi-stage research with web search, question decomposition, report synthesis |
-| **Agent Handoffs** | Explicit A→B→C agent delegation with context transfer |
 | **Developer Docs Overhaul** | LlamaIndex-quality docs for 100+ user adoption |
 
 ### Medium-Term
