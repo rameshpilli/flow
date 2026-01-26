@@ -898,6 +898,7 @@ print(f"Passed Threshold: {step_trace['passed_threshold']}")
 | **Hello World** | Basic step and chain setup | [examples/getting_started/](examples/getting_started/) |
 | **Supervisor Chain** | Multi-agent supervisor pattern | [examples/supervisor_chain.py](examples/supervisor_chain.py) |
 | **Financial Research** | Deep research agent with MCP servers | [examples/financial_research_agent.py](examples/financial_research_agent.py) |
+| **Hybrid Memory** | 3-layer memory architecture (Session/Long-term/Reference) | [examples/hybrid_memory_pitchbook.py](examples/hybrid_memory_pitchbook.py) |
 | **RAG Pipeline** | Retrieval-augmented generation | [examples/rag/](examples/rag/) |
 | **Memory Integration** | Chat storage and semantic memory | [examples/memory/](examples/memory/) |
 
