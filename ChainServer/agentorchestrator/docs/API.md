@@ -100,7 +100,7 @@ vs = VectorStoreService()
 await vs.upsert([
     VectorDocument(id="d1", text="Use async for I/O", metadata={"topic": "python"})
 ])
-results = await vs.query("How to handle I/O?", limit=5)
+results = await vs.query("How to handle I/O?", top_k=5)
 ```
 
 ---

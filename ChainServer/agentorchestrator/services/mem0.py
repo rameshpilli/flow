@@ -395,16 +395,26 @@ class Mem0Memory(BaseMemory):
         """
         self.client = client
         self.default_user_id = default_user_id
-        self._loop = None
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
-        """Get or create event loop for sync-to-async bridging."""
+        """
+        Get the running event loop for sync-to-async bridging.
+
+        This class is designed for async-only usage. All public methods
+        (add, search, get_all, delete, clear, get_context_for_query) are
+        async and must be called from within a running event loop.
+
+        Raises:
+            RuntimeError: If called outside of an async context (no running event loop).
+        """
         try:
             return asyncio.get_running_loop()
         except RuntimeError:
-            if self._loop is None:
-                self._loop = asyncio.new_event_loop()
-            return self._loop
+            raise RuntimeError(
+                "Mem0Memory methods must be called from within an async context "
+                "(e.g., inside an async function with a running event loop). "
+                "Use 'await memory.add(...)' inside an async function."
+            ) from None
 
     async def _run_sync(self, func, *args, **kwargs) -> Any:
         """Run synchronous mem0 client methods in thread pool."""

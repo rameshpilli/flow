@@ -73,6 +73,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, List, Optional
 
+from agentorchestrator.core.exceptions import ConfigurationError
+
 logger = logging.getLogger(__name__)
 
 
@@ -177,20 +179,20 @@ class VectorStoreConfig:
         def getenv(key: str, default: Any = None) -> Any:
             return os.getenv(f"{prefix}_{key}", default)
 
-            timeout_val = getenv("TIMEOUT")
-            timeout = float(timeout_val) if timeout_val else 30.0
+        timeout_val = getenv("TIMEOUT")
+        timeout = float(timeout_val) if timeout_val else 30.0
 
-            return cls(
-                host=getenv("HOST") or os.getenv("COHERE_COMPASS_URL"),
-                api_key=getenv("API_KEY") or os.getenv("COHERE_COMPASS_API_KEY"),
-                namespace=getenv("NAMESPACE", "default"),
-                timeout=timeout,
-                provider=getenv("PROVIDER", "memory") or "memory",
-                compass_index_name=getenv("COMPASS_INDEX_NAME") or os.getenv("COHERE_COMPASS_INDEX_NAME"),
-                parser_url=getenv("PARSER_URL") or os.getenv("COHERE_COMPASS_PARSER_URL"),
-                parser_api_key=getenv("PARSER_API_KEY") or os.getenv("COHERE_COMPASS_PARSER_API_KEY"),
-                verify_ssl=(getenv("VERIFY_SSL", "true").lower() != "false"),
-            )
+        return cls(
+            host=getenv("HOST") or os.getenv("COHERE_COMPASS_URL"),
+            api_key=getenv("API_KEY") or os.getenv("COHERE_COMPASS_API_KEY"),
+            namespace=getenv("NAMESPACE", "default"),
+            timeout=timeout,
+            provider=getenv("PROVIDER", "memory") or "memory",
+            compass_index_name=getenv("COMPASS_INDEX_NAME") or os.getenv("COHERE_COMPASS_INDEX_NAME"),
+            parser_url=getenv("PARSER_URL") or os.getenv("COHERE_COMPASS_PARSER_URL"),
+            parser_api_key=getenv("PARSER_API_KEY") or os.getenv("COHERE_COMPASS_PARSER_API_KEY"),
+            verify_ssl=(getenv("VERIFY_SSL", "true").lower() != "false"),
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -471,12 +473,20 @@ class VectorStoreService:
                 If None, uses in-memory storage with default settings.
             embedder (Callable | None): Custom embedding function.
                 Only used for in-memory mode. Signature: (text: str) -> list[float]
+
+        Raises:
+            ConfigurationError: If remote provider is configured without required host/api_key.
         """
         self.config = config or VectorStoreConfig()
         self.embedder = embedder
         self._memory_store = InMemoryVectorStore(embedder) if self.config.provider == "memory" else None
         self._cohere_compass = None
-        
+        self._http_client = None
+
+        # Validate configuration for remote providers
+        if self.config.provider != "memory":
+            self._validate_remote_config()
+
         if self.config.provider == "cohere_compass":
             from agentorchestrator.services.cohere_compass import CohereCompassService
             self._cohere_compass = CohereCompassService(
@@ -486,8 +496,21 @@ class VectorStoreService:
                 timeout=self.config.timeout,
                 verify_ssl=self.config.verify_ssl,
             )
-            
-        self._http_client = None
+
+    def _validate_remote_config(self) -> None:
+        """Validate that required fields are set for remote providers."""
+        missing_fields = []
+        if not self.config.host:
+            missing_fields.append("host")
+        if not self.config.api_key:
+            missing_fields.append("api_key")
+
+        if missing_fields:
+            raise ConfigurationError(
+                f"Remote vector store provider '{self.config.provider}' requires: {', '.join(missing_fields)}. "
+                f"Set these via VectorStoreConfig or environment variables (VECTOR_HOST, VECTOR_API_KEY).",
+                {"provider": self.config.provider, "missing_fields": missing_fields},
+            )
 
     async def connect(self) -> bool:
         """
@@ -615,6 +638,15 @@ class VectorStoreService:
         if self._http_client:
             await self._http_client.aclose()
             self._http_client = None
+
+    async def __aenter__(self) -> "VectorStoreService":
+        """Async context manager entry - connects to the store."""
+        await self.connect()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Async context manager exit - closes connections."""
+        await self.close()
 
     def _auth_headers(self) -> dict[str, str]:
         """Build authentication headers for remote API."""
