@@ -66,6 +66,15 @@ from agentorchestrator.middleware.reflection import (
     create_reflection_middleware,
     reflect,
 )
+from agentorchestrator.middleware.memory_lifecycle import (
+    MemoryLifecycleMiddleware,
+    MemoryLifecycleConfig,
+    ImportanceEvaluator,
+    HeuristicImportanceEvaluator,
+    LLMImportanceEvaluator,
+    PromotionResult,
+    create_memory_lifecycle_middleware,
+)
 from agentorchestrator.middleware.token_manager import TokenManagerMiddleware
 
 __all__ = [
@@ -126,6 +135,14 @@ __all__ = [
     "ReflectionResult",
     "reflect",
     "create_reflection_middleware",
+    # Memory Lifecycle (Session → Long-term Promotion)
+    "MemoryLifecycleMiddleware",
+    "MemoryLifecycleConfig",
+    "ImportanceEvaluator",
+    "HeuristicImportanceEvaluator",
+    "LLMImportanceEvaluator",
+    "PromotionResult",
+    "create_memory_lifecycle_middleware",
     # Other middleware
     "CacheMiddleware",
     "LoggerMiddleware",

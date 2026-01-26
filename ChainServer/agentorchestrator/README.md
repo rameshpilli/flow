@@ -43,6 +43,7 @@ AgentOrchestrator is a lightweight, decorator-driven framework for building data
 | **Middleware Stack** | Pluggable logging, caching, summarization, rate limiting, and circuit breakers |
 | **Self-Critique (Reflection)** | Agent self-critique with quality scoring, automatic revision, and `@reflect` decorator |
 | **Citation Tracking** | Automatic source attribution and citation reports for RAG pipelines |
+| **Memory Lifecycle** | Auto-promote important session data to long-term memory with importance scoring |
 | **MCP Connectors** | Model Context Protocol integration for external tool servers (HTTP, stdio, SSE) |
 | **Resilience Patterns** | Retry with backoff, circuit breakers, timeouts, and fail-fast cancellation |
 | **Observability** | Standardized observability service for tracing, metrics, and application logs |
@@ -800,6 +801,97 @@ ao.use(IdempotencyMiddleware())
 | `IdempotencyMiddleware` | Prevent duplicate step execution |
 | `OffloadMiddleware` | Auto-offload large payloads to Redis |
 | `UsageAnalyticsMiddleware` | Usage tracking and analytics |
+| `MemoryLifecycleMiddleware` | Auto-promote session data to long-term memory |
+
+---
+
+## Memory Lifecycle Management
+
+Automatically promote important session data to long-term memory using the MemoryLifecycleMiddleware:
+
+```python
+from agentorchestrator.middleware import (
+    MemoryLifecycleMiddleware,
+    MemoryLifecycleConfig,
+    create_memory_lifecycle_middleware,
+)
+from agentorchestrator.squad.storage.redis import RedisChatStorage
+from agentorchestrator.services import Mem0Memory
+
+# Setup memory backends with user-configurable TTL
+session_storage = RedisChatStorage(ttl_seconds=86400)  # 24 hours
+longterm_memory = Mem0Memory(client=mem0_client)
+
+# Option 1: Heuristic-based promotion (no LLM required)
+ao.use(MemoryLifecycleMiddleware(
+    session_storage=session_storage,
+    longterm_memory=longterm_memory,
+    config=MemoryLifecycleConfig(
+        importance_threshold=0.8,      # Promote if score >= 0.8
+        auto_promote_patterns=True,    # User preferences/patterns
+        auto_promote_decisions=True,   # Key decisions
+        batch_size=10,                 # Batch before promoting
+        deduplicate=True,              # Skip duplicates
+    ),
+))
+
+# Option 2: LLM-based importance evaluation (more accurate)
+ao.use(create_memory_lifecycle_middleware(
+    session_storage=session_storage,
+    longterm_memory=longterm_memory,
+    llm_client=llm_client,             # Enables LLM evaluation
+    importance_threshold=0.75,
+))
+```
+
+### How Memory Promotion Works
+
+```
+Session Memory (Redis)              Long-term Memory (Mem0)
+      │                                     ▲
+      │                                     │
+      ▼                                     │
+┌──────────────┐                           │
+│ Step Output  │                           │
+└──────┬───────┘                           │
+       │                                    │
+       ▼                                    │
+┌──────────────┐                           │
+│  Evaluate    │  score >= 0.8? ───Yes────►│
+│  Importance  │                           │
+└──────┬───────┘                           │
+       │                                    │
+       No                                   │
+       ▼                                    │
+   (discard)
+```
+
+### Importance Evaluation Methods
+
+**Heuristic Evaluator** (default):
+- Detects patterns: "prefer", "like", "style", "always"
+- Detects decisions: "decide", "chose", "approve"
+- Detects solutions: "fix", "resolve", "workaround"
+
+**LLM Evaluator** (optional):
+```python
+from agentorchestrator.middleware import LLMImportanceEvaluator
+
+evaluator = LLMImportanceEvaluator(llm_client)
+middleware = MemoryLifecycleMiddleware(
+    longterm_memory=longterm_memory,
+    evaluator=evaluator,
+)
+```
+
+### Statistics
+
+```python
+stats = middleware.get_stats()
+# {"evaluated": 100, "promoted": 15, "rejected": 85, "avg_importance_score": 0.62}
+
+await middleware.flush()  # Manually flush pending promotions
+```
 
 ---
 
@@ -1087,6 +1179,10 @@ from agentorchestrator.middleware import (
     OffloadMiddleware,
     # Usage analytics
     UsageAnalyticsMiddleware,
+    # Memory lifecycle (session → long-term promotion)
+    MemoryLifecycleMiddleware,
+    MemoryLifecycleConfig,
+    create_memory_lifecycle_middleware,
 )
 
 # MCP Connectors (Model Context Protocol)
