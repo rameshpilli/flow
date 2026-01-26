@@ -152,11 +152,30 @@ class RedisEventBus(EventBus):
             await self._pubsub.subscribe(self.channel)
 
     async def publish(self, event: Event) -> None:
+        """
+        Publish an event to Redis pub/sub.
+        
+        Failure handling:
+        - Connection errors are logged and event is dropped (best-effort)
+        - For critical events, consider using a persistent queue instead
+        
+        Note: Redis pub/sub is fire-and-forget. If no subscribers are 
+        listening, the message is lost. For guaranteed delivery, use
+        Redis Streams or a message queue like RabbitMQ/Kafka.
+        """
         try:
             await self.redis_service.ensure_connected()
             await self.redis_service.client().publish(self.channel, event.to_json())
         except Exception as e:
-            logger.warning("RedisEventBus publish failed, dropping event: %s", e)
+            # Log at error level for visibility in monitoring
+            # Include event type for debugging which events are being lost
+            logger.error(
+                "RedisEventBus publish failed for event type=%s run_id=%s: %s. "
+                "Event will be dropped. Consider using persistent messaging for critical events.",
+                event.type,
+                event.run_id,
+                e,
+            )
 
     async def subscribe(
         self, event_types: Optional[Sequence[str]] = None
@@ -230,4 +249,182 @@ __all__ = [
     "InMemoryEventBus",
     "RedisEventBus",
     "get_event_bus",
+    # Standard event types
+    "EventTypes",
+    "emit_agent_event",
+    "emit_tool_event",
 ]
+
+
+class EventTypes:
+    """
+    Standard event type constants for AgentOrchestrator.
+    
+    Use these for consistent event naming across the framework.
+    
+    Step Events (emitted by DAGExecutor):
+        - StepStarted: Step execution began
+        - StepCompleted: Step finished successfully
+        - StepFailed: Step failed with error
+    
+    Agent Events (emit from your agent code):
+        - AgentStarted: Agent began processing
+        - AgentCompleted: Agent finished successfully
+        - AgentFailed: Agent failed with error
+        - AgentHandoff: Agent handed off to another agent
+    
+    Tool Events (emit from tool execution):
+        - ToolStarted: Tool execution began
+        - ToolCompleted: Tool finished with result
+        - ToolFailed: Tool failed with error
+    
+    Workflow Events:
+        - ChainStarted: Chain execution began
+        - ChainCompleted: Chain finished successfully
+        - ChainFailed: Chain failed
+    
+    Example:
+        >>> from agentorchestrator.core.event_bus import EventTypes, emit_agent_event
+        >>>
+        >>> # In your agent code
+        >>> await emit_agent_event(
+        ...     bus, EventTypes.AGENT_STARTED,
+        ...     agent_name="researcher",
+        ...     run_id=ctx.request_id,
+        ... )
+    """
+    # Step events (emitted by framework)
+    STEP_STARTED = "StepStarted"
+    STEP_COMPLETED = "StepCompleted"
+    STEP_FAILED = "StepFailed"
+    
+    # Agent events
+    AGENT_STARTED = "AgentStarted"
+    AGENT_COMPLETED = "AgentCompleted"
+    AGENT_FAILED = "AgentFailed"
+    AGENT_HANDOFF = "AgentHandoff"
+    AGENT_THINKING = "AgentThinking"  # For streaming thought process
+    
+    # Tool events
+    TOOL_STARTED = "ToolStarted"
+    TOOL_COMPLETED = "ToolCompleted"
+    TOOL_FAILED = "ToolFailed"
+    
+    # Chain/workflow events
+    CHAIN_STARTED = "ChainStarted"
+    CHAIN_COMPLETED = "ChainCompleted"
+    CHAIN_FAILED = "ChainFailed"
+    
+    # Dynamic workflow events
+    DYNAMIC_STEP_INJECTED = "DynamicStepInjected"
+    DAG_REBUILT = "DAGRebuilt"
+
+
+async def emit_agent_event(
+    bus: EventBus,
+    event_type: str,
+    agent_name: str,
+    run_id: str | None = None,
+    payload: dict | None = None,
+    **metadata,
+) -> None:
+    """
+    Emit an agent lifecycle event.
+    
+    Use this helper to emit standardized agent events from your agent code.
+    
+    Args:
+        bus: The EventBus instance to publish to.
+        event_type: One of EventTypes.AGENT_* constants.
+        agent_name: Name of the agent emitting the event.
+        run_id: Run identifier for event correlation.
+        payload: Optional event payload data.
+        **metadata: Additional metadata fields.
+    
+    Example:
+        >>> bus = get_event_bus()
+        >>>
+        >>> # When agent starts
+        >>> await emit_agent_event(
+        ...     bus, EventTypes.AGENT_STARTED,
+        ...     agent_name="researcher",
+        ...     run_id=ctx.request_id,
+        ...     payload={"input": query},
+        ... )
+        >>>
+        >>> # When agent completes
+        >>> await emit_agent_event(
+        ...     bus, EventTypes.AGENT_COMPLETED,
+        ...     agent_name="researcher",
+        ...     run_id=ctx.request_id,
+        ...     payload={"result": result},
+        ...     tokens_used=150,
+        ... )
+    """
+    event = Event(
+        type=event_type,
+        payload={
+            "agent_name": agent_name,
+            **(payload or {}),
+        },
+        run_id=run_id,
+        metadata={"agent": agent_name, **metadata},
+    )
+    await bus.publish(event)
+
+
+async def emit_tool_event(
+    bus: EventBus,
+    event_type: str,
+    tool_name: str,
+    run_id: str | None = None,
+    agent_name: str | None = None,
+    payload: dict | None = None,
+    **metadata,
+) -> None:
+    """
+    Emit a tool execution event.
+    
+    Use this helper to emit standardized tool events during tool execution.
+    
+    Args:
+        bus: The EventBus instance to publish to.
+        event_type: One of EventTypes.TOOL_* constants.
+        tool_name: Name of the tool being executed.
+        run_id: Run identifier for event correlation.
+        agent_name: Optional name of agent invoking the tool.
+        payload: Optional event payload data.
+        **metadata: Additional metadata fields.
+    
+    Example:
+        >>> bus = get_event_bus()
+        >>>
+        >>> # When tool starts
+        >>> await emit_tool_event(
+        ...     bus, EventTypes.TOOL_STARTED,
+        ...     tool_name="search",
+        ...     agent_name="researcher",
+        ...     run_id=ctx.request_id,
+        ...     payload={"args": {"query": "AI trends"}},
+        ... )
+        >>>
+        >>> # When tool completes
+        >>> await emit_tool_event(
+        ...     bus, EventTypes.TOOL_COMPLETED,
+        ...     tool_name="search",
+        ...     run_id=ctx.request_id,
+        ...     payload={"result": search_results},
+        ...     duration_ms=150.5,
+        ... )
+    """
+    event = Event(
+        type=event_type,
+        payload={
+            "tool_name": tool_name,
+            **({"agent_name": agent_name} if agent_name else {}),
+            **(payload or {}),
+        },
+        run_id=run_id,
+        metadata={"tool": tool_name, **metadata},
+    )
+    await bus.publish(event)

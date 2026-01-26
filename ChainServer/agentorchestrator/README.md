@@ -1,8 +1,29 @@
 # AgentOrchestrator
 
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+
 **A DAG-based Chain Orchestration Framework for AI/ML Pipelines**
 
 AgentOrchestrator is a lightweight, decorator-driven framework for building data processing pipelines with automatic dependency resolution, parallel execution, and production-grade resilience. It works alongside existing frameworks like LangChain, LlamaIndex, and CrewAI without requiring platform migration.
+
+---
+
+## Why AgentOrchestrator?
+
+| Feature | AgentOrchestrator | LangChain | LlamaIndex |
+|---------|-------------------|-----------|------------|
+| **Decorator-driven API** | ✅ `@ao.step()`, `@ao.chain()` | ❌ Class-based chains | ❌ Class-based |
+| **DAG execution** | ✅ Auto-parallel, resumable | ⚠️ Sequential chains | ⚠️ Limited |
+| **Type-safe state** | ✅ Pydantic models | ❌ Dict-based | ❌ Dict-based |
+| **Event-driven workflows** | ✅ Redis/in-memory bus | ❌ No native support | ❌ No native support |
+| **Multi-agent patterns** | ✅ Squad, Supervisor, ReAct | ⚠️ Agent executor only | ⚠️ Agent runner |
+| **Built-in resilience** | ✅ Retry, circuit breaker | ❌ Manual setup | ❌ Manual setup |
+| **Checkpointing/Resume** | ✅ Automatic | ❌ Manual | ❌ Manual |
+| **Corporate auth (OAuth)** | ✅ LLM Gateway | ❌ API keys only | ❌ API keys only |
+
+**Best for**: Teams that want Dagster-style ergonomics for AI pipelines with built-in resilience, multi-agent support, and enterprise authentication.
 
 ---
 
@@ -487,6 +508,121 @@ isolation.share_between("researcher", "findings", ["analyst", "writer"])
 # Aggregate results
 aggregator = ResultAggregator(strategy=AggregationStrategy.SYNTHESIZE)
 final = await aggregator.aggregate(llm=client)
+```
+
+---
+
+## Event-Driven Workflows
+
+Build reactive pipelines with event handlers and pub/sub:
+
+```python
+from agentorchestrator import AgentOrchestrator
+from agentorchestrator.core.event_bus import Event
+
+ao = AgentOrchestrator()
+
+# Define event handlers
+@ao.event_handler("ResearchTask")
+async def handle_research(ctx, event):
+    """Process research tasks and emit findings."""
+    query = event.payload.get("query")
+    findings = await do_research(query)
+    
+    # Emit new event with findings
+    return Event(
+        type="ResearchComplete",
+        payload={"findings": findings, "query": query},
+    )
+
+@ao.event_handler("ResearchComplete")
+async def handle_research_complete(ctx, event):
+    """Aggregate research findings."""
+    findings = event.payload.get("findings")
+    ctx.set("research_findings", findings)
+    
+    # Could emit more events for further processing
+    return Event(type="SynthesizeReport", payload={"findings": findings})
+
+# Run the event loop
+result = await ao.run_event_loop(
+    seed_events=[
+        Event(type="ResearchTask", payload={"query": "AI trends 2024"}),
+    ],
+    max_events=50,
+    timeout_s=60.0,
+    stop_when=lambda event, ctx: event.type == "SynthesizeReport",
+)
+
+print(f"Processed {result['processed']} events in {result['duration_ms']}ms")
+```
+
+### Event Bus Configuration
+
+```python
+# Use Redis-backed event bus for distributed systems
+from agentorchestrator.core.event_bus import get_event_bus
+
+# Auto-detects Redis if available, falls back to in-memory
+event_bus = get_event_bus(prefer_redis=True)
+
+# Create orchestrator with custom event bus
+ao = AgentOrchestrator(event_bus=event_bus)
+```
+
+### Built-in Events
+
+The DAG executor emits these events automatically:
+
+| Event Type | Payload | When Emitted |
+|------------|---------|--------------|
+| `StepStarted` | `{attempt}` | Step begins execution |
+| `StepCompleted` | `{duration_ms, retry_count}` | Step completes successfully |
+| `StepFailed` | `{error, error_type, duration_ms}` | Step fails |
+| `StepSkipped` | `{reason}` | Step skipped (dependency failed) |
+
+See: [examples/event_workflow.py](examples/event_workflow.py)
+
+---
+
+## ReAct Agent Pattern
+
+Industry-standard Thought→Action→Observation loop:
+
+```python
+from agentorchestrator.agents import ReActAgent, Tool, ToolRegistry
+
+# Create a tool registry
+registry = ToolRegistry()
+
+@registry.tool("search", "Search the web for information")
+async def search(query: str) -> str:
+    return await web_search(query)
+
+@registry.tool("calculate", "Evaluate mathematical expressions")
+def calculate(expression: str) -> str:
+    return str(eval(expression))  # Use safe eval in production
+
+# Create ReAct agent
+agent = ReActAgent(
+    llm_client=llm_client,
+    tools=registry.list_tools(),
+)
+
+# Run with reasoning trace
+result = await agent.run("What is the population of France divided by 3?")
+
+print(result.thought_trace)
+# Thought: I need to find the population of France first.
+# Action: search("population of France 2024")
+# Observation: The population of France is approximately 68 million.
+# Thought: Now I need to divide 68 million by 3.
+# Action: calculate("68000000 / 3")
+# Observation: 22666666.67
+# Thought: I have the answer.
+# Final Answer: The population of France (68 million) divided by 3 is approximately 22.67 million.
+
+print(result.final_answer)
 ```
 
 ---

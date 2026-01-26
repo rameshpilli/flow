@@ -138,12 +138,15 @@ nav:
     - Quick Start: QUICKSTART.md
     - Requirements: REQUIREMENTS.md
 
-  - Understanding:
+  - Core Concepts:
     - Overview: understanding/index.md
-    - Context: understanding/context.md
+    - Context & State: understanding/context.md
     - Steps & Chains: understanding/steps_and_chains.md
     - Agents: understanding/agents.md
     - Multi-Agent Systems: understanding/multi_agent.md
+    - Event-Driven Workflows: understanding/EVENT_WORKFLOWS.md
+    - Dynamic DAG: understanding/DYNAMIC_DAG.md
+    - Declarative DSL: understanding/DSL.md
 
   - Patterns:
     - Overview: patterns/index.md
@@ -154,15 +157,15 @@ nav:
 
   - CLI Reference:
     - Overview: cli/index.md
-    - Execution Commands: cli/run.md
+    - Running Chains: cli/run.md
     - Validation & Inspection: cli/validation.md
     - Scaffolding: cli/scaffolding.md
-    - Development & Debugging: cli/development.md
-    - Health & Diagnostics: cli/diagnostics.md
+    - Development Mode: cli/development.md
+    - Diagnostics & Doctor: cli/diagnostics.md
 
-  - Reference:
+  - API Reference:
+    - Full API: API.md
     - Architecture: ARCHITECTURE.md
-    - API Reference: API.md
     - Context Management: CONTEXT_MANAGEMENT.md
     - Feature Examples: FEATURE_EXAMPLES.md
 

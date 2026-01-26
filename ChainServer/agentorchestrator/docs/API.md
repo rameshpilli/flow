@@ -481,6 +481,335 @@ async def test_with_mock():
 
 ---
 
+## DSL Pipeline
+
+Declarative pipeline builder for creating chains without decorators.
+
+```python
+from agentorchestrator.dsl import Pipeline, Step
+
+# Define pipeline declaratively
+pipeline = Pipeline(name="data_processing") \
+    .add_step(Step(
+        name="fetch",
+        handler=fetch_data,
+        produces=["raw_data"],
+    )) \
+    .add_step(Step(
+        name="transform",
+        handler=transform_data,
+        deps=["fetch"],
+        produces=["processed_data"],
+    )) \
+    .add_step(Step(
+        name="save",
+        handler=save_results,
+        deps=["transform"],
+    ))
+
+# Register with orchestrator
+ao.register_pipeline(pipeline)
+
+# Or build from config
+config = {
+    "name": "my_pipeline",
+    "steps": [
+        {"name": "step1", "handler": "module:func1"},
+        {"name": "step2", "handler": "module:func2", "deps": ["step1"]},
+    ]
+}
+pipeline = Pipeline.from_config(config)
+```
+
+### Pipeline Methods
+
+| Method | Description |
+|--------|-------------|
+| `add_step(step)` | Add a step to the pipeline |
+| `add_middleware(middleware)` | Add middleware to the pipeline |
+| `from_config(config)` | Build pipeline from dict/YAML |
+| `to_config()` | Export pipeline as config dict |
+| `validate()` | Validate pipeline structure |
+
+---
+
+## Event Bus
+
+Event-driven workflows with pub/sub messaging.
+
+```python
+from agentorchestrator.core.event_bus import Event, get_event_bus
+
+# Get event bus (auto-selects Redis if available)
+bus = get_event_bus(prefer_redis=True)
+
+# Publish events
+await bus.publish(Event(
+    type="DataFetched",
+    payload={"company": "Apple", "data": {...}},
+    run_id="run-123",
+))
+
+# Subscribe to events
+async for event in bus.subscribe(event_types=["DataFetched"]):
+    print(f"Received: {event.type} - {event.payload}")
+
+# Event handlers with decorators
+@ao.event_handler("ResearchTask")
+async def handle_research(ctx, event):
+    result = await do_research(event.payload)
+    return Event(type="ResearchComplete", payload=result)
+
+# Run event loop
+await ao.run_event_loop(ctx, max_events=100)
+```
+
+### Event Class
+
+```python
+from agentorchestrator.core.event_bus import Event
+
+event = Event(
+    type="StepCompleted",        # Required: Event type string
+    payload={"result": ...},     # Optional: Event data
+    step="process_data",         # Optional: Associated step
+    run_id="run-123",            # Optional: Run identifier
+    metadata={"source": "api"},  # Optional: Additional metadata
+)
+
+# Serialization
+json_str = event.to_json()
+event = Event.from_json(json_str)
+```
+
+### Event Bus Implementations
+
+| Implementation | Use Case |
+|----------------|----------|
+| `InMemoryEventBus` | Single process, testing |
+| `RedisEventBus` | Multi-process, production |
+
+---
+
+## StateStore
+
+Type-safe state management with Pydantic models.
+
+```python
+from pydantic import BaseModel, Field
+from agentorchestrator import Context
+from agentorchestrator.core.state import StateStore
+
+# Define your state model
+class PipelineState(BaseModel):
+    counter: int = Field(default=0)
+    items: list[str] = Field(default_factory=list)
+    status: str = "pending"
+
+# Use with context
+ctx = Context(state_model=PipelineState)
+
+# Type-safe access (IDE autocomplete!)
+print(ctx.state.counter)  # 0
+print(ctx.state.items)    # []
+
+# Atomic updates
+async with ctx.edit_state() as state:
+    state.counter += 1
+    state.items.append("new item")
+    state.status = "processing"
+
+# Validation happens automatically
+try:
+    async with ctx.edit_state() as state:
+        state.counter = "invalid"  # Raises ValidationError
+except ValueError as e:
+    print("Validation failed:", e)
+```
+
+### StateStore Class
+
+```python
+from agentorchestrator.core.state import StateStore
+
+store = StateStore(PipelineState)
+
+# Get current state (immutable snapshot)
+state = store.get_state()
+
+# Update state
+store.update({"counter": state.counter + 1})
+
+# Reset to defaults
+store.reset()
+
+# Export for persistence
+data = store.to_dict()
+store.load_dict(data)
+```
+
+---
+
+## Function Agent
+
+LLM-powered agent that can use tools/functions.
+
+```python
+from agentorchestrator.squad.agents import FunctionAgent, FunctionAgentOptions
+
+# Define tools
+tools = [
+    {
+        "name": "search",
+        "description": "Search the web for information",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"}
+            },
+            "required": ["query"]
+        }
+    }
+]
+
+# Tool implementation
+async def execute_tool(name: str, args: dict) -> str:
+    if name == "search":
+        return await search_web(args["query"])
+    raise ValueError(f"Unknown tool: {name}")
+
+# Create agent
+agent = FunctionAgent(FunctionAgentOptions(
+    name="SearchAgent",
+    description="Searches for information",
+    tools=tools,
+    tool_executor=execute_tool,
+    system_prompt="You help users find information.",
+))
+
+# Use agent
+result = await agent.process_request(
+    input_text="Find recent news about AI",
+    user_id="user-123",
+    session_id="session-456",
+)
+print(result.content)
+```
+
+### FunctionAgentOptions
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `name` | str | Agent name |
+| `description` | str | What the agent does |
+| `tools` | list[dict] | OpenAI function schema |
+| `tool_executor` | Callable | Function to execute tools |
+| `system_prompt` | str | Agent instructions |
+| `max_tool_calls` | int | Max tool calls per request (default: 10) |
+| `llm_client` | LLMGatewayClient | LLM client (optional) |
+
+---
+
+## ReAct Agent
+
+Reasoning and Acting agent pattern for complex problem solving.
+
+```python
+from agentorchestrator.agents import ReActAgent, ReActConfig, Tool
+
+# Define tools
+tools = [
+    Tool(
+        name="calculator",
+        description="Calculate mathematical expressions",
+        func=calculate,
+        parameters={"expression": "str"},
+    ),
+    Tool(
+        name="search",
+        description="Search for information",
+        func=search,
+        parameters={"query": "str"},
+    ),
+]
+
+# Create agent
+agent = ReActAgent(
+    llm_client=client,
+    tools=tools,
+    config=ReActConfig(
+        max_iterations=10,
+        thought_prompt="Let me think step by step...",
+    ),
+)
+
+# Run
+result = await agent.run("What is the population of France times 2?")
+print(result.answer)
+print(result.steps)  # Shows thought/action/observation chain
+```
+
+### ReActConfig
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `max_iterations` | 10 | Max reasoning iterations |
+| `thought_prompt` | None | Custom prompt for thought generation |
+| `verbose` | False | Log intermediate steps |
+
+---
+
+## Tool Registry
+
+Centralized tool management for agents.
+
+```python
+from agentorchestrator.agents import ToolRegistry, ToolCategory
+
+# Create registry
+registry = ToolRegistry(name="my_tools")
+
+# Register tool with decorator
+@registry.tool(
+    name="calculate",
+    description="Perform calculations",
+    category=ToolCategory.UTILITY,
+)
+async def calculate(expression: str) -> str:
+    return str(eval(expression))
+
+# Register programmatically
+registry.register(
+    name="fetch_url",
+    func=fetch_url,
+    description="Fetch content from URL",
+    category=ToolCategory.DATA,
+)
+
+# Discover tools
+math_tools = registry.discover(category=ToolCategory.UTILITY)
+
+# Get OpenAI schemas
+schemas = registry.get_openai_schemas()
+
+# Execute tool
+result = await registry.execute("calculate", expression="2+2")
+```
+
+### Built-in Tools
+
+```python
+from agentorchestrator.agents.tools import register_builtin_tools
+
+# Register built-in utility tools
+register_builtin_tools(registry)
+
+# Available: calculate, get_current_time, text_length
+result = await registry.execute("calculate", expression="3.14 * 10")
+```
+
+---
+
 ## Utilities
 
 ### Circuit Breaker

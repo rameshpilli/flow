@@ -339,7 +339,9 @@ class OAuthTokenManager:
                     "scope": self.scope,
                 }
 
-                async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+                # SSL verification - respect environment setting
+                verify_ssl = os.getenv("LLM_VERIFY_SSL", "true").lower() != "false"
+                async with httpx.AsyncClient(timeout=30.0, verify=verify_ssl) as client:
                     response = await client.post(
                         self.oauth_endpoint,
                         data=data,
@@ -494,6 +496,16 @@ class LLMGatewayClient:
         self.max_tokens = max_tokens
         self.timeout = timeout
         self.api_key = api_key
+        
+        # SSL verification - configurable via environment
+        # WARNING: Disabling SSL verification is a security risk!
+        # Only disable in development/testing with self-signed certs.
+        self._verify_ssl = os.getenv("LLM_VERIFY_SSL", "true").lower() != "false"
+        if not self._verify_ssl:
+            logger.warning(
+                "SSL verification disabled (LLM_VERIFY_SSL=false). "
+                "This is insecure - only use for development/testing."
+            )
 
         # Set up OAuth token manager if OAuth credentials provided
         if oauth_endpoint and client_id and client_secret:
@@ -510,7 +522,7 @@ class LLMGatewayClient:
             else:
                 logger.warning("LLMGatewayClient has no auth configured (will use stub mode)")
 
-        # Lock for async client initialization
+        # Lock for async client initialization (connection pooling)
         self._async_client_lock = asyncio.Lock()
         self._async_client = None
 
@@ -574,15 +586,43 @@ class LLMGatewayClient:
         return bool(self.server_url and (self._token_manager or self.api_key))
 
     async def _get_async_client(self):
-        """Get or create async HTTP client (thread-safe)."""
+        """
+        Get or create async HTTP client (thread-safe).
+        
+        Connection pooling: Reuses a single httpx.AsyncClient instance
+        to avoid creating new connections for each request. This significantly
+        improves performance for high-throughput scenarios.
+        """
         async with self._async_client_lock:
             if self._async_client is None:
                 try:
                     import httpx
-                    self._async_client = httpx.AsyncClient(timeout=self.timeout, verify=False)
+                    self._async_client = httpx.AsyncClient(
+                        timeout=self.timeout,
+                        verify=self._verify_ssl,
+                        # Connection pooling settings
+                        limits=httpx.Limits(
+                            max_keepalive_connections=10,
+                            max_connections=20,
+                            keepalive_expiry=30.0,
+                        ),
+                    )
                 except ImportError:
                     logger.warning("httpx not installed, using stub client")
             return self._async_client
+    
+    async def close(self) -> None:
+        """
+        Close the HTTP client and release resources.
+        
+        Call this when you're done using the client to properly
+        close connection pools and free resources.
+        """
+        async with self._async_client_lock:
+            if self._async_client is not None:
+                await self._async_client.aclose()
+                self._async_client = None
+                logger.debug("LLMGatewayClient HTTP client closed")
 
     async def _get_auth_token(self) -> str | None:
         """Get authentication token (OAuth or API key)."""

@@ -64,6 +64,103 @@ Reloading definitions...
 [updated validation output]
 ```
 
+### Best Practices for Development Mode
+
+#### 1. Project Structure for Hot Reloading
+
+Organize your code so that step definitions can be reloaded cleanly:
+
+```
+my_project/
+├── app.py          # Main orchestrator setup
+├── steps/          # Step definitions (watched)
+│   ├── __init__.py
+│   ├── data_steps.py
+│   └── ai_steps.py
+├── chains/         # Chain definitions (watched)
+│   ├── __init__.py
+│   └── pipelines.py
+└── utils/          # Utilities (watched)
+    └── helpers.py
+```
+
+#### 2. Avoid Side Effects at Import Time
+
+```python
+# Good: Define steps without side effects
+@ao.step(name="process")
+async def process(ctx):
+    return {"done": True}
+
+# Bad: Side effects at import time
+expensive_client = create_expensive_client()  # Runs on every reload!
+```
+
+#### 3. Use Lazy Initialization
+
+```python
+# Good: Lazy initialization
+_client = None
+
+def get_client():
+    global _client
+    if _client is None:
+        _client = create_expensive_client()
+    return _client
+
+@ao.step(name="with_client")
+async def with_client(ctx):
+    client = get_client()
+    return await client.process()
+```
+
+### Troubleshooting Development Mode
+
+#### Issue: "watchdog not installed"
+
+```bash
+pip install watchdog
+```
+
+#### Issue: Changes not detected
+
+1. Ensure you're modifying `.py` files in the watched directory
+2. Some editors create temp files instead of modifying in place
+3. Try saving the file again
+
+#### Issue: Import errors after reload
+
+The hot reloader clears registries but may not clear all cached imports. Try:
+
+```bash
+# Full restart
+Ctrl+C  # Stop dev mode
+ao dev --watch  # Start fresh
+```
+
+#### Issue: "Module not found after reload"
+
+This can happen if you rename/delete files. Restart the dev server:
+
+```bash
+Ctrl+C
+ao dev --watch
+```
+
+### Advanced: Custom Watch Patterns
+
+The default watch pattern is `**/*.py`. For custom patterns, use the programmatic API:
+
+```python
+from agentorchestrator.cli import start_dev_server
+
+# Watch specific directories
+start_dev_server(
+    watch_dirs=["./steps", "./chains"],
+    exclude_dirs=["./tests", "./.venv"],
+)
+```
+
 ---
 
 ## debug

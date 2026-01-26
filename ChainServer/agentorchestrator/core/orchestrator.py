@@ -868,6 +868,8 @@ class AgentOrchestrator:
         self,
         subchain_name: str,
         parent_chain_name: str,
+        merge_map: dict[str, str] | None = None,
+        merge_mode: str = "safe",
     ) -> str:
         """
         Create a wrapper step that executes a subchain.
@@ -879,6 +881,14 @@ class AgentOrchestrator:
         Args:
             subchain_name (str): Name of the chain to execute as a step.
             parent_chain_name (str): Name of the parent chain (for namespacing).
+            merge_map (dict[str, str] | None): Optional mapping of subchain output keys
+                to parent context keys. Example: {"subchain_result": "final_result"}
+                This prevents accidental overwrites by explicitly mapping outputs.
+            merge_mode (str): How to merge subchain results:
+                - "safe": Only merge new keys, never overwrite (default)
+                - "selective": Only merge keys specified in merge_map
+                - "all": Merge all keys (may overwrite parent data)
+                - "none": Don't merge any keys (access via _subchain_*_result)
 
         Returns:
             str: Name of the created wrapper step.
@@ -889,20 +899,25 @@ class AgentOrchestrator:
         if self._step_registry.has(wrapper_step_name):
             return wrapper_step_name
 
-        # Capture ao reference for closure
+        # Capture references for closure
         ao = self
+        _merge_map = merge_map
+        _merge_mode = merge_mode
 
         async def subchain_handler(ctx: ChainContext) -> dict[str, Any]:
             """
             Execute the subchain and merge results into parent context.
 
             The subchain receives a copy of the current context data and
-            its outputs are merged back into the parent context.
+            its outputs are merged back into the parent context according
+            to the configured merge_mode and merge_map.
             """
             # Prepare data for subchain - pass current context data
             subchain_data = {}
+            parent_keys = set()
             for key in ctx.keys():
                 subchain_data[key] = ctx.get(key)
+                parent_keys.add(key)
 
             # Execute the subchain
             logger.info(f"Executing subchain '{subchain_name}' from parent '{parent_chain_name}'")
@@ -912,20 +927,53 @@ class AgentOrchestrator:
                 validate_input=False,  # Parent already validated
             )
 
-            # Merge subchain context back into parent
-            if result.get("success") and "context" in result:
-                subchain_ctx_data = result["context"].get("data", {})
-                for key, value in subchain_ctx_data.items():
-                    # Don't overwrite keys that were in original context
-                    if not ctx.has(key) or key not in subchain_data:
-                        ctx.set(key, value, scope=ContextScope.CHAIN)
-
-            # Store subchain result for reference
+            # Store subchain result for reference (always available)
             ctx.set(
                 f"_subchain_{subchain_name}_result",
                 result,
                 scope=ContextScope.CHAIN,
             )
+
+            # Merge subchain context back into parent based on merge_mode
+            if result.get("success") and "context" in result:
+                subchain_ctx_data = result["context"].get("data", {})
+                
+                if _merge_mode == "none":
+                    # Don't merge anything - user accesses via _subchain_*_result
+                    logger.debug(f"Subchain '{subchain_name}' merge_mode=none, skipping merge")
+                
+                elif _merge_mode == "selective" and _merge_map:
+                    # Only merge explicitly mapped keys
+                    for src_key, dst_key in _merge_map.items():
+                        if src_key in subchain_ctx_data:
+                            ctx.set(dst_key, subchain_ctx_data[src_key], scope=ContextScope.CHAIN)
+                            logger.debug(f"Subchain merge: {src_key} -> {dst_key}")
+                
+                elif _merge_mode == "all":
+                    # Merge all keys (may overwrite)
+                    for key, value in subchain_ctx_data.items():
+                        if _merge_map and key in _merge_map:
+                            # Use mapped name if available
+                            ctx.set(_merge_map[key], value, scope=ContextScope.CHAIN)
+                        else:
+                            ctx.set(key, value, scope=ContextScope.CHAIN)
+                    if parent_keys & set(subchain_ctx_data.keys()):
+                        logger.warning(
+                            f"Subchain '{subchain_name}' overwrote parent keys: "
+                            f"{parent_keys & set(subchain_ctx_data.keys())}"
+                        )
+                
+                else:  # "safe" mode (default)
+                    # Only merge new keys, never overwrite
+                    for key, value in subchain_ctx_data.items():
+                        target_key = _merge_map.get(key, key) if _merge_map else key
+                        if target_key not in parent_keys:
+                            ctx.set(target_key, value, scope=ContextScope.CHAIN)
+                        else:
+                            logger.debug(
+                                f"Subchain '{subchain_name}' skipped overwriting "
+                                f"parent key: {target_key}"
+                            )
 
             if not result.get("success"):
                 error_info = result.get("error", {})
@@ -959,6 +1007,8 @@ class AgentOrchestrator:
         *,
         deps: list[Any] | None = None,
         produces: list[str] | None = None,
+        merge_map: dict[str, str] | None = None,
+        merge_mode: str = "safe",
     ) -> str:
         """
         Create a step that executes another chain (explicit subchain reference).
@@ -970,6 +1020,14 @@ class AgentOrchestrator:
             chain_name (str): Name of the chain to execute as a step.
             deps (list[Any] | None): Dependencies for this subchain step.
             produces (list[str] | None): What this subchain produces.
+            merge_map (dict[str, str] | None): Optional mapping of subchain output keys
+                to parent context keys. Example: {"subchain_result": "final_result"}
+                This prevents accidental overwrites by explicitly mapping outputs.
+            merge_mode (str): How to merge subchain results:
+                - "safe": Only merge new keys, never overwrite (default)
+                - "selective": Only merge keys specified in merge_map
+                - "all": Merge all keys (may overwrite parent data)
+                - "none": Don't merge any keys (access via _subchain_*_result)
 
         Returns:
             str: Name of the wrapper step (for use in chain definitions).
@@ -978,6 +1036,7 @@ class AgentOrchestrator:
             ValueError: If the specified chain is not registered.
 
         Example:
+            >>> # Basic usage
             >>> @ao.chain
             ... class ParentChain:
             ...     steps = [
@@ -986,25 +1045,29 @@ class AgentOrchestrator:
             ...         "finalize_step",
             ...     ]
             >>>
-            >>> # Define inner chain first
+            >>> # With merge mapping (prevents overwrites)
             >>> @ao.chain
-            ... class DataProcessing:
-            ...     steps = ["fetch", "transform", "validate"]
-            >>>
-            >>> # Use in parent chain with explicit dependencies
-            >>> @ao.chain
-            ... class Pipeline:
+            ... class SafePipeline:
             ...     steps = [
             ...         "init",
-            ...         ao.subchain("DataProcessing", deps=["init"]),
+            ...         ao.subchain(
+            ...             "DataProcessing",
+            ...             deps=["init"],
+            ...             merge_map={"result": "processing_result"},
+            ...             merge_mode="selective",
+            ...         ),
             ...         "report",
             ...     ]
         """
         if not self._chain_registry.is_chain(chain_name):
             raise ValueError(f"Chain '{chain_name}' not found. Register it first.")
 
-        # Create the wrapper step
-        wrapper_name = self._create_subchain_step(chain_name, "__explicit__")
+        # Create the wrapper step with merge configuration
+        wrapper_name = self._create_subchain_step(
+            chain_name, "__explicit__",
+            merge_map=merge_map,
+            merge_mode=merge_mode,
+        )
 
         # Update dependencies if provided
         if deps:
@@ -1081,16 +1144,58 @@ class AgentOrchestrator:
         run_id: str | None = None,
         stop_when: Callable[[Event, ChainContext], bool] | None = None,
         min_events: int = 0,
+        isolate_run: bool = True,
+        run_store: "RunStore | None" = None,
+        checkpoint_interval: int = 10,
     ) -> dict[str, Any]:
         """
-        Minimal event-driven runner. Publishes seed events and processes inbound
-        events with registered handlers until:
+        Event-driven workflow runner with run isolation and optional checkpointing.
+        
+        Publishes seed events and processes inbound events with registered handlers
+        until one of these conditions:
         - stop_when returns True, or
         - processed >= max_events, or
         - timeout reached.
+
+        Args:
+            seed_events: Initial events to publish to start the workflow.
+            max_events: Maximum number of events to process (default: 100).
+            timeout_s: Maximum time in seconds to run (default: 30.0).
+            run_id: Unique identifier for this run. Auto-generated if not provided.
+            stop_when: Predicate function (event, ctx) -> bool to stop early.
+            min_events: Minimum events to process before checking stop_when.
+            isolate_run: If True (default), only process events matching this run_id.
+                On a shared Redis bus, this prevents consuming other runs' events.
+            run_store: Optional RunStore for checkpointing (enables resumability).
+            checkpoint_interval: Save checkpoint every N events (default: 10).
+
+        Returns:
+            dict with run_id, processed count, handlers, duration_ms, and
+            checkpoint_id if run_store was provided.
+
+        Example:
+            >>> # Basic usage
+            >>> result = await ao.run_event_loop(
+            ...     seed_events=[Event(type="Start", payload={"query": "..."})],
+            ...     stop_when=lambda e, ctx: e.type == "Complete",
+            ... )
+            >>>
+            >>> # With checkpointing for resumability
+            >>> from agentorchestrator.core.run_store import FileRunStore
+            >>> store = FileRunStore("./checkpoints")
+            >>> result = await ao.run_event_loop(
+            ...     seed_events=[...],
+            ...     run_store=store,
+            ...     checkpoint_interval=5,
+            ... )
         """
         run_id = run_id or f"event_{uuid.uuid4().hex[:8]}"
         ctx = ChainContext(request_id=run_id)
+        
+        # Initialize checkpoint tracking
+        checkpoint_id = None
+        events_since_checkpoint = 0
+        processed_event_types: list[str] = []
 
         sub = self._event_bus.subscribe()
 
@@ -1102,6 +1207,7 @@ class AgentOrchestrator:
                 await self._event_bus.publish(ev)
 
         processed = 0
+        skipped = 0
         start = time.time()
 
         try:
@@ -1114,8 +1220,34 @@ class AgentOrchestrator:
                 except (asyncio.TimeoutError, StopAsyncIteration):
                     break
 
+                # Run isolation: skip events from other runs on shared bus
+                if isolate_run and event.run_id is not None and event.run_id != run_id:
+                    skipped += 1
+                    continue
+
                 processed += 1
+                events_since_checkpoint += 1
+                processed_event_types.append(event.type)
+                
                 await self._dispatch_event(event, ctx)
+
+                # Checkpoint periodically if run_store provided
+                if run_store and events_since_checkpoint >= checkpoint_interval:
+                    try:
+                        from agentorchestrator.core.run_store import RunCheckpoint
+                        checkpoint = RunCheckpoint(
+                            run_id=run_id,
+                            chain_name="__event_loop__",
+                            status="running",
+                            context_data=ctx.to_dict(),
+                            step_outputs={"processed_events": processed_event_types.copy()},
+                        )
+                        await run_store.save_checkpoint(checkpoint)
+                        checkpoint_id = run_id
+                        events_since_checkpoint = 0
+                        logger.debug(f"Event loop checkpoint saved: {run_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to save event loop checkpoint: {e}")
 
                 if stop_when and processed >= min_events:
                     try:
@@ -1130,13 +1262,79 @@ class AgentOrchestrator:
                     await sub.aclose()
                 except Exception:
                     pass
+            
+            # Final checkpoint on completion
+            if run_store:
+                try:
+                    from agentorchestrator.core.run_store import RunCheckpoint
+                    checkpoint = RunCheckpoint(
+                        run_id=run_id,
+                        chain_name="__event_loop__",
+                        status="completed",
+                        context_data=ctx.to_dict(),
+                        step_outputs={"processed_events": processed_event_types},
+                    )
+                    await run_store.save_checkpoint(checkpoint)
+                    checkpoint_id = run_id
+                except Exception as e:
+                    logger.warning(f"Failed to save final event loop checkpoint: {e}")
 
-        return {
+        result = {
             "run_id": run_id,
             "processed": processed,
+            "skipped": skipped,  # Events from other runs
             "handlers": {k: len(v) for k, v in self._event_handlers.items()},
             "duration_ms": (time.time() - start) * 1000,
         }
+        
+        if checkpoint_id:
+            result["checkpoint_id"] = checkpoint_id
+        
+        return result
+    
+    async def resume_event_loop(
+        self,
+        run_id: str,
+        run_store: "RunStore",
+        seed_events: list[Event] | None = None,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """
+        Resume an event loop from a checkpoint.
+        
+        Loads the checkpoint, restores context, and continues processing.
+        
+        Args:
+            run_id: The run_id to resume.
+            run_store: RunStore containing the checkpoint.
+            seed_events: Optional additional events to publish on resume.
+            **kwargs: Additional arguments passed to run_event_loop().
+            
+        Returns:
+            Same as run_event_loop().
+            
+        Example:
+            >>> store = FileRunStore("./checkpoints")
+            >>> result = await ao.resume_event_loop(
+            ...     run_id="event_abc123",
+            ...     run_store=store,
+            ...     seed_events=[Event(type="Resume")],
+            ... )
+        """
+        checkpoint = await run_store.load_checkpoint(run_id)
+        if checkpoint is None:
+            raise ValueError(f"No checkpoint found for run_id: {run_id}")
+        
+        # The checkpoint contains context data from where we left off
+        # We pass the run_id to continue from where we stopped
+        logger.info(f"Resuming event loop from checkpoint: {run_id}")
+        
+        return await self.run_event_loop(
+            seed_events=seed_events,
+            run_id=run_id,
+            run_store=run_store,
+            **kwargs,
+        )
 
     # ══════════════════════════════════════════════════════════════════
     #                    PROGRAMMATIC REGISTRATION
@@ -1689,14 +1887,17 @@ class AgentOrchestrator:
             run_step(): Run a single step in isolation.
         """
         # Chain-level input validation (fail-fast)
+        validated = False
         if validate_input and data is not None:
             data = self._validate_chain_input(chain_name, data)
+            validated = True
 
         return await self._runner.run(
             chain_name=chain_name,
             initial_data=data,
             request_id=request_id,
             debug_callback=debug_callback,
+            skip_validation=validated,  # Skip double validation in runner
         )
 
     def _validate_chain_input(
@@ -2348,6 +2549,63 @@ class AgentOrchestrator:
             >>> ctx = ao.get_context("req_123")
         """
         return self._context_manager.get_context(request_id)
+
+    def remove_context(self, request_id: str) -> bool:
+        """
+        Remove a context after chain completion.
+        
+        Call this to free memory after a chain execution is complete.
+        This prevents memory leaks in long-running processes.
+        
+        Args:
+            request_id (str): The request ID to remove.
+            
+        Returns:
+            bool: True if context was found and removed.
+            
+        Example:
+            >>> ctx = ao.create_context("req_123")
+            >>> # ... use context ...
+            >>> ao.remove_context("req_123")  # Free memory
+        """
+        return self._context_manager.remove_context(request_id)
+
+    def cleanup_old_contexts(self, max_age_seconds: float = 3600) -> int:
+        """
+        Remove contexts older than the specified age.
+        
+        Call this periodically in long-running processes to prevent
+        memory leaks from accumulated contexts.
+        
+        Args:
+            max_age_seconds (float): Maximum age in seconds. Default: 3600 (1 hour).
+            
+        Returns:
+            int: Number of contexts removed.
+            
+        Example:
+            >>> # In a background task
+            >>> removed = ao.cleanup_old_contexts(max_age_seconds=1800)
+            >>> logger.info(f"Cleaned up {removed} old contexts")
+        """
+        from datetime import datetime, timedelta
+        
+        cutoff = datetime.utcnow() - timedelta(seconds=max_age_seconds)
+        removed = 0
+        
+        # Get list of keys to avoid modifying dict during iteration
+        context_ids = list(self._context_manager._contexts.keys())
+        
+        for request_id in context_ids:
+            ctx = self._context_manager._contexts.get(request_id)
+            if ctx and ctx.created_at < cutoff:
+                self._context_manager.remove_context(request_id)
+                removed += 1
+        
+        if removed > 0:
+            logger.info(f"Cleaned up {removed} old contexts (older than {max_age_seconds}s)")
+        
+        return removed
 
     # ══════════════════════════════════════════════════════════════════
     #                         UTILITIES

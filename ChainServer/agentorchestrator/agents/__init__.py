@@ -10,6 +10,10 @@ Base Classes:
     - ResilientAgent: Adds retry/circuit breaker to any agent
     - ResilientCompositeAgent: Composite with built-in resilience
 
+Agent Patterns:
+    - ReActAgent: Industry-standard Thought→Action→Observation loop
+    - Tool/ToolRegistry: Centralized tool discovery and management
+
 Usage:
     from agentorchestrator.agents import BaseAgent, AgentResult
 
@@ -25,6 +29,15 @@ Usage:
         agent=MyAgent(),
         config=ResilientAgentConfig(timeout_seconds=10, max_retries=3),
     )
+
+    # Use ReAct pattern
+    from agentorchestrator.agents import ReActAgent, ToolRegistry
+
+    registry = ToolRegistry()
+    registry.register("search", search_func, "Search the web")
+
+    agent = ReActAgent(llm_client, tools=registry.list_tools())
+    result = await agent.run("What is the capital of France?")
 """
 
 from agentorchestrator.agents.base import (
@@ -35,6 +48,25 @@ from agentorchestrator.agents.base import (
     ResilientAgent,
     ResilientAgentConfig,
     ResilientCompositeAgent,
+)
+from agentorchestrator.agents.react import (
+    ReActAgent,
+    ReActConfig,
+    ReActResult,
+    ReActStep,
+    StepType,
+    Tool,
+    ToolResult,
+    create_react_agent,
+)
+from agentorchestrator.agents.tools import (
+    ToolRegistry,
+    ToolDefinition,
+    ToolCategory,
+    ToolExecutionResult,
+    get_default_registry,
+    tool,
+    register_builtin_tools,
 )
 
 __all__ = [
@@ -47,4 +79,21 @@ __all__ = [
     "ResilientAgentConfig",
     "ResilienceConfig",  # Alias for ResilientAgentConfig
     "ResilientCompositeAgent",
+    # ReAct pattern
+    "ReActAgent",
+    "ReActConfig",
+    "ReActResult",
+    "ReActStep",
+    "StepType",
+    "Tool",
+    "ToolResult",
+    "create_react_agent",
+    # Tool Registry
+    "ToolRegistry",
+    "ToolDefinition",
+    "ToolCategory",
+    "ToolExecutionResult",
+    "get_default_registry",
+    "tool",
+    "register_builtin_tools",
 ]

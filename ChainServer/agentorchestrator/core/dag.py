@@ -21,7 +21,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Protocol
 
-from agentorchestrator.core.context import ChainContext, StepResult
+from agentorchestrator.core.context import ChainContext, ContextScope, StepResult
 from agentorchestrator.core.event_bus import Event, EventBus, get_event_bus
 from agentorchestrator.core.registry import (
     ChainSpec,
@@ -724,7 +724,12 @@ class DAGExecutor:
                     f"Retrying step {node.name} "
                     f"(attempt {attempt}/{retry_config.count})"
                 )
-                await asyncio.sleep(delay_ms / 1000)
+                # Add jitter to prevent thundering herd in high-concurrency scenarios
+                # Jitter is ±25% of the delay to spread out retry attempts
+                import random
+                jitter_factor = 0.75 + random.random() * 0.5  # 0.75 to 1.25
+                jittered_delay_ms = delay_ms * jitter_factor
+                await asyncio.sleep(jittered_delay_ms / 1000)
                 delay_ms = min(
                     int(delay_ms * retry_config.backoff_multiplier),
                     retry_config.max_delay_ms
@@ -872,18 +877,6 @@ class DAGExecutor:
                             node.name,
                             ctx.request_id,
                             payload={
-                                "error": str(e),
-                                "error_type": type(e).__name__,
-                                "duration_ms": duration_ms,
-                                "retry_count": attempt,
-                            },
-                        )
-                        await self._emit_event(
-                            "StepFailed",
-                            chain_name,
-                            node.name,
-                            ctx.request_id,
-                            payload={
                                 "error": str(last_error),
                                 "error_type": "TimeoutError",
                                 "duration_ms": duration_ms,
@@ -1010,7 +1003,31 @@ class DAGExecutor:
     ) -> None:
         """
         Handle dynamic steps returned by a step handler.
-        Dynamically adds new steps to the registry and updates the execution plan.
+        
+        Dynamically adds new steps to the registry and EXECUTES them immediately.
+        This provides true dynamic DAG capability where steps can spawn new steps.
+        
+        Args:
+            dynamic_steps: List of step definitions or names to inject.
+                Each can be:
+                - dict with "handler", optional "name", "deps", "produces"
+                - str name of an existing registered step
+            parent_node: The node that returned the dynamic steps.
+            ctx: Current execution context.
+            chain_name: Name of the executing chain (for registration).
+        
+        Example return from a step handler:
+            >>> return {
+            ...     "result": "processed",
+            ...     "__dynamic_steps__": [
+            ...         {
+            ...             "name": "extra_validation",
+            ...             "handler": async_validate_func,
+            ...             "deps": [],  # Will depend on parent automatically
+            ...         },
+            ...         "existing_cleanup_step",  # Reference existing step
+            ...     ],
+            ... }
         """
         from agentorchestrator.core.registry import StepSpec
         
@@ -1020,7 +1037,8 @@ class DAGExecutor:
                 # It's a raw step definition
                 name = step_data.get("name") or f"{parent_node.name}_dyn_{i}"
                 handler = step_data["handler"]
-                deps = step_data.get("deps", [])
+                # Dynamic steps implicitly depend on parent unless specified
+                deps = step_data.get("deps", [parent_node.name])
                 # Register the new step dynamically
                 self.builder.step_registry.register_step(
                     name=name,
@@ -1035,11 +1053,20 @@ class DAGExecutor:
         
         if new_step_names:
             logger.info(f"Step {parent_node.name} injected dynamic steps: {new_step_names}")
-            # Note: The current execution loop in execute() is sequential across groups.
-            # To support true dynamic DAG expansion, we'd need to rebuild the plan 
-            # and continue execution. For now, we'll mark these as injected
-            # and they will be handled by the next group if they were added to the chain spec.
-            # Actually, we need to update the chain spec dynamically.
+            
+            # Emit event for observability
+            await self._emit_event(
+                "DynamicStepInjected",
+                chain_name,
+                parent_node.name,
+                ctx.request_id,
+                payload={
+                    "injected_steps": new_step_names,
+                    "parent_step": parent_node.name,
+                },
+            )
+            
+            # Update chain spec if we have a chain name
             if chain_name:
                 chain_spec = self.builder.chain_registry.get_spec(chain_name)
                 if chain_spec:
@@ -1047,14 +1074,28 @@ class DAGExecutor:
                     for name in new_step_names:
                         if name not in chain_spec.steps:
                             chain_spec.steps.append(name)
+            
+            # EXECUTE the dynamic steps immediately
+            # Build nodes for the new steps and execute them
+            for step_name in new_step_names:
+                spec = self.builder.step_registry.get_spec(step_name)
+                if spec:
+                    # Create a node for the dynamic step
+                    dynamic_node = DAGNode(name=step_name, spec=spec)
                     
-                    # Re-build the plan for remaining steps
-                    # This is a bit expensive but necessary for dynamic DAGs
-                    new_plan = self.builder.build(chain_name)
-                    # We can't easily replace the 'plan' variable in execute() 
-                    # because we're inside a recursive-like call structure.
-                    # Instead, we'll signal the executor to re-evaluate.
-                    ctx.set("__dag_needs_rebuild__", True, scope=ContextScope.CHAIN)
+                    # Execute the dynamic step
+                    try:
+                        logger.info(f"Executing dynamic step: {step_name}")
+                        await self._execute_step(
+                            dynamic_node,
+                            ctx,
+                            error_handling="fail_fast",
+                            chain_name=chain_name,
+                        )
+                    except Exception as e:
+                        logger.error(f"Dynamic step {step_name} failed: {e}")
+                        # Re-raise to propagate failure
+                        raise
 
     async def _run_before_middleware(self, ctx: ChainContext, step_name: str) -> None:
         """
@@ -1122,6 +1163,7 @@ class ChainRunner:
         initial_data: dict[str, Any] | None = None,
         request_id: str | None = None,
         debug_callback: DebugCallback | None = None,
+        skip_validation: bool = False,
     ) -> dict[str, Any]:
         """
         Run a chain and return results with structured error information.
@@ -1132,6 +1174,8 @@ class ChainRunner:
             request_id: Optional request ID for tracing
             debug_callback: Optional callback invoked after each step for debugging.
                             Receives (ctx, step_name, result_dict) arguments.
+            skip_validation: If True, skip input validation (use when caller
+                            already validated, e.g., from orchestrator.launch()).
 
         Returns:
             Dictionary with results, metadata, and structured error info
@@ -1144,7 +1188,11 @@ class ChainRunner:
         #                    FAIL-FAST INPUT VALIDATION
         # ══════════════════════════════════════════════════════════════════
         # Validate input data against first step's input_model BEFORE execution
-        validated_data = self._validate_chain_input(chain_name, initial_data)
+        # Skip if caller already validated (prevents double validation)
+        if skip_validation:
+            validated_data = initial_data
+        else:
+            validated_data = self._validate_chain_input(chain_name, initial_data)
 
         ctx = ChainContext(
             request_id=request_id,

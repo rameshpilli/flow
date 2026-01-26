@@ -105,8 +105,9 @@ class MultiAgentOrchestrator:
         # Storage
         self.storage = storage or InMemoryChatStorage()
 
-        # Classifier
-        self.classifier = classifier or LLMGatewayClassifier()
+        # Classifier - lazy initialization to avoid LLM calls when not needed
+        self._classifier_factory = lambda: LLMGatewayClassifier()
+        self._classifier = classifier
 
         # Agents
         self.agents: dict[str, Agent] = {}
@@ -117,6 +118,22 @@ class MultiAgentOrchestrator:
 
         # Event bus (shared with core) for streaming telemetry
         self.event_bus = event_bus or get_event_bus(prefer_redis=True)
+
+    @property
+    def classifier(self) -> Classifier:
+        """
+        Get the intent classifier (lazily initialized).
+
+        Lazy initialization avoids unnecessary LLM client setup when:
+        - The classifier is not needed (e.g., direct agent access)
+        - A custom classifier is provided at construction time
+
+        Returns:
+            Classifier: The configured or default classifier
+        """
+        if self._classifier is None:
+            self._classifier = self._classifier_factory()
+        return self._classifier
 
     def add_agent(self, agent: Agent) -> None:
         """

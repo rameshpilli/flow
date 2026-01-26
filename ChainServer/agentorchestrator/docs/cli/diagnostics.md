@@ -171,6 +171,64 @@ ao doctor
 | `0` | All critical checks passed (warnings OK) |
 | `1` | Critical issues found |
 
+### Troubleshooting Common Doctor Issues
+
+#### Issue: "pydantic not found"
+
+```bash
+# Install pydantic
+pip install pydantic>=2.0.0
+```
+
+#### Issue: "LLM_API_KEY not set"
+
+```bash
+# Set your LLM API key
+export LLM_API_KEY=sk-your-key-here
+
+# Or use OAuth credentials instead
+export LLM_OAUTH_ENDPOINT=https://auth.corp.com/token
+export LLM_CLIENT_ID=your-client-id
+export LLM_CLIENT_SECRET=your-secret
+```
+
+#### Issue: "Circular import detected"
+
+This usually means there's a module importing another module that imports the first one. Check your custom step/agent files for:
+
+```python
+# Bad: Circular imports
+# In agents.py
+from steps import my_step  # my_step imports agents.py
+
+# Good: Import inside function or use TYPE_CHECKING
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from steps import my_step
+```
+
+#### Issue: "Chain validation failed"
+
+```bash
+# Check chain details
+ao check
+
+# Visualize the chain to see dependencies
+ao graph your_chain_name
+```
+
+#### Issue: "Redis connection failed"
+
+```bash
+# Check if Redis is running
+redis-cli ping
+
+# Verify REDIS_URL environment variable
+echo $REDIS_URL
+
+# Default if not set: redis://localhost:6379
+```
+
 ---
 
 ## version

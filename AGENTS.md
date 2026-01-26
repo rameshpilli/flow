@@ -116,14 +116,19 @@ Middleware wraps step execution: `before()` → step → `after()` / `on_error()
 | Step/chain decorators | `core/decorators.py` |
 | Declarative pipelines | `dsl/pipeline.py` |
 | Middleware base | `middleware/base.py` |
+| **Agent reflection** | `middleware/reflection.py` |
 | LLM client | `services/llm_gateway.py` |
 | Vector store | `services/vector_store.py` |
 | Multi-agent routing | `squad/orchestrator.py` |
 | Supervisor pattern | `squad/agents/supervisor.py` |
+| **ReAct pattern** | `agents/react.py` |
+| **Tool registry** | `agents/tools.py` |
 | Tool schemas | `plugins/capability.py`, `squad/types.py` |
 | Tracing | `utils/tracing.py` |
 | Config loading | `config.py` |
 | Project templates | `templates/scaffolding.py` |
+| **Deep research example** | `examples/deep_research_agent.py` |
+| **Supervisor-in-chain** | `examples/supervisor_in_chain.py` |
 
 ---
 
@@ -147,6 +152,14 @@ Middleware wraps step execution: `before()` → step → `after()` / `on_error()
 | Streaming | `squad/agents/` | LLM token streaming |
 | OpenTelemetry | `utils/tracing.py` | Spans, traces, graceful fallback |
 | Observability | `services/observability.py`| **Standardized service placeholder** ✓ |
+| **ReAct Pattern** | `agents/react.py` | Thought→Action→Observation loop with tools ✓ |
+| **Tool Registry** | `agents/tools.py` | Centralized tool discovery + built-in tools ✓ |
+| **Agent Reflection** | `middleware/reflection.py` | `@reflect()` decorator, quality scoring, auto-revision ✓ |
+| **Dynamic DAG** | `core/dag.py` | `__dynamic_steps__` with immediate execution ✓ |
+| **Event Types** | `core/event_bus.py` | Agent/Tool events with `EventTypes` constants ✓ |
+| **Run Isolation** | `core/orchestrator.py` | Event loop filters by `run_id` on shared buses ✓ |
+| **Retry Jitter** | `core/dag.py` | ±25% jitter to prevent thundering herd ✓ |
+| Async-safe Context | `core/context.py` | `async_set()` for concurrent parallel steps ✓ |
 
 ---
 
@@ -155,22 +168,25 @@ Middleware wraps step execution: `before()` → step → `after()` / `on_error()
 ### Near-Term (High Priority)
 | Feature | Why It Matters |
 |---------|----------------|
-| **Deep Research Agent** | Multi-stage research with web search, question decomposition, report synthesis |
 | **Developer Docs Overhaul** | LlamaIndex-quality docs for 100+ user adoption |
 
-### Medium-Term
-| Feature | Why It Matters |
-|---------|----------------|
-| **ReAct Pattern** | Industry-standard Thought→Action→Observation loop |
-| **Tool Registry** | Built-in tools (web search, file, SQL) + easy discovery |
-| **Memory Patterns** | Summary, window, entity, semantic memory strategies |
+### Recently Implemented
+| Feature | Location | Notes |
+|---------|----------|-------|
+| **Deep Research Agent** | `examples/deep_research_agent.py` | Multi-stage research with decomposition ✓ |
+| **Agent Reflection** | `middleware/reflection.py` | `@reflect()` decorator, quality scoring ✓ |
+| **Subchain Merge Mapping** | `core/orchestrator.py` | `merge_map` and `merge_mode` for safe merges ✓ |
+| **Retry Jitter** | `core/dag.py` | ±25% jitter prevents thundering herd ✓ |
+| **Event Loop Persistence** | `core/orchestrator.py` | `run_store` integration, `resume_event_loop()` ✓ |
+| **Agent/Tool Events** | `core/event_bus.py` | `EventTypes`, `emit_agent_event()`, `emit_tool_event()` ✓ |
+| **Run Isolation** | `core/orchestrator.py` | `isolate_run=True` filters by run_id ✓ |
+| **Dynamic DAG** | `core/dag.py` | `__dynamic_steps__` with immediate execution ✓ |
 
 ### Partial Implementations (Need Enhancement)
 | Feature | Current State | What's Missing |
 |---------|--------------|----------------|
 | **Human-in-Loop** | Checkpointing, validators | @ao.approval_step(), pause UI, Slack integration |
-| **Tool Streaming** | LLM tokens stream | ToolEvent (start/progress/complete) |
-| **Agent Reflection** | Validator callbacks | Built-in critique prompts, @ao.reflect() |
+| **Memory Patterns** | Mem0 integration | Summary, window, entity, semantic strategies |
 | **Debugger UI** | ASCII/Mermaid viz | Web UI, breakpoints, real-time events |
 
 ---

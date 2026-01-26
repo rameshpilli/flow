@@ -578,9 +578,33 @@ class ChainContext(Generic[StateModel]):
 
     Thread-safety:
         ChainContext is designed for concurrent access:
-        - Uses asyncio.Lock for async operations
-        - Uses threading.RLock for sync operations
-        - Uses contextvars for per-task step tracking
+        - Uses asyncio.Lock for async operations (async_set, edit_state)
+        - Uses threading.RLock for sync operations (set, get)
+        - Uses contextvars for per-task step tracking (safe for parallel steps)
+        - STEP-scoped data is isolated per step (no cross-step interference)
+
+    Race Conditions (Parallel Steps):
+        When parallel steps modify the same CHAIN-scoped key, race conditions
+        are possible. Mitigation strategies:
+
+        1. **Use STEP-scoped data** for step-local temporary data:
+           >>> ctx.set("temp", value, scope=ContextScope.STEP)
+
+        2. **Use StateStore** for shared state with validation:
+           >>> async with ctx.edit_state() as state:
+           ...     state.counter += 1  # Atomic and validated
+
+        3. **Use async_set()** for explicit atomic CHAIN-scoped updates:
+           >>> await ctx.async_set("shared_key", new_value)
+
+        4. **Avoid read-modify-write patterns** in parallel steps:
+           # BAD: Race condition possible
+           >>> value = ctx.get("counter")
+           >>> ctx.set("counter", value + 1)
+
+           # GOOD: Use StateStore or async_set with atomic updates
+           >>> async with ctx.edit_state() as state:
+           ...     state.counter += 1
 
     See Also:
         ContextScope: Enum for data lifetime scopes.
@@ -829,6 +853,93 @@ class ChainContext(Generic[StateModel]):
 
         logger.debug(
             f"Context set: {key} (scope={scope.value}, step={current_step}, tokens={token_count})"
+        )
+
+    async def async_set(
+        self,
+        key: str,
+        value: Any,
+        scope: ContextScope = ContextScope.CHAIN,
+        token_count: int = 0,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Store a value in the context with async-safe locking.
+
+        This method provides explicit async-safe atomic operations for
+        concurrent coroutines. Use this when:
+        - Multiple parallel steps may write to the same CHAIN-scoped key
+        - You need guaranteed atomicity in async code
+        - You're modifying shared state from parallel workers
+
+        Args:
+            key (str): Unique identifier for the value.
+            value (Any): The data to store (any JSON-serializable type).
+            scope (ContextScope): Lifetime scope of the data.
+                Default: ContextScope.CHAIN.
+            token_count (int): Estimated token count for LLM tracking.
+                Default: 0.
+            metadata (dict[str, Any] | None): Additional metadata about
+                this entry. Default: None.
+
+        Thread-Safety Note:
+            The standard set() method uses a sync lock (threading.RLock) which
+            is safe for most use cases. However, for CHAIN-scoped data modified
+            by truly parallel async steps, this async_set() method provides
+            stronger guarantees using asyncio.Lock.
+
+        Best Practices for Parallel Steps:
+            1. Use STEP-scoped data for step-local temporary data (isolated per step)
+            2. Use StateStore (ctx.edit_state()) for shared state with validation
+            3. Use async_set() for explicit atomic CHAIN-scoped updates
+            4. Avoid read-modify-write patterns on shared keys in parallel steps
+
+        Example:
+            >>> # In parallel steps that might race
+            >>> await ctx.async_set("shared_counter", new_value)
+            >>>
+            >>> # For shared state, prefer StateStore
+            >>> async with ctx.edit_state() as state:
+            ...     state.counter += 1  # Atomic and validated
+        """
+        current_step = self.current_step
+
+        entry = ContextEntry(
+            key=key,
+            value=value,
+            scope=scope,
+            token_count=token_count,
+            source_step=current_step,
+            metadata=metadata or {},
+        )
+
+        async with self._lock:
+            if scope == ContextScope.STEP:
+                # Step-scoped data goes into per-step isolated storage
+                if current_step is None:
+                    logger.warning(
+                        f"Setting STEP-scoped key '{key}' outside of a step context. "
+                        "It will be stored in a temporary namespace."
+                    )
+                    step_key = "__no_step__"
+                else:
+                    step_key = current_step
+
+                if step_key not in self._step_stores:
+                    self._step_stores[step_key] = {}
+
+                step_store = self._step_stores[step_key]
+                if key in step_store:
+                    entry.created_at = step_store[key].created_at
+                step_store[key] = entry
+            else:
+                # CHAIN and GLOBAL scoped data goes into shared store
+                if key in self._store:
+                    entry.created_at = self._store[key].created_at
+                self._store[key] = entry
+
+        logger.debug(
+            f"Context async_set: {key} (scope={scope.value}, step={current_step}, tokens={token_count})"
         )
 
     def get(self, key: str, default: Any = None) -> Any:

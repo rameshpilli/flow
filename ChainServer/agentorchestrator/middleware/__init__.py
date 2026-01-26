@@ -59,6 +59,13 @@ from agentorchestrator.middleware.summarizer import (
     create_gateway_summarizer,
     create_openai_summarizer,
 )
+from agentorchestrator.middleware.reflection import (
+    ReflectionConfig,
+    ReflectionMiddleware,
+    ReflectionResult,
+    create_reflection_middleware,
+    reflect,
+)
 from agentorchestrator.middleware.token_manager import TokenManagerMiddleware
 
 __all__ = [
@@ -113,6 +120,12 @@ __all__ = [
     "OffloadMiddleware",
     "cap_items_with_metadata",
     "cap_per_source",
+    # Reflection (Agent Self-Critique)
+    "ReflectionMiddleware",
+    "ReflectionConfig",
+    "ReflectionResult",
+    "reflect",
+    "create_reflection_middleware",
     # Other middleware
     "CacheMiddleware",
     "LoggerMiddleware",
