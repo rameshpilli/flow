@@ -24,6 +24,8 @@ flow/
 ├── ChainServer/
 │   ├── agentorchestrator/     # THE FRAMEWORK (domain-agnostic)
 │   │   ├── core/              # Orchestrator, Context, DAG, Registry
+│   │   │   ├── state.py       # StateStore (Pydantic state management)
+│   │   │   └── event_bus.py   # EventBus (in-memory, Redis)
 │   │   ├── middleware/        # Cache, Logger, Summarizer, TokenManager
 │   │   ├── agents/            # BaseAgent, ResilientAgent, CompositeAgent
 │   │   ├── services/          # LLMGatewayClient, VectorStoreService
@@ -31,6 +33,7 @@ flow/
 │   │   │   ├── agents/        # LLMGatewayAgent, SupervisorAgent
 │   │   │   ├── storage/       # ChatStorage (InMemory, Redis)
 │   │   │   └── types.py       # AgentTool, AgentTools
+│   │   ├── dsl/               # Declarative pipeline builder
 │   │   ├── connectors/        # MCPConnector
 │   │   ├── plugins/           # Plugin discovery, capability schemas
 │   │   ├── llm/               # LCEL chain builders
@@ -61,15 +64,41 @@ class Pipeline:
     steps = ["fetch", "process"]
 ```
 
-### 2. Context Scopes
+### 2. Type-Safe State (NEW)
+```python
+from pydantic import BaseModel, Field
+from agentorchestrator import Context
+
+class PipelineState(BaseModel):
+    counter: int = Field(default=0)
+    items: list[str] = Field(default_factory=list)
+
+@ao.step(name="process", state_model=PipelineState)
+async def process(ctx: Context[PipelineState]):
+    async with ctx.edit_state() as state:
+        state.counter += 1  # Type-safe! IDE autocomplete!
+    return {"count": ctx.state.counter}
+```
+
+### 3. Context Scopes
 - `ContextScope.STEP` - Auto-cleaned after step (temp data)
 - `ContextScope.CHAIN` - Lives for entire chain execution
 - `ContextScope.GLOBAL` - Persists across executions
 
-### 3. Middleware Pipeline
+### 4. Event-Driven Workflows (NEW)
+```python
+@ao.event_handler("ResearchTask")
+async def worker(ctx: Context, event: Event):
+    # Process event and emit new ones
+    return Event(type="Finding", payload={...})
+
+await ao.run_event_loop(ctx)  # Process all events
+```
+
+### 5. Middleware Pipeline
 Middleware wraps step execution: `before()` → step → `after()` / `on_error()`
 
-### 4. Squad Multi-Agent
+### 6. Squad Multi-Agent
 - `MultiAgentOrchestrator` - Routes to best agent
 - `SupervisorAgent` - Coordinates a team of specialists
 - `LLMGatewayAgent` - Single agent with LLM backend
@@ -82,7 +111,10 @@ Middleware wraps step execution: `before()` → step → `after()` / `on_error()
 |-----------------|------------|
 | Core orchestration | `core/orchestrator.py`, `core/dag.py` |
 | Context management | `core/context.py` |
+| Type-safe state | `core/state.py`, `core/context.py` |
+| Event-driven workflows | `core/event_bus.py` |
 | Step/chain decorators | `core/decorators.py` |
+| Declarative pipelines | `dsl/pipeline.py` |
 | Middleware base | `middleware/base.py` |
 | LLM client | `services/llm_gateway.py` |
 | Vector store | `services/vector_store.py` |
@@ -101,6 +133,9 @@ Middleware wraps step execution: `before()` → step → `after()` / `on_error()
 |---------|----------|-------|
 | DAG Execution | `core/dag.py` | Automatic parallelization |
 | Context Management | `core/context.py` | 3 scopes, thread-safe, token tracking |
+| **Pydantic State** | `core/state.py` | Type-safe state with validation, atomic updates |
+| **Event-Driven Workflows** | `core/event_bus.py` | Event handlers, pub/sub, Redis or in-memory |
+| **Declarative DSL** | `dsl/pipeline.py` | Build pipelines without decorators |
 | Middleware Pipeline | `middleware/` | Cache, Logger, Summarizer, TokenManager, etc. |
 | LLM Integration | `services/llm_gateway.py` | OAuth + API key, structured output |
 | Vector Store | `services/vector_store.py` | In-memory + HTTP remote provider |
@@ -131,7 +166,6 @@ Middleware wraps step execution: `before()` → step → `after()` / `on_error()
 | Feature | Why It Matters |
 |---------|----------------|
 | **ReAct Pattern** | Industry-standard Thought→Action→Observation loop |
-| **Event-Driven Execution** | Beyond DAG - flexible loops, branches, streaming events |
 | **Tool Registry** | Built-in tools (web search, file, SQL) + easy discovery |
 | **Memory Patterns** | Summary, window, entity, semantic memory strategies |
 
@@ -239,6 +273,9 @@ bd sync               # Sync with git
 - `flow-hwk` - Workflow Debugger UI (partial)
 
 ### Recently Closed (Already Implemented)
+- **Pydantic State Management** - Type-safe workflow state with validation ✓
+- **Event-Driven Workflows** - Event bus, handlers, pub/sub ✓
+- **Declarative DSL** - Pipeline builder without decorators ✓
 - `flow-znf` - Long-term Memory/Vector Stores ✓
 - `flow-8gn` - OpenTelemetry Integration ✓
 - `flow-8ey` - Structured Tool Definitions ✓
@@ -299,6 +336,37 @@ class MyMiddleware(BaseMiddleware):
 async def validated_step(ctx):
     request = ctx.get("request")  # Already validated
     return MyOutputModel(...)     # Auto-validated
+```
+
+### Using type-safe state in a step
+```python
+from pydantic import BaseModel, Field
+from agentorchestrator import Context
+
+class MyState(BaseModel):
+    counter: int = Field(default=0)
+    items: list[str] = Field(default_factory=list)
+
+@ao.step(state_model=MyState)
+async def process(ctx: Context[MyState]):
+    # Type-safe with IDE autocomplete
+    async with ctx.edit_state() as state:
+        state.counter += 1
+        state.items.append("item")
+    return {"count": ctx.state.counter}
+```
+
+### Adding event handlers
+```python
+from agentorchestrator.core.event_bus import Event
+from agentorchestrator.core.context import Context
+
+@ao.event_handler("MyEvent")
+async def handler(ctx: Context, event: Event):
+    # Process event
+    result = process(event.payload)
+    # Emit new event
+    return Event(type="ResultEvent", payload=result)
 ```
 
 ---
