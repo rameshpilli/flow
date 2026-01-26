@@ -40,7 +40,8 @@ AgentOrchestrator is a lightweight, decorator-driven framework for building data
 | **Memory & Storage** | InMemory, Redis, and Mem0 semantic memory for conversation persistence |
 | **Shared Squad Memory** | Cross-agent shared context for collaborative multi-agent teams |
 | **Secret Management** | Standardized HashiCorp Vault integration with environment fallback |
-| **Middleware Stack** | Pluggable logging, caching, summarization, rate limiting, and circuit breakers |
+| **Middleware Stack** | Pluggable logging, caching, rate limiting, and circuit breakers |
+| **Summarization Strategies** | Three LLM strategies (STUFF, MAP_REDUCE, REFINE) with domain-specific prompts for large responses |
 | **Self-Critique (Reflection)** | Agent self-critique with quality scoring, automatic revision, and `@reflect` decorator |
 | **Citation Tracking** | Automatic source attribution and citation reports for RAG pipelines |
 | **Memory Lifecycle** | Auto-promote important session data to long-term memory with importance scoring |
@@ -802,6 +803,174 @@ ao.use(IdempotencyMiddleware())
 | `OffloadMiddleware` | Auto-offload large payloads to Redis |
 | `UsageAnalyticsMiddleware` | Usage tracking and analytics |
 | `MemoryLifecycleMiddleware` | Auto-promote session data to long-term memory |
+
+---
+
+## Summarization Strategies
+
+When agents return large responses that exceed context windows, use `SummarizerMiddleware` to intelligently compress content while preserving key information:
+
+```python
+from agentorchestrator.middleware import (
+    SummarizerMiddleware,
+    SummarizationStrategy,
+    LangChainSummarizer,
+    create_gateway_summarizer,
+)
+
+# Create a summarizer (using LLM Gateway, OpenAI, or Anthropic)
+summarizer = create_gateway_summarizer(
+    server_url="https://llm-gateway.corp.com/v1",
+    model_name="gpt-4",
+)
+
+# Apply middleware with chosen strategy
+ao.use(SummarizerMiddleware(
+    summarizer=summarizer,
+    strategy=SummarizationStrategy.MAP_REDUCE,  # or STUFF, REFINE
+    max_tokens=4000,              # Target summary size
+    threshold_tokens=8000,        # Only summarize if > threshold
+    preserve_original=True,       # Store original for debugging
+))
+```
+
+### Three Strategies
+
+| Strategy | Best For | How It Works |
+|----------|----------|--------------|
+| **STUFF** | Small documents (<8K tokens) | Single LLM call with all text |
+| **MAP_REDUCE** | Large documents, parallel processing | Split → summarize chunks in parallel → combine |
+| **REFINE** | Maintaining coherence, sequential docs | Iteratively refine summary with each chunk |
+
+```
+MAP_REDUCE Strategy:
+┌──────────────────────────────────────────────────────────────┐
+│  Large Document (50K tokens)                                 │
+└──────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+        ┌──────────────────┼──────────────────┐
+        │                  │                  │
+        ▼                  ▼                  ▼
+   ┌─────────┐        ┌─────────┐        ┌─────────┐
+   │ Chunk 1 │        │ Chunk 2 │        │ Chunk 3 │   (parallel)
+   └────┬────┘        └────┬────┘        └────┬────┘
+        │                  │                  │
+        ▼                  ▼                  ▼
+   ┌─────────┐        ┌─────────┐        ┌─────────┐
+   │Summary 1│        │Summary 2│        │Summary 3│
+   └────┬────┘        └────┬────┘        └────┬────┘
+        │                  │                  │
+        └──────────────────┼──────────────────┘
+                           │
+                           ▼
+                   ┌───────────────┐
+                   │ Final Summary │  (4K tokens)
+                   └───────────────┘
+```
+
+### Domain-Specific Prompts
+
+Customize summarization for different content types to preserve domain-specific details:
+
+```python
+# Register domain-specific prompts
+LangChainSummarizer.register_domain_prompts(
+    domain="financial_news",
+    map_prompt="""Summarize this financial news, preserving:
+- Company names and tickers
+- Key metrics (revenue, EPS, growth rates)
+- Analyst opinions and price targets
+
+{text}
+
+Summary:""",
+    reduce_prompt="""Combine these financial summaries into a cohesive analysis:
+
+{text}
+
+Final Analysis:""",
+)
+
+# Apply to specific steps
+ao.use(SummarizerMiddleware(
+    summarizer=summarizer,
+    step_content_types={
+        "gather_news": "financial_news",
+        "gather_sec": "sec_filings",
+        "gather_earnings": "financial_news",
+    },
+))
+```
+
+### Step-Specific Configuration
+
+Configure different strategies and limits per step:
+
+```python
+ao.use(SummarizerMiddleware(
+    summarizer=summarizer,
+    step_strategies={
+        "gather_news": SummarizationStrategy.MAP_REDUCE,   # Large, parallel
+        "gather_sec": SummarizationStrategy.REFINE,       # Sequential, coherent
+        "quick_lookup": SummarizationStrategy.STUFF,      # Small, fast
+    },
+    step_max_tokens={
+        "gather_news": 2000,
+        "gather_sec": 3000,
+        "quick_lookup": 1000,
+    },
+))
+```
+
+### Factory Functions
+
+```python
+# OpenAI
+from agentorchestrator.middleware import create_openai_summarizer
+summarizer = create_openai_summarizer(model="gpt-4", api_key="...")
+
+# Anthropic Claude
+from agentorchestrator.middleware import create_anthropic_summarizer
+summarizer = create_anthropic_summarizer(model="claude-3-sonnet-20240229")
+
+# LLM Gateway (corporate environments with OAuth)
+from agentorchestrator.middleware import create_gateway_summarizer
+summarizer = create_gateway_summarizer(
+    server_url=os.getenv("LLM_SERVER_URL"),
+    oauth_endpoint=os.getenv("LLM_OAUTH_ENDPOINT"),
+    client_id=os.getenv("LLM_CLIENT_ID"),
+    client_secret=os.getenv("LLM_CLIENT_SECRET"),
+)
+```
+
+### Combining with Token Management
+
+For comprehensive context management, layer multiple middleware:
+
+```python
+# 1. Token budget management (triggers auto-compression)
+ao.use(TokenManagerMiddleware(
+    max_total_tokens=8000,
+    warning_threshold=0.8,
+    auto_summarize=True,
+))
+
+# 2. Summarization (compresses large outputs)
+ao.use(SummarizerMiddleware(
+    summarizer=summarizer,
+    max_tokens=4000,
+    threshold_tokens=6000,
+))
+
+# 3. Offload to Redis (for very large data)
+ao.use(OffloadMiddleware(
+    store=RedisContextStore(),
+    threshold_bytes=500_000,
+))
+```
+
+See: [Summarization Pattern Guide](docs/patterns/summarization.md) for complete reference with decision trees and advanced examples.
 
 ---
 

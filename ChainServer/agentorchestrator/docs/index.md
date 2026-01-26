@@ -247,6 +247,8 @@ agentorchestrator/
 | [Architecture](ARCHITECTURE.md) | System design & diagrams |
 | [API Reference](API.md) | Full API documentation |
 | [Context Management](CONTEXT_MANAGEMENT.md) | Deep dive into context patterns |
+| [Memory Architecture](MEMORY_ARCHITECTURE.md) | Three-layer memory guide (Session/Agentic/RAG) |
+| [Summarization Patterns](patterns/summarization.md) | STUFF, MAP_REDUCE, REFINE strategies for large responses |
 | [MCP Connectors](MCP_CONNECTORS.md) | Model Context Protocol integration guide |
 | [Feature Examples](FEATURE_EXAMPLES.md) | Code examples for all features |
 | [Troubleshooting](TROUBLESHOOTING.md) | Common issues & solutions |
