@@ -93,15 +93,86 @@ results = await memory.search("What are user preferences?")
 
 ### VectorStoreService
 
-```python
-from agentorchestrator.services import VectorStoreService, VectorDocument
+Vector storage for semantic search with in-memory (development) and remote (production) backends.
 
+```python
+from agentorchestrator.services import VectorStoreService, VectorDocument, VectorStoreConfig
+
+# In-memory mode (default) - for development
 vs = VectorStoreService()
 await vs.upsert([
     VectorDocument(id="d1", text="Use async for I/O", metadata={"topic": "python"})
 ])
 results = await vs.query("How to handle I/O?", top_k=5)
 ```
+
+#### Async Context Manager (Recommended)
+
+Use `async with` for automatic connection cleanup:
+
+```python
+async with VectorStoreService() as vs:
+    await vs.upsert([VectorDocument(id="1", text="Hello world")])
+    results = await vs.query("greeting", top_k=5)
+# Connection automatically closed
+```
+
+#### Remote Providers (Production)
+
+For remote vector stores (Cohere Compass or custom), `host` and `api_key` are **required**:
+
+```python
+from agentorchestrator.services import VectorStoreConfig, VectorStoreService
+
+# Option 1: Direct configuration
+config = VectorStoreConfig(
+    provider="cohere_compass",
+    host="https://compass.corp.com",
+    api_key="sk-xxx",
+    namespace="my-app",
+)
+vs = VectorStoreService(config=config)
+
+# Option 2: From environment variables
+# Set: VECTOR_PROVIDER, VECTOR_HOST, VECTOR_API_KEY, VECTOR_NAMESPACE
+config = VectorStoreConfig.from_env()
+vs = VectorStoreService(config=config)
+```
+
+**Note**: Creating a `VectorStoreService` with a remote provider but missing `host` or `api_key` raises `ConfigurationError` immediately, preventing runtime crashes.
+
+#### Namespace Isolation
+
+Different namespaces have completely separate document storage (prevents data leakage between tenants/runs):
+
+```python
+# Tenant A's documents
+config_a = VectorStoreConfig(namespace="tenant-a")
+vs_a = VectorStoreService(config=config_a)
+await vs_a.upsert([VectorDocument(id="1", text="Tenant A data")])
+
+# Tenant B's documents (separate index)
+config_b = VectorStoreConfig(namespace="tenant-b")
+vs_b = VectorStoreService(config=config_b)
+await vs_b.upsert([VectorDocument(id="1", text="Tenant B data")])
+
+# Each only sees their own data
+results_a = await vs_a.query("data")  # Only Tenant A docs
+results_b = await vs_b.query("data")  # Only Tenant B docs
+```
+
+#### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `VECTOR_PROVIDER` | `memory` or `cohere_compass` | `memory` |
+| `VECTOR_HOST` | Remote vector store URL | - |
+| `VECTOR_API_KEY` | API key for authentication | - |
+| `VECTOR_NAMESPACE` | Namespace for isolation | `default` |
+| `VECTOR_TIMEOUT` | Request timeout in seconds | `30` |
+| `VECTOR_VERIFY_SSL` | Verify TLS certificates | `true` |
+| `COHERE_COMPASS_URL` | Fallback for `VECTOR_HOST` | - |
+| `COHERE_COMPASS_API_KEY` | Fallback for `VECTOR_API_KEY` | - |
 
 ---
 

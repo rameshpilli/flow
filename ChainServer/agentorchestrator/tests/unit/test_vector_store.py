@@ -177,3 +177,119 @@ async def test_vector_store_service_close_is_idempotent():
     await service.close()
     await service.close()  # Should not raise
 
+
+# ============================================================================
+# Tests for namespace isolation
+# ============================================================================
+
+
+@pytest.fixture(autouse=True)
+def clear_namespaces():
+    """Clear all namespaces before and after each test to ensure isolation."""
+    InMemoryVectorStore.clear_all_namespaces()
+    yield
+    InMemoryVectorStore.clear_all_namespaces()
+
+
+@pytest.mark.asyncio
+async def test_inmemory_vector_store_namespace_isolation():
+    """Test that different namespaces have isolated indices."""
+    store_a = InMemoryVectorStore(namespace="tenant-a")
+    store_b = InMemoryVectorStore(namespace="tenant-b")
+
+    # Add documents to each namespace
+    await store_a.add_documents([
+        VectorDocument(id="doc1", text="Document in tenant A"),
+    ])
+    await store_b.add_documents([
+        VectorDocument(id="doc2", text="Document in tenant B"),
+    ])
+
+    # Each namespace should only see its own documents
+    assert await store_a.count() == 1
+    assert await store_b.count() == 1
+
+    # Query should only return documents from the same namespace
+    results_a = await store_a.query("Document", top_k=10)
+    results_b = await store_b.query("Document", top_k=10)
+
+    assert len(results_a) == 1
+    assert results_a[0].id == "doc1"
+
+    assert len(results_b) == 1
+    assert results_b[0].id == "doc2"
+
+
+@pytest.mark.asyncio
+async def test_inmemory_vector_store_clear_only_affects_namespace():
+    """Test that clearing one namespace doesn't affect others."""
+    store_a = InMemoryVectorStore(namespace="ns-a")
+    store_b = InMemoryVectorStore(namespace="ns-b")
+
+    await store_a.add_documents([VectorDocument(id="a1", text="A doc")])
+    await store_b.add_documents([VectorDocument(id="b1", text="B doc")])
+
+    # Clear namespace A
+    await store_a.clear()
+
+    # A should be empty, B should still have documents
+    assert await store_a.count() == 0
+    assert await store_b.count() == 1
+
+
+@pytest.mark.asyncio
+async def test_vector_store_service_uses_namespace_for_memory():
+    """Test that VectorStoreService passes namespace to InMemoryVectorStore."""
+    config_a = VectorStoreConfig(provider="memory", namespace="service-ns-a")
+    config_b = VectorStoreConfig(provider="memory", namespace="service-ns-b")
+
+    service_a = VectorStoreService(config=config_a)
+    service_b = VectorStoreService(config=config_b)
+
+    # Add documents through services
+    await service_a.upsert([VectorDocument(id="sa1", text="Service A document")])
+    await service_b.upsert([VectorDocument(id="sb1", text="Service B document")])
+
+    # Each service should only see its own documents
+    results_a = await service_a.query("document", top_k=10)
+    results_b = await service_b.query("document", top_k=10)
+
+    assert len(results_a) == 1
+    assert results_a[0].id == "sa1"
+
+    assert len(results_b) == 1
+    assert results_b[0].id == "sb1"
+
+
+@pytest.mark.asyncio
+async def test_inmemory_vector_store_same_namespace_shares_data():
+    """Test that stores with same namespace share the same index."""
+    store1 = InMemoryVectorStore(namespace="shared")
+    store2 = InMemoryVectorStore(namespace="shared")
+
+    # Add via store1
+    await store1.add_documents([VectorDocument(id="shared-doc", text="Shared data")])
+
+    # Should be visible from store2
+    assert await store2.count() == 1
+    results = await store2.query("Shared", top_k=1)
+    assert len(results) == 1
+    assert results[0].id == "shared-doc"
+
+
+def test_inmemory_vector_store_clear_all_namespaces():
+    """Test that clear_all_namespaces removes all namespace indices."""
+    # Create stores in different namespaces
+    store_a = InMemoryVectorStore(namespace="clear-test-a")
+    store_b = InMemoryVectorStore(namespace="clear-test-b")
+
+    # Verify namespaces exist
+    assert "clear-test-a" in InMemoryVectorStore._namespace_indices
+    assert "clear-test-b" in InMemoryVectorStore._namespace_indices
+
+    # Clear all
+    InMemoryVectorStore.clear_all_namespaces()
+
+    # All namespaces should be removed
+    assert len(InMemoryVectorStore._namespace_indices) == 0
+

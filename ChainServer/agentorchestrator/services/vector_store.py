@@ -254,29 +254,35 @@ async def _maybe_await_embedder(embedder: Callable[[str], Any], text: str) -> li
 
 class InMemoryVectorStore:
     """
-    Simple in-memory vector store with pluggable embedder.
+    Simple in-memory vector store with pluggable embedder and namespace isolation.
 
     Provides basic vector storage and similarity search for development
     and testing. Documents are embedded and stored in memory, with
     cosine similarity used for matching.
 
+    Namespace Isolation:
+        Each namespace has its own isolated index. Documents in one namespace
+        are not visible to queries in another namespace. This prevents data
+        leakage between different tenants, runs, or test cases.
+
     Attributes:
         embedder (Callable): Function to convert text to embeddings.
+        namespace (str): Namespace for index isolation.
 
     Methods:
         add_documents(): Add documents to the index.
         query(): Search for similar documents.
-        clear(): Remove all documents.
-        count(): Get number of indexed documents.
+        clear(): Remove all documents in this namespace.
+        count(): Get number of indexed documents in this namespace.
 
     Example:
-        >>> # With default embedder
-        >>> store = InMemoryVectorStore()
+        >>> # With default embedder and namespace
+        >>> store = InMemoryVectorStore(namespace="tenant-1")
         >>>
         >>> # With custom embedder
         >>> async def my_embedder(text: str) -> list[float]:
         ...     return await openai.embed(text)
-        >>> store = InMemoryVectorStore(embedder=my_embedder)
+        >>> store = InMemoryVectorStore(embedder=my_embedder, namespace="my-app")
         >>>
         >>> # Add and query
         >>> await store.add_documents([
@@ -292,7 +298,15 @@ class InMemoryVectorStore:
         VectorStoreService: Higher-level facade that wraps this store.
     """
 
-    def __init__(self, embedder: Callable[[str], Any] | None = None):
+    # Class-level registry for namespace isolation
+    # Maps namespace -> {doc_id -> (embedding, document)}
+    _namespace_indices: dict[str, dict[str, tuple[list[float], VectorDocument]]] = {}
+
+    def __init__(
+        self,
+        embedder: Callable[[str], Any] | None = None,
+        namespace: str = "default",
+    ):
         """
         Initialize in-memory vector store.
 
@@ -300,10 +314,17 @@ class InMemoryVectorStore:
             embedder (Callable | None): Function to embed text into vectors.
                 Can be sync or async. If None, uses a simple test embedder.
                 Signature: (text: str) -> list[float]
+            namespace (str): Namespace for index isolation. Different namespaces
+                have completely separate document storage. Default: "default".
 
         Example:
             >>> # Default embedder (testing only)
             >>> store = InMemoryVectorStore()
+            >>>
+            >>> # With namespace isolation
+            >>> store1 = InMemoryVectorStore(namespace="tenant-a")
+            >>> store2 = InMemoryVectorStore(namespace="tenant-b")
+            >>> # store1 and store2 have separate indices
             >>>
             >>> # Custom sync embedder
             >>> store = InMemoryVectorStore(embedder=my_embed_function)
@@ -312,7 +333,16 @@ class InMemoryVectorStore:
             >>> store = InMemoryVectorStore(embedder=async_embed_function)
         """
         self.embedder = embedder or _default_embedder
-        self._index: dict[str, tuple[list[float], VectorDocument]] = {}
+        self.namespace = namespace
+
+        # Initialize namespace index if not exists
+        if namespace not in InMemoryVectorStore._namespace_indices:
+            InMemoryVectorStore._namespace_indices[namespace] = {}
+
+    @property
+    def _index(self) -> dict[str, tuple[list[float], VectorDocument]]:
+        """Get the index for this namespace."""
+        return InMemoryVectorStore._namespace_indices[self.namespace]
 
     async def add_documents(self, docs: Iterable[VectorDocument]) -> None:
         """
@@ -375,7 +405,10 @@ class InMemoryVectorStore:
 
     async def clear(self) -> None:
         """
-        Remove all documents from the index.
+        Remove all documents from this namespace's index.
+
+        Only clears documents in this store's namespace; other namespaces
+        are not affected.
 
         Example:
             >>> await store.clear()
@@ -385,7 +418,7 @@ class InMemoryVectorStore:
 
     async def count(self) -> int:
         """
-        Get number of indexed documents.
+        Get number of indexed documents in this namespace.
 
         Returns:
             int: Number of documents in the index.
@@ -396,6 +429,19 @@ class InMemoryVectorStore:
             >>> print(f"{count} documents indexed")
         """
         return len(self._index)
+
+    @classmethod
+    def clear_all_namespaces(cls) -> None:
+        """
+        Clear all namespaces (useful for testing).
+
+        Removes all documents from all namespaces. This is a class method
+        that affects all InMemoryVectorStore instances.
+
+        Example:
+            >>> InMemoryVectorStore.clear_all_namespaces()
+        """
+        cls._namespace_indices.clear()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -479,7 +525,11 @@ class VectorStoreService:
         """
         self.config = config or VectorStoreConfig()
         self.embedder = embedder
-        self._memory_store = InMemoryVectorStore(embedder) if self.config.provider == "memory" else None
+        self._memory_store = (
+            InMemoryVectorStore(embedder=embedder, namespace=self.config.namespace)
+            if self.config.provider == "memory"
+            else None
+        )
         self._cohere_compass = None
         self._http_client = None
 
