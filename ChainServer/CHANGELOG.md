@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Configurable SSL verification for LLM Gateway (`LLM_VERIFY_SSL` env var)
 - Context cleanup methods (`remove_context()`, `cleanup_old_contexts()`)
 - OTEL tracing improvements: sampling rate, batch processor config
-- Comprehensive test suite for LLM Gateway, Secrets, Middleware
+- Unit tests for core components (context, DAG, registry, middleware basics)
 
 ### Changed
 - Improved Redis EventBus error logging (now logs at ERROR level with event details)

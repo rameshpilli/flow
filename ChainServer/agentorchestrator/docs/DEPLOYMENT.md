@@ -53,6 +53,9 @@ LLM_CLIENT_SECRET=your_client_secret
 
 # Or use API key instead of OAuth
 # LLM_API_KEY=your_api_key
+
+# SSL verification (default: true, set to "false" for self-signed certs)
+# LLM_VERIFY_SSL=true
 ```
 
 ### Optional Variables

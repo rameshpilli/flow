@@ -56,16 +56,29 @@ config = get_config()
 For production, use a secrets manager:
 
 ```python
-from agentorchestrator.services import SecretService
+from agentorchestrator.services import get_secret_service, VaultSecretProvider, SecretService
 
-# Configure Vault
-secrets = SecretService(
-    vault_addr="https://vault.example.com",
-    vault_token=os.environ.get("VAULT_TOKEN"),
+# Option 1: Auto-configure from environment (recommended)
+# Set VAULT_ADDR and VAULT_TOKEN env vars
+secrets = get_secret_service()
+
+# Option 2: Explicit configuration
+vault_provider = VaultSecretProvider(
+    url="https://vault.example.com",
+    token=os.environ.get("VAULT_TOKEN"),
+    mount_point="secret",  # optional, defaults to "secret"
 )
+secrets = SecretService(vault_provider=vault_provider)
 
 # Retrieve secrets
 api_key = await secrets.get_secret("llm/api_key")
+```
+
+**Environment Variables:**
+```bash
+VAULT_ADDR=https://vault.example.com   # Vault server URL
+VAULT_TOKEN=your_token                  # Vault authentication token
+VAULT_MOUNT_POINT=secret               # Optional, defaults to "secret"
 ```
 
 ### SecretString Protection

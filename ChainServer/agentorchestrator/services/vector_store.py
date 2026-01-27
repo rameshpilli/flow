@@ -301,6 +301,15 @@ class InMemoryVectorStore:
     # Class-level registry for namespace isolation
     # Maps namespace -> {doc_id -> (embedding, document)}
     _namespace_indices: dict[str, dict[str, tuple[list[float], VectorDocument]]] = {}
+    # Lock for thread-safe access to _namespace_indices in async contexts
+    _lock: asyncio.Lock | None = None
+
+    @classmethod
+    def _get_lock(cls) -> asyncio.Lock:
+        """Get or create the class-level lock (lazy initialization for async contexts)."""
+        if cls._lock is None:
+            cls._lock = asyncio.Lock()
+        return cls._lock
 
     def __init__(
         self,
@@ -335,9 +344,11 @@ class InMemoryVectorStore:
         self.embedder = embedder or _default_embedder
         self.namespace = namespace
 
-        # Initialize namespace index if not exists
+        # Initialize namespace index if not exists (sync check, async init deferred)
         if namespace not in InMemoryVectorStore._namespace_indices:
             InMemoryVectorStore._namespace_indices[namespace] = {}
+        # Store reference to namespace for this instance
+        self._namespace_ref = namespace
 
     @property
     def _index(self) -> dict[str, tuple[list[float], VectorDocument]]:
@@ -360,9 +371,10 @@ class InMemoryVectorStore:
             ...     VectorDocument(id="2", text="JavaScript basics"),
             ... ])
         """
-        for doc in docs:
-            embedding = await _maybe_await_embedder(self.embedder, doc.text)
-            self._index[doc.id] = (embedding, doc)
+        async with self._get_lock():
+            for doc in docs:
+                embedding = await _maybe_await_embedder(self.embedder, doc.text)
+                self._index[doc.id] = (embedding, doc)
 
     async def query(self, query_text: str, top_k: int = 5) -> list[VectorMatch]:
         """
@@ -383,25 +395,26 @@ class InMemoryVectorStore:
             >>> for match in matches:
             ...     print(f"{match.id}: {match.score:.3f}")
         """
-        if not self._index:
-            return []
-        query_vec = await _maybe_await_embedder(self.embedder, query_text)
+        async with self._get_lock():
+            if not self._index:
+                return []
+            query_vec = await _maybe_await_embedder(self.embedder, query_text)
 
-        scored: list[tuple[float, VectorDocument]] = []
-        for embedding, doc in self._index.values():
-            score = _cosine_similarity(query_vec, embedding)
-            scored.append((score, doc))
+            scored: list[tuple[float, VectorDocument]] = []
+            for embedding, doc in self._index.values():
+                score = _cosine_similarity(query_vec, embedding)
+                scored.append((score, doc))
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        matches: list[VectorMatch] = []
-        for score, doc in scored[:top_k]:
-            matches.append(VectorMatch(
-                id=doc.id,
-                text=doc.text,
-                score=score,
-                metadata=doc.metadata,
-            ))
-        return matches
+            scored.sort(key=lambda x: x[0], reverse=True)
+            matches: list[VectorMatch] = []
+            for score, doc in scored[:top_k]:
+                matches.append(VectorMatch(
+                    id=doc.id,
+                    text=doc.text,
+                    score=score,
+                    metadata=doc.metadata,
+                ))
+            return matches
 
     async def clear(self) -> None:
         """
@@ -414,7 +427,8 @@ class InMemoryVectorStore:
             >>> await store.clear()
             >>> count = await store.count()  # 0
         """
-        self._index.clear()
+        async with self._get_lock():
+            self._index.clear()
 
     async def count(self) -> int:
         """
@@ -428,20 +442,35 @@ class InMemoryVectorStore:
             >>> count = await store.count()
             >>> print(f"{count} documents indexed")
         """
-        return len(self._index)
+        async with self._get_lock():
+            return len(self._index)
 
     @classmethod
-    def clear_all_namespaces(cls) -> None:
+    async def clear_all_namespaces_async(cls) -> None:
         """
-        Clear all namespaces (useful for testing).
+        Clear all namespaces asynchronously (thread-safe).
 
         Removes all documents from all namespaces. This is a class method
         that affects all InMemoryVectorStore instances.
 
         Example:
+            >>> await InMemoryVectorStore.clear_all_namespaces_async()
+        """
+        async with cls._get_lock():
+            cls._namespace_indices.clear()
+
+    @classmethod
+    def clear_all_namespaces(cls) -> None:
+        """
+        Clear all namespaces (useful for testing, not thread-safe).
+
+        For async code, prefer clear_all_namespaces_async().
+
+        Example:
             >>> InMemoryVectorStore.clear_all_namespaces()
         """
         cls._namespace_indices.clear()
+        cls._lock = None  # Reset lock for clean state
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

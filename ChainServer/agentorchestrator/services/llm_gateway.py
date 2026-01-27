@@ -353,11 +353,15 @@ class OAuthTokenManager:
                     self._token = result.get("access_token")
                     # Use expires_in from response, or default
                     expires_in = result.get("expires_in", self.token_expiry_seconds)
-                    # Ensure we don't go negative - floor at 60 seconds minimum
-                    # This prevents rapid refresh loops with short-lived tokens
-                    buffer_seconds = min(60, expires_in // 2)  # Use half of expires_in if < 120s
-                    effective_expiry = max(expires_in - buffer_seconds, 60)
-                    self._expires_at = time.time() + min(effective_expiry, self.token_expiry_seconds)
+                    # Apply buffer to refresh before actual expiry
+                    # For short-lived tokens (e.g., 30-50s), use smaller buffer
+                    # Buffer = min(60s, 20% of expires_in) to handle both long and short tokens
+                    buffer_seconds = min(60, max(5, int(expires_in * 0.2)))
+                    # Cap effective expiry at (expires_in - buffer), never extend beyond actual token lifetime
+                    effective_expiry = min(expires_in - buffer_seconds, self.token_expiry_seconds)
+                    # Floor at 5 seconds to prevent negative/zero expiry
+                    effective_expiry = max(effective_expiry, 5)
+                    self._expires_at = time.time() + effective_expiry
 
                     logger.info(f"OAuth token refreshed, expires in {expires_in}s")
                     return self._token
@@ -585,6 +589,22 @@ class LLMGatewayClient:
         """Check if client is properly configured for real API calls."""
         return bool(self.server_url and (self._token_manager or self.api_key))
 
+    def _check_configuration(self) -> None:
+        """
+        Validate configuration and raise clear errors for misconfiguration.
+
+        Raises:
+            RuntimeError: If server_url is set but authentication is missing.
+        """
+        if self.server_url and not (self._token_manager or self.api_key):
+            raise RuntimeError(
+                f"LLM Gateway misconfigured: server_url is set ({self.server_url}) "
+                "but no authentication provided. Either:\n"
+                "  1. Set LLM_API_KEY environment variable, or\n"
+                "  2. Configure OAuth with LLM_OAUTH_ENDPOINT, LLM_CLIENT_ID, LLM_CLIENT_SECRET\n"
+                "To use stub mode for testing, unset LLM_SERVER_URL."
+            )
+
     async def _get_async_client(self):
         """
         Get or create async HTTP client (thread-safe).
@@ -772,10 +792,15 @@ class LLMGatewayClient:
             ... )
 
         Note:
-            If client is not configured (no auth), returns a stub response
+            If client is not configured (no server_url), returns a stub response
             like "[LLM Response for: What is...]" for testing purposes.
+
+            If server_url is set but auth is missing, raises RuntimeError.
         """
-        # Check if configured for real API calls
+        # Check for misconfiguration (server_url set but no auth)
+        self._check_configuration()
+
+        # If no server_url at all, use stub mode for testing
         if not self._is_configured():
             logger.info(f"LLM generate (stub): {prompt[:50]}...")
             return f"[LLM Response for: {prompt[:30]}...]"
@@ -977,8 +1002,13 @@ class LLMGatewayClient:
         Note:
             Handles markdown code blocks in responses (```json...```).
             On JSON parse failure, attempts to return empty model instance.
+
+            If server_url is set but auth is missing, raises RuntimeError.
         """
-        # Check if configured for real API calls
+        # Check for misconfiguration (server_url set but no auth)
+        self._check_configuration()
+
+        # If no server_url at all, use stub mode for testing
         if not self._is_configured():
             logger.info(f"LLM structured generate (stub): {prompt[:50]}...")
             if response_model:

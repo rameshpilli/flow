@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-A financial data pipeline built with **AgentOrchestrator** - a DAG-based orchestration framework for AI/ML pipelines.
+A sample application built with **AgentOrchestrator** - a DAG-based orchestration framework for AI/ML pipelines.
 
 ## Why AgentOrchestrator?
 

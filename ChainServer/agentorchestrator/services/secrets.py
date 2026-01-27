@@ -120,7 +120,8 @@ def get_secret_service() -> SecretService:
     global _instance
     if not _instance:
         # Auto-configure Vault if env vars present
-        vault_url = os.getenv("VAULT_URL")
+        # Accept both VAULT_ADDR (standard) and VAULT_URL (legacy) for compatibility
+        vault_url = os.getenv("VAULT_ADDR") or os.getenv("VAULT_URL")
         vault_token = os.getenv("VAULT_TOKEN")
         vault_mount = os.getenv("VAULT_MOUNT_POINT", "secret")
         vp = None

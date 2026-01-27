@@ -76,9 +76,8 @@ ao = "agentorchestrator.cli:main"
 agentorchestrator = "agentorchestrator.cli:main"
 
 [project.urls]
-# TODO: Update with actual repository URL before publishing
-Repository = "https://github.com/agentorchestrator/agentorchestrator"
-Documentation = "https://agentorchestrator.github.io/docs/"
+Repository = "https://github.com/rameshpilli/flow"
+Documentation = "https://github.com/rameshpilli/flow/tree/main/ChainServer/agentorchestrator/docs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agentorchestrator"]

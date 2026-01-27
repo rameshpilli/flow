@@ -257,4 +257,4 @@ agentorchestrator/
 
 ## License
 
-AgentOrchestrator is released under the [MIT License](https://github.com/your-org/agentorchestrator/blob/main/LICENSE).
+AgentOrchestrator is released under the [MIT License](LICENSE).

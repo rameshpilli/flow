@@ -113,7 +113,9 @@ pip install -e ".[redis,langchain,observability]"
 - `langchain` - LangChain integration (summarizers, text splitters, tiktoken)
 - `observability` - OpenTelemetry tracing and structured logging
 - `workflows` - Event-driven workflows (includes Redis)
-- `all` - Everything above plus mem0 and hvac (Vault)
+- `memory` - Mem0 semantic memory integration (`mem0ai`)
+- `secrets` - HashiCorp Vault integration (`hvac`)
+- `all` - Everything above (redis, langchain, observability, memory, secrets)
 - `dev` - Development tools (pytest, ruff)
 - `docs` - Documentation tools (mkdocs)
 
