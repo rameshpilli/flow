@@ -351,6 +351,13 @@ class OffloadMiddleware(Middleware):
                     ctx.set(key_pattern, ref)
                     logger.debug(f"Updated context key '{key_pattern}' with ContextRef")
 
+        # Update any other context entries produced by this step
+        updated_keys = ctx.update_step_outputs(step_name, ref)
+        if updated_keys:
+            logger.debug(
+                f"Updated {len(updated_keys)} context key(s) for step '{step_name}' with ContextRef"
+            )
+
         # Update statistics
         self._offload_count += 1
         self._total_bytes_offloaded += size

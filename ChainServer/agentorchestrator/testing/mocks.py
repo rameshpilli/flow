@@ -378,7 +378,7 @@ class MockMiddleware(Middleware):
 
     Usage:
         mock_mw = MockMiddleware()
-        ao.use_middleware(mock_mw)
+        ao.use(mock_mw)
 
         await ao.launch("chain", {})
 

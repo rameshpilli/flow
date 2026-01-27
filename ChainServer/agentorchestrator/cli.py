@@ -144,13 +144,13 @@ def _configure_observability_from_env() -> None:
     if _observability_configured:
         return
 
-    if _env_flag("AO_ENABLE_LOGGING"):
+    log_level = os.getenv("LOG_LEVEL")
+    verbose = _env_flag("VERBOSE")
+    if log_level or verbose:
         from agentorchestrator.utils.logging import configure_logging
 
-        level = os.getenv("AO_LOG_LEVEL", "INFO")
-        json_output = _env_flag("AO_LOG_JSON")
-        include_timestamp = not _env_flag("AO_LOG_NO_TIMESTAMP")
-        configure_logging(level=level, json_output=json_output, include_timestamp=include_timestamp)
+        level = "DEBUG" if verbose else (log_level or "INFO")
+        configure_logging(level=level)
 
     if _env_flag("AO_ENABLE_TRACING"):
         from agentorchestrator.utils.tracing import configure_tracing
@@ -1569,13 +1569,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if py_major >= 3 and py_minor >= 10:
         print(f"  ✅ Python version: {py_version}")
         checks_passed += 1
-    elif py_major >= 3 and py_minor >= 9:
-        print(f"  ⚠️  Python version: {py_version} (3.10+ recommended)")
-        warnings.append(f"Python {py_version} works but 3.10+ is recommended")
-        checks_passed += 1
     else:
-        print(f"  ❌ Python version: {py_version} (requires 3.9+)")
-        issues.append(f"Python 3.9+ required, found {py_version}")
+        print(f"  ❌ Python version: {py_version} (requires 3.10+)")
+        issues.append(f"Python 3.10+ required, found {py_version}")
 
     # 2. Required dependencies
     required_deps = [
@@ -1618,10 +1614,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # 4. Environment variables
     print("\n  Environment Variables:")
     env_vars = [
-        ("LLM_API_KEY", True, "LLM API authentication"),
-        ("LLM_BASE_URL", False, "LLM endpoint URL"),
-        ("AO_ENV", False, "Environment name"),
-        ("AO_DEBUG", False, "Debug mode"),
+        ("LLM_SERVER_URL", False, "LLM gateway endpoint"),
+        ("LLM_GATEWAY_URL", False, "Alias for LLM_SERVER_URL"),
+        ("LLM_API_KEY", False, "LLM API key (alternative to OAuth)"),
+        ("LLM_OAUTH_ENDPOINT", False, "OAuth token endpoint"),
+        ("LLM_CLIENT_ID", False, "OAuth client ID"),
+        ("LLM_CLIENT_SECRET", False, "OAuth client secret"),
     ]
 
     for var_name, required, desc in env_vars:
@@ -1638,6 +1636,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         else:
             print(f"  ⚪ {var_name}: not set ({desc}) - optional")
             checks_passed += 1
+
+    # Basic LLM configuration sanity check
+    server_url = os.getenv("LLM_SERVER_URL") or os.getenv("LLM_GATEWAY_URL")
+    has_oauth = all(
+        os.getenv(key) for key in ("LLM_OAUTH_ENDPOINT", "LLM_CLIENT_ID", "LLM_CLIENT_SECRET")
+    )
+    has_api_key = bool(os.getenv("LLM_API_KEY"))
+    if not (server_url and (has_api_key or has_oauth)):
+        warnings.append("LLM not fully configured (server URL + API key or OAuth required)")
 
     # 5. AgentOrchestrator imports
     print("\n  AgentOrchestrator Imports:")

@@ -438,6 +438,11 @@ class SummarizerMiddleware(Middleware):
             }
         )
 
+        # Update any context entries produced by this step
+        updated_keys = ctx.update_step_outputs(step_name, result.output)
+        if updated_keys:
+            result.metadata["context_keys_updated"] = updated_keys
+
         logger.info(f"Step {step_name}: {token_count} -> {summarized_tokens} tokens")
 
     async def _run_legacy_summarizer(self, text: str, max_tokens: int) -> str:

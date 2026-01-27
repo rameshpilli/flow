@@ -85,6 +85,20 @@ class StepCheckpoint:
             "skipped_reason": self.skipped_reason,
         }
 
+    def to_step_result(self) -> StepResult:
+        """Reconstruct a StepResult from this checkpoint."""
+        error = Exception(self.error) if self.error else None
+        return StepResult(
+            step_name=self.step_name,
+            output=self.output,
+            duration_ms=self.duration_ms,
+            error=error,
+            error_type=self.error_type,
+            error_traceback=self.error_traceback,
+            retry_count=self.retry_count,
+            skipped_reason=self.skipped_reason,
+        )
+
     @staticmethod
     def _serialize_output(output: Any) -> Any:
         """Serialize output for JSON storage."""
@@ -548,18 +562,23 @@ class ResumableChainRunner:
         if not checkpoint.resumable:
             raise ValueError(f"Run is not resumable: {run_id}")
 
-        # Restore context with completed step outputs
-        initial_data = checkpoint.initial_data.copy()
-        if skip_completed:
-            # Add outputs from completed steps to context
+        # Restore context from checkpoint if available (more accurate than merging outputs)
+        initial_data = checkpoint.context_data.copy() if checkpoint.context_data else checkpoint.initial_data.copy()
+        if not checkpoint.context_data:
             for step_cp in checkpoint.steps:
-                if step_cp.status == "completed" and step_cp.output:
-                    # Merge output dict into initial_data
-                    if isinstance(step_cp.output, dict):
-                        initial_data.update(step_cp.output)
+                if step_cp.status == "completed" and isinstance(step_cp.output, dict):
+                    initial_data.update(step_cp.output)
+        if skip_completed and not checkpoint.context_data:
+            # Fallback: merge completed step outputs into initial_data
+            for step_cp in checkpoint.steps:
+                if step_cp.status == "completed" and isinstance(step_cp.output, dict):
+                    initial_data.update(step_cp.output)
 
-        # Get steps to run
-        completed_steps = set(checkpoint.get_completed_steps())
+        precompleted_results: dict[str, StepResult] = {}
+        if skip_completed:
+            for step_cp in checkpoint.steps:
+                if step_cp.status == "completed":
+                    precompleted_results[step_cp.step_name] = step_cp.to_step_result()
 
         # Update checkpoint for resume
         checkpoint.status = "running"
@@ -572,13 +591,12 @@ class ResumableChainRunner:
             initial_data=initial_data,
         )
 
-        # Execute remaining steps
-        # Note: This requires DAGExecutor to support skip_steps parameter
-        # For now, we'll re-run the full chain but with restored context
+        # Execute remaining steps (completed steps are pre-marked)
         try:
             ctx = await self._executor.execute(
                 checkpoint.chain_name,
                 ctx,
+                precompleted_results=precompleted_results if skip_completed else None,
             )
 
             success = all(r.success for r in ctx.results)
@@ -623,9 +641,61 @@ class ResumableChainRunner:
                 "status": checkpoint.status,
             }
 
-        # This would require DAGExecutor to support running specific steps
-        # For now, use resume which re-runs from last checkpoint
-        return await self.resume(run_id)
+        # Restore context from checkpoint if available
+        initial_data = checkpoint.context_data.copy() if checkpoint.context_data else checkpoint.initial_data.copy()
+
+        # Build precompleted results for completed steps
+        precompleted_results: dict[str, StepResult] = {}
+        for step_cp in checkpoint.steps:
+            if step_cp.status == "completed":
+                precompleted_results[step_cp.step_name] = step_cp.to_step_result()
+
+        # Determine full step set to skip everything except failed steps
+        chain_spec = self._executor.chain_registry.get_spec(checkpoint.chain_name)
+        if chain_spec:
+            all_steps = set(chain_spec.steps)
+        else:
+            all_steps = {s.step_name for s in checkpoint.steps}
+
+        skip_steps = set(all_steps) - set(failed_steps)
+        skip_steps -= set(precompleted_results.keys())
+
+        checkpoint.status = "running"
+        checkpoint.updated_at = datetime.utcnow().isoformat()
+        await self._store.save_checkpoint(checkpoint)
+
+        ctx = ChainContext(
+            request_id=run_id,
+            initial_data=initial_data,
+        )
+
+        try:
+            ctx = await self._executor.execute(
+                checkpoint.chain_name,
+                ctx,
+                precompleted_results=precompleted_results,
+                skip_steps=skip_steps,
+            )
+
+            success = all(r.success for r in ctx.results)
+            checkpoint.finalize(success)
+
+        except Exception as e:
+            checkpoint.status = "failed"
+            logger.error(f"Retry failed: {e}")
+            raise
+        finally:
+            await self._store.save_checkpoint(checkpoint)
+
+        return {
+            "run_id": run_id,
+            "chain_name": checkpoint.chain_name,
+            "resumed": True,
+            "success": checkpoint.status == "completed",
+            "status": checkpoint.status,
+            "checkpoint": checkpoint.to_dict(),
+            "context": ctx.to_dict(),
+        }
 
     async def get_partial_output(self, run_id: str) -> dict[str, Any]:
         """

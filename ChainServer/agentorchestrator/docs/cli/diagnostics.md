@@ -109,10 +109,10 @@ ao doctor
 
 ### What It Checks
 
-1. **Python version** - Requires 3.9+, recommends 3.10+
+1. **Python version** - Requires 3.10+
 2. **Required dependencies** - pydantic, httpx
 3. **Optional dependencies** - aiohttp, tiktoken, langchain, opentelemetry, structlog, redis
-4. **Environment variables** - LLM_API_KEY, LLM_BASE_URL, AO_ENV, AO_DEBUG
+4. **Environment variables** - LLM_SERVER_URL/LLM_GATEWAY_URL, LLM_API_KEY or OAuth vars
 5. **AgentOrchestrator imports** - Core module accessibility
 6. **Circular import detection** - Checks for import issues
 7. **Registered chain validation** - Validates all registered chains
@@ -144,10 +144,12 @@ ao doctor
   ⚪ redis: not installed (Redis context store) - optional
 
   Environment Variables:
+  ✅ LLM_SERVER_URL: https://llm-gateway.example.com/v1/chat/completions
+  ⚪ LLM_GATEWAY_URL: not set (Alias for LLM_SERVER_URL) - optional
   ✅ LLM_API_KEY: ***key1
-  ⚪ LLM_BASE_URL: not set (LLM endpoint URL) - optional
-  ⚪ AO_ENV: not set (Environment name) - optional
-  ⚪ AO_DEBUG: not set (Debug mode) - optional
+  ⚪ LLM_OAUTH_ENDPOINT: not set (OAuth token endpoint) - optional
+  ⚪ LLM_CLIENT_ID: not set (OAuth client ID) - optional
+  ⚪ LLM_CLIENT_SECRET: not set (OAuth client secret) - optional
 
   AgentOrchestrator Imports:
   ✅ AgentOrchestrator core imports successful

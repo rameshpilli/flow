@@ -378,6 +378,8 @@ class DAGExecutor:
         ctx: ChainContext,
         error_handling: str = "fail_fast",
         debug_callback: DebugCallback | None = None,
+        precompleted_results: dict[str, StepResult] | None = None,
+        skip_steps: set[str] | None = None,
     ) -> ChainContext:
         """
         Execute a chain.
@@ -391,6 +393,9 @@ class DAGExecutor:
                 - "retry": Retry failed steps
             debug_callback: Optional callback invoked after each step for debugging.
                             Receives (ctx, step_name, result_dict) arguments.
+            precompleted_results: Optional mapping of step_name -> StepResult to
+                mark steps as already completed (e.g., on resume).
+            skip_steps: Optional set of step names to skip (mark as skipped).
 
         Returns:
             Updated chain context
@@ -417,6 +422,37 @@ class DAGExecutor:
         tracer = ChainTracer(chain_name, ctx.request_id) if self.enable_tracing else None
         # Tag context with chain name for downstream events
         ctx.set("_chain_name", chain_name, scope=ContextScope.CHAIN)
+
+        # Apply precompleted results (e.g., resumability) before execution
+        if precompleted_results:
+            for group in plan.execution_order:
+                for step_name in group:
+                    if step_name not in precompleted_results:
+                        continue
+                    node = plan.nodes.get(step_name)
+                    if not node or node.state != StepState.PENDING:
+                        continue
+                    result = precompleted_results[step_name]
+                    await node.set_completed(result)
+                    # Avoid duplicate results if caller already seeded context
+                    if ctx.get_result(step_name) is None:
+                        ctx.add_result(result)
+
+        # Apply explicit skip list (mark as skipped with reason)
+        if skip_steps:
+            # Ensure we don't skip steps that are already precompleted
+            remaining_skips = set(skip_steps) - set(precompleted_results or {})
+            if remaining_skips:
+                for group in plan.execution_order:
+                    for step_name in group:
+                        if step_name not in remaining_skips:
+                            continue
+                        node = plan.nodes.get(step_name)
+                        if not node or node.state != StepState.PENDING:
+                            continue
+                        await node.set_skipped("skipped by executor")
+                        if node.result and ctx.get_result(step_name) is None:
+                            ctx.add_result(node.result)
 
         # Wrap execution in chain-level tracing span
         with self._chain_span(tracer, plan.total_steps):
@@ -779,6 +815,43 @@ class DAGExecutor:
                         # Run before middleware with exception isolation
                         # Middleware failures should not crash the step
                         await self._run_before_middleware(ctx, node.name)
+
+                        # Short-circuit if a middleware (e.g., CacheMiddleware) marked a cache hit
+                        if ctx.get(f"_cache_hit_{node.name}"):
+                            cached_result = ctx.get(f"_cache_result_{node.name}")
+                            duration_ms = (time.perf_counter() - start_time) * 1000
+                            step_result = StepResult(
+                                step_name=node.name,
+                                output=cached_result,
+                                duration_ms=duration_ms,
+                                retry_count=attempt,
+                            )
+                            step_result.metadata["cache_hit"] = True
+
+                            # Run after middleware for consistency/cleanup
+                            await self._run_after_middleware(ctx, node.name, step_result)
+
+                            await node.set_completed(step_result)
+                            ctx.add_result(step_result)
+                            await self._emit_event(
+                                "StepCompleted",
+                                chain_name,
+                                node.name,
+                                ctx.request_id,
+                                payload={
+                                    "duration_ms": duration_ms,
+                                    "retry_count": attempt,
+                                    "cache_hit": True,
+                                },
+                            )
+
+                            if debug_callback is not None:
+                                self._invoke_debug_callback(
+                                    debug_callback, ctx, node.name, step_result
+                                )
+
+                            logger.info(f"Step {node.name} completed from cache in {duration_ms:.2f}ms")
+                            return step_result
 
                         # Execute the step handler
                         timeout_ms = node.spec.timeout_ms or self.default_timeout_ms

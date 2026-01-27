@@ -100,23 +100,29 @@ pip install -e ".[all]"
 
 # With specific extras
 pip install -e ".[redis]"              # Redis for context store and chat storage
-pip install -e ".[langchain]"          # LangChain integration for summarization
+pip install -e ".[summarization]"      # LangChain integration for summarization
+pip install -e ".[openai]"             # OpenAI-backed summarizer helpers
+pip install -e ".[anthropic]"          # Anthropic-backed summarizer helpers
 pip install -e ".[observability]"      # OpenTelemetry tracing
 pip install -e ".[workflows]"          # Event-driven workflows (Redis-backed bus)
 
 # Multiple extras
-pip install -e ".[redis,langchain,observability]"
+pip install -e ".[redis,summarization,observability]"
 ```
 
 **Available Extras:**
 - `redis` - Redis for context store, chat storage, and event bus
-- `langchain` - LangChain integration (summarizers, text splitters, tiktoken)
+- `summarization` - LangChain integration (summarizers, text splitters, tiktoken)
+- `langchain` - Alias for `summarization` (backwards compatibility)
+- `openai` - LangChain OpenAI client for OpenAI summarizers
+- `anthropic` - LangChain Anthropic client for Anthropic summarizers
+- `http` - aiohttp for connector/agent HTTP sessions
 - `observability` - OpenTelemetry tracing and structured logging
 - `workflows` - Event-driven workflows (includes Redis)
 - `memory` - Mem0 semantic memory integration (`mem0ai`)
 - `secrets` - HashiCorp Vault integration (`hvac`)
-- `all` - Everything above (redis, langchain, observability, memory, secrets)
-- `dev` - Development tools (pytest, ruff)
+- `all` - Everything above (redis, summarization, openai, anthropic, http, observability, memory, secrets)
+- `dev` - Development tools (pytest, ruff, watchdog)
 - `docs` - Documentation tools (mkdocs)
 
 **Requirements**: Python 3.10+

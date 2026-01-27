@@ -23,7 +23,7 @@ class LoggerMiddleware(Middleware):
     - Context snapshots
 
     Usage:
-        ao.use_middleware(LoggerMiddleware(
+        ao.use(LoggerMiddleware(
             level=logging.INFO,
             include_context=True,
         ))

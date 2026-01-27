@@ -124,7 +124,7 @@ ao debug my_chain --company "Apple" --snapshot-dir ./debug
    ```
 3. Use ResilientAgent for automatic retry:
    ```python
-   from ao.agents import ResilientAgent, ResilientAgentConfig
+   from agentorchestrator.agents import ResilientAgent, ResilientAgentConfig
 
    resilient = ResilientAgent(
        agent=my_agent,
@@ -146,7 +146,7 @@ ao debug my_chain --company "Apple" --snapshot-dir ./debug
 2. Check underlying service health
 3. Reset circuit manually:
    ```python
-   from ao.utils.circuit_breaker import reset_all_circuit_breakers
+   from agentorchestrator.utils.circuit_breaker import reset_all_circuit_breakers
    reset_all_circuit_breakers()
    ```
 4. Adjust thresholds:
@@ -173,7 +173,7 @@ ao debug my_chain --company "Apple" --snapshot-dir ./debug
    ```
 3. Verify discovery:
    ```python
-   from ao.plugins import discover_plugins
+   from agentorchestrator.plugins import discover_plugins
    plugins = discover_plugins()
    print(plugins)
    ```
@@ -193,7 +193,7 @@ ao debug my_chain --company "Apple" --snapshot-dir ./debug
    ```
 2. Check connection settings:
    ```python
-   from ao.core.context_store import RedisContextStore
+   from agentorchestrator.core.context_store import RedisContextStore
 
    store = RedisContextStore(
        host="localhost",
@@ -203,7 +203,7 @@ ao debug my_chain --company "Apple" --snapshot-dir ./debug
    ```
 3. Use in-memory store for development:
    ```python
-   from ao.core.context_store import InMemoryContextStore
+   from agentorchestrator.core.context_store import InMemoryContextStore
    store = InMemoryContextStore()
    ```
 
@@ -214,17 +214,17 @@ ao debug my_chain --company "Apple" --snapshot-dir ./debug
 **Solutions:**
 1. Use offloading middleware:
    ```python
-   from ao.middleware import OffloadMiddleware
-   from ao.core import RedisContextStore
+   from agentorchestrator.middleware import OffloadMiddleware
+   from agentorchestrator.core import RedisContextStore
 
-   ao.use_middleware(OffloadMiddleware(
+   ao.use(OffloadMiddleware(
        store=RedisContextStore(),
        default_threshold_bytes=100_000,  # 100KB
    ))
    ```
 2. Manually offload large data:
    ```python
-   from ao.core import offload_to_redis
+   from agentorchestrator.core import offload_to_redis
 
    ref = await offload_to_redis(
        ctx, "large_data", big_payload,
@@ -300,7 +300,7 @@ ao debug my_chain --company "Apple" --snapshot-dir ./debug
 **Solutions:**
 1. Use migrations:
    ```python
-   from ao.core.versioning import MigrationManager
+   from agentorchestrator.core.versioning import MigrationManager
 
    # Create a manager per service (no global helper)
    manager = MigrationManager()
@@ -331,15 +331,15 @@ ao debug my_chain --company "Apple" --snapshot-dir ./debug
 2. Check step timings in snapshots
 3. Enable tracing:
    ```python
-   from ao.utils.tracing import configure_tracing
+   from agentorchestrator.utils.tracing import configure_tracing
    configure_tracing(service_name="my-app", endpoint="http://jaeger:4317")
    ```
 
 **Solutions:**
 1. Add caching:
    ```python
-   from ao.middleware import CacheMiddleware
-   ao.use_middleware(CacheMiddleware(ttl_seconds=300))
+   from agentorchestrator.middleware import CacheMiddleware
+   ao.use(CacheMiddleware(ttl_seconds=300))
    ```
 2. Increase parallelism:
    ```python
@@ -364,7 +364,7 @@ ao debug my_chain --company "Apple" --snapshot-dir ./debug
 1. Use context offloading (see Large Payload Error above)
 2. Enable auto-summarization:
    ```python
-   ao.use_middleware(TokenManagerMiddleware(
+   ao.use(TokenManagerMiddleware(
        max_total_tokens=100000,
        auto_summarize=True,
        auto_offload=True,

@@ -15,6 +15,10 @@ import pytest
 from agentorchestrator import ChainContext, AgentOrchestrator
 from agentorchestrator.core.context import ContextScope, StepResult
 from agentorchestrator.middleware.base import CompositeMiddleware, Middleware
+from agentorchestrator.middleware.cache import CacheMiddleware
+from agentorchestrator.middleware.summarizer import SummarizerMiddleware
+from agentorchestrator.middleware.offload import OffloadMiddleware
+from agentorchestrator.core.context_store import is_context_ref
 
 # ══════════════════════════════════════════════════════════════════════════════
 #                           Base Middleware Tests
@@ -529,3 +533,87 @@ class TestMultipleMiddleware:
         await ao.launch("cache_chain", data={"query": "test"})
         # The step still runs but can use cached data
         assert "expensive_step" in cache_hits
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#                           Cache Short-Circuit Test
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCacheMiddlewareShortCircuit:
+    """Tests for CacheMiddleware short-circuit behavior."""
+
+    @pytest.mark.asyncio
+    async def test_cache_middleware_short_circuits_step(self):
+        ao = AgentOrchestrator.temp_registries("cache_short_circuit")
+        cache = CacheMiddleware(ttl_seconds=60)
+        ao.use(cache)
+
+        call_count = 0
+
+        @ao.step(name="cached_step")
+        async def cached_step(ctx):
+            nonlocal call_count
+            call_count += 1
+            return {"count": call_count}
+
+        @ao.chain(name="cached_chain")
+        class CachedChain:
+            steps = ["cached_step"]
+
+        await ao.launch("cached_chain", data={"query": "same"})
+        await ao.launch("cached_chain", data={"query": "same"})
+
+        # Should only execute once due to cache short-circuit
+        assert call_count == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#                       Middleware Context Update Tests
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestMiddlewareContextUpdates:
+    """Tests that middleware updates step-produced context entries."""
+
+    @pytest.mark.asyncio
+    async def test_summarizer_updates_context_outputs(self):
+        ao = AgentOrchestrator.temp_registries("summarizer_context")
+
+        async def fake_summarizer(text: str, max_tokens: int) -> str:
+            return "summary"
+
+        ao.use(SummarizerMiddleware(max_tokens=1, summarizer=fake_summarizer, preserve_original=False))
+
+        @ao.step(name="produce_payload")
+        async def produce_payload(ctx):
+            payload = "x" * 20
+            ctx.set("payload", payload)
+            return payload
+
+        @ao.chain(name="summarize_chain")
+        class SummarizeChain:
+            steps = ["produce_payload"]
+
+        result = await ao.launch("summarize_chain")
+        data = result["context"]["data"]
+        assert data["payload"] == "summary"
+
+    @pytest.mark.asyncio
+    async def test_offload_updates_context_outputs(self):
+        ao = AgentOrchestrator.temp_registries("offload_context")
+        ao.use(OffloadMiddleware(default_threshold_bytes=1))
+
+        @ao.step(name="produce_big_payload")
+        async def produce_big_payload(ctx):
+            payload = {"text": "x" * 50}
+            ctx.set("payload", payload)
+            return payload
+
+        @ao.chain(name="offload_chain")
+        class OffloadChain:
+            steps = ["produce_big_payload"]
+
+        result = await ao.launch("offload_chain")
+        data = result["context"]["data"]
+        assert is_context_ref(data["payload"])

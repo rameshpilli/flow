@@ -1154,6 +1154,7 @@ class AgentOrchestrator:
         isolate_run: bool = True,
         run_store: "RunStore | None" = None,
         checkpoint_interval: int = 10,
+        initial_context_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Event-driven workflow runner with run isolation and optional checkpointing.
@@ -1175,6 +1176,7 @@ class AgentOrchestrator:
                 On a shared Redis bus, this prevents consuming other runs' events.
             run_store: Optional RunStore for checkpointing (enables resumability).
             checkpoint_interval: Save checkpoint every N events (default: 10).
+            initial_context_data: Optional initial context data to restore on resume.
 
         Returns:
             dict with run_id, processed count, handlers, duration_ms, and
@@ -1197,27 +1199,25 @@ class AgentOrchestrator:
             ... )
         """
         run_id = run_id or f"event_{uuid.uuid4().hex[:8]}"
-        ctx = ChainContext(request_id=run_id)
+        ctx = ChainContext(request_id=run_id, initial_data=initial_context_data)
         
         # Initialize checkpoint tracking
         checkpoint_id = None
         events_since_checkpoint = 0
         processed_event_types: list[str] = []
 
-        # Publish seeds before subscribing
-        if seed_events:
-            for ev in seed_events:
-                if ev.run_id is None:
-                    ev.run_id = run_id
-                await self._event_bus.publish(ev)
-
         processed = 0
         skipped = 0
         start = time.time()
 
-        # Use async context manager for proper subscription cleanup
+        # Subscribe before publishing seeds to ensure delivery in in-memory mode
         sub = await self._event_bus.subscribe()
         try:
+            if seed_events:
+                for ev in seed_events:
+                    if ev.run_id is None:
+                        ev.run_id = run_id
+                    await self._event_bus.publish(ev)
             while processed < max_events:
                 remaining = timeout_s - (time.time() - start)
                 if remaining <= 0:
@@ -1231,7 +1231,7 @@ class AgentOrchestrator:
                     break
 
                 # Run isolation: skip events from other runs on shared bus
-                if isolate_run and event.run_id is not None and event.run_id != run_id:
+                if isolate_run and event.run_id != run_id:
                     skipped += 1
                     continue
 
@@ -1331,15 +1331,21 @@ class AgentOrchestrator:
         checkpoint = await run_store.load_checkpoint(run_id)
         if checkpoint is None:
             raise ValueError(f"No checkpoint found for run_id: {run_id}")
-        
-        # The checkpoint contains context data from where we left off
-        # We pass the run_id to continue from where we stopped
+
+        # Restore context data from checkpoint (supports full ctx.to_dict or data-only)
+        context_data = checkpoint.context_data or {}
+        if isinstance(context_data, dict) and "data" in context_data:
+            context_data = context_data.get("data", {})
+
+        # The checkpoint contains context data from where we left off.
+        # We pass the run_id to continue from where we stopped.
         logger.info(f"Resuming event loop from checkpoint: {run_id}")
-        
+
         return await self.run_event_loop(
             seed_events=seed_events,
             run_id=run_id,
             run_store=run_store,
+            initial_context_data=context_data,
             **kwargs,
         )
 

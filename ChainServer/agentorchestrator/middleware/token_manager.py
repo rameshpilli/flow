@@ -172,34 +172,47 @@ class TokenManagerMiddleware(Middleware):
         offloaded_count = 0
 
         for step_name in self._step_order:
-            step_data = ctx.get(step_name)
-            if step_data is None or is_context_ref(step_data):
-                continue
+            step_keys = ctx.keys_for_step(step_name)
+            if not step_keys and ctx.has(step_name):
+                step_keys = [step_name]
 
-            # Estimate size
-            size = self._estimate_size(step_data)
-            if size < self.offload_threshold_bytes:
-                continue
+            for key in step_keys:
+                step_data = ctx.get(key)
+                if step_data is None or is_context_ref(step_data):
+                    continue
 
-            logger.info(
-                f"TokenManager: Auto-offloading '{step_name}' "
-                f"({size} bytes > {self.offload_threshold_bytes} threshold)"
-            )
+                # Estimate size
+                size = self._estimate_size(step_data)
+                if size < self.offload_threshold_bytes:
+                    continue
 
-            # Store in Redis
-            ref = await self.context_store.store(
-                key=step_name,
-                data=step_data,
-                summary=f"Auto-offloaded from {step_name} ({size} bytes)",
-                source_step=step_name,
-            )
+                logger.info(
+                    f"TokenManager: Auto-offloading '{step_name}' key '{key}' "
+                    f"({size} bytes > {self.offload_threshold_bytes} threshold)"
+                )
 
-            # Replace in context
-            ctx.set(step_name, ref, scope=ContextScope.CHAIN)
-            offloaded_count += 1
+                # Store in context store
+                ref = await self.context_store.store(
+                    key=key,
+                    data=step_data,
+                    summary=f"Auto-offloaded from {step_name}:{key} ({size} bytes)",
+                    source_step=step_name,
+                )
 
-            # Recount tokens
-            self._token_usage[step_name] = self.token_counter(ref)
+                # Replace in context (preserve scope when possible)
+                entry = ctx.get_entry(key)
+                scope = entry.scope if entry else ContextScope.CHAIN
+                ctx.set(key, ref, scope=scope)
+                offloaded_count += 1
+
+            if step_keys:
+                # Recount tokens for this step based on current stored values
+                new_tokens = 0
+                for key in step_keys:
+                    value = ctx.get(key)
+                    if value is not None:
+                        new_tokens += self.token_counter(value)
+                self._token_usage[step_name] = new_tokens
 
         if offloaded_count:
             logger.info(f"TokenManager: Auto-offloaded {offloaded_count} step(s) to Redis")

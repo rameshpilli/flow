@@ -127,15 +127,16 @@ ao --help                 # Show help
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `AO_ENABLE_LOGGING` | Enable structured logging | `false` |
-| `AO_LOG_LEVEL` | Log level (DEBUG, INFO, WARNING, ERROR) | `INFO` |
-| `AO_LOG_JSON` | Output logs as JSON | `false` |
+| `LOG_LEVEL` | Log level (DEBUG, INFO, WARNING, ERROR) | `INFO` |
+| `VERBOSE` | Enable verbose output | `false` |
 | `AO_ENABLE_TRACING` | Enable distributed tracing | `false` |
 | `AO_TRACE_SERVICE` | Service name for traces | `agentorchestrator` |
-| `AO_ENV` | Environment name | `development` |
-| `AO_DEBUG` | Enable debug mode | `false` |
-| `LLM_API_KEY` | LLM API authentication key | - |
-| `LLM_BASE_URL` | LLM endpoint URL | - |
+| `LLM_SERVER_URL` | LLM gateway endpoint | - |
+| `LLM_GATEWAY_URL` | Alias for LLM_SERVER_URL | - |
+| `LLM_API_KEY` | LLM API key (alternative to OAuth) | - |
+| `LLM_OAUTH_ENDPOINT` | OAuth token endpoint | - |
+| `LLM_CLIENT_ID` | OAuth client ID | - |
+| `LLM_CLIENT_SECRET` | OAuth client secret | - |
 
 ## Chain Definition Discovery
 

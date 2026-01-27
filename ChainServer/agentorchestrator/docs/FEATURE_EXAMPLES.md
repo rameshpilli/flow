@@ -15,8 +15,8 @@
 | **Pydantic State** | ✅ Implemented | `from agentorchestrator import Context` |
 | **Event-Driven Workflows** | ✅ Implemented | `from agentorchestrator.core.event_bus import EventBus` |
 | **Financial Research** | ✅ Implemented | See examples/financial_research_agent.py |
-| **ReAct Pattern** | 🚧 Planned | Coming soon |
-| **Tool Registry** | 🚧 Planned | Coming soon |
+| **ReAct Pattern** | ✅ Implemented | `from agentorchestrator.agents.react import ReActAgent` |
+| **Tool Registry** | ✅ Implemented | `from agentorchestrator.agents.tools import ToolRegistry` |
 | **Swarm** | 🚧 Planned | Coming soon |
 | **AgentNetwork** | 🚧 Planned | Coming soon |
 
@@ -199,9 +199,9 @@ ao = AgentOrchestrator(event_bus=bus)
 
 **Full implementation**: [`examples/financial_research_agent.py`](../examples/financial_research_agent.py)
 
-> **Note**: The `.research()`, `.research_stream()`, and `.with_memory()` methods
-> shown below are aspirational patterns. The actual implementation uses the
-> chain execution pattern. See the example file for working code.
+> **Note**: The `FinancialResearchAgent` API is implemented in `examples/` and
+> uses the chain execution pattern under the hood. See the example file for
+> working code and configuration details.
 
 ### Using the Chain Pattern (Implemented)
 ```python
@@ -217,9 +217,8 @@ result = await ao.launch("financial_research_chain", {
 })
 ```
 
-### Aspirational API (Planned)
+### High-level API (Implemented)
 ```python
-# NOTE: This API is planned but not yet implemented
 from agentorchestrator.examples.financial_research_agent import (
     FinancialResearchAgent,
 )
@@ -395,80 +394,68 @@ LangChainSummarizer.register_domain_prompts(
 
 ### Before (Current State)
 ```python
-# Supervisor calls agents, but no explicit handoff protocol
-supervisor = SupervisorAgent(team=[agent_a, agent_b])
-result = await supervisor.process_message(query)
+from agentorchestrator.squad import (
+    SupervisorAgent,
+    SupervisorAgentOptions,
+    LLMGatewayAgent,
+    LLMGatewayAgentOptions,
+)
+
+# Supervisor coordinates a team (no explicit handoff protocol)
+lead = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="Supervisor",
+    description="Coordinates team",
+))
+agent_a = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="AgentA",
+    description="Handles topic A",
+))
+agent_b = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="AgentB",
+    description="Handles topic B",
+))
+
+supervisor = SupervisorAgent(SupervisorAgentOptions(
+    lead_agent=lead,
+    team=[agent_a, agent_b],
+))
+
+result = await supervisor.process_request(
+    input_text=query,
+    user_id="user-1",
+    session_id="session-1",
+    chat_history=[],
+)
 ```
 
 ### After (With Handoff Protocol)
 ```python
-from agentorchestrator.squad import FunctionAgent, AgentWorkflow
+from agentorchestrator.squad import FunctionAgent, FunctionAgentOptions
 
 # Define agents with explicit handoff permissions
-research_agent = FunctionAgent(
-    name="researcher",
+research_agent = FunctionAgent(FunctionAgentOptions(
+    name="Researcher",
     description="Searches for information",
-    tools=[web_search, doc_search],
-    can_handoff_to=["writer", "user"],  # Explicit handoff targets
-)
+    can_handoff_to=["Writer", "User"],
+))
 
-writer_agent = FunctionAgent(
-    name="writer",
+writer_agent = FunctionAgent(FunctionAgentOptions(
+    name="Writer",
     description="Writes reports from research",
-    tools=[format_report],
-    can_handoff_to=["reviewer", "user"],
+    can_handoff_to=["User"],
+))
+
+# Explicit handoff with context
+handoff = await research_agent.handoff(
+    to_agent="Writer",
+    context={
+        "findings": findings,
+        "sources": sources,
+    },
+    message="Research complete. Please write a summary.",
 )
 
-reviewer_agent = FunctionAgent(
-    name="reviewer",
-    description="Reviews and improves content",
-    tools=[grammar_check, fact_check],
-    can_handoff_to=["user"],  # Final step - returns to user
-)
-
-# Create workflow with handoff orchestration
-workflow = AgentWorkflow(
-    agents=[research_agent, writer_agent, reviewer_agent],
-    initial_agent="researcher",
-)
-
-# Execute - agents hand off automatically based on task completion
-async for event in workflow.run("Write a report on Tesla's EV market share"):
-    if event.type == "handoff":
-        print(f"🔄 {event.from_agent} → {event.to_agent}")
-        print(f"   Context: {event.context_summary}")
-    elif event.type == "agent_response":
-        print(f"📝 {event.agent}: {event.message[:100]}...")
-    elif event.type == "final":
-        print(f"✅ Final report ready")
-
-# Output:
-# 🔄 researcher → writer
-#    Context: Found 15 sources on Tesla EV market share...
-# 🔄 writer → reviewer
-#    Context: Draft report with 3 sections...
-# 🔄 reviewer → user
-#    Context: Final reviewed report with 2 corrections...
-# ✅ Final report ready
-```
-
-### Handoff with Context Transfer
-```python
-# Agent can pass specific context when handing off
-class ResearchAgent(FunctionAgent):
-    async def process(self, query, ctx):
-        findings = await self.search(query)
-
-        # Explicit handoff with context
-        return await self.handoff(
-            to_agent="writer",
-            context={
-                "findings": findings,
-                "sources": self.sources,
-                "key_points": self.extract_key_points(findings),
-            },
-            message="Research complete. Please write a summary.",
-        )
+# Orchestrator routes to handoff.to_agent using handoff.context/message
 ```
 
 ---
@@ -477,61 +464,53 @@ class ResearchAgent(FunctionAgent):
 
 **What it does**: Industry-standard Thought → Action → Observation reasoning loop.
 
-### Before (Current State)
+### Before (LLM Gateway Agent)
 ```python
-# Tools execute but no visible reasoning trace
-agent = LLMGatewayAgent(tools=[calculator, search])
-result = await agent.process_message("What is 15% of Apple's $383B revenue?")
+from agentorchestrator.squad import LLMGatewayAgent, LLMGatewayAgentOptions
+
+agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="financial-analyst",
+    description="Answers finance questions",
+))
+result = await agent.process_request(
+    input_text="What is 15% of Apple's $383B revenue?",
+    user_id="user-1",
+    session_id="session-1",
+    chat_history=[],
+)
+print(result.content[0]["text"])
 ```
 
 ### After (With ReAct Pattern)
 ```python
-from agentorchestrator.patterns import ReActAgent
+from agentorchestrator.agents.react import ReActAgent, ReActConfig, Tool
+from agentorchestrator.agents.tools import get_default_registry
+from agentorchestrator.services.llm_gateway import LLMGatewayClient
+
+def web_search(query: str) -> str:
+    return f"Results for '{query}'..."
+
+llm = LLMGatewayClient.from_env()
+registry = get_default_registry()
+calc_def = registry.get("calculate")
 
 agent = ReActAgent(
-    name="financial-analyst",
-    tools=[web_search, calculator, stock_lookup],
-    max_iterations=10,
-    verbose=True,  # Show reasoning trace
+    llm_client=llm,
+    tools=[
+        Tool("web_search", "Search the web", web_search),
+        Tool(calc_def.name, calc_def.description, calc_def.func),
+    ],
+    config=ReActConfig(max_iterations=10),
 )
 
-# Run with visible reasoning
-async for step in agent.run("What is 15% of Apple's 2025 revenue?"):
-    print(f"[{step.type}] {step.content}")
-
-# Output:
-# [THOUGHT] I need to find Apple's 2025 revenue first
-# [ACTION] web_search("Apple 2025 annual revenue")
-# [OBSERVATION] Apple reported $412 billion in revenue for FY2025
-# [THOUGHT] Now I can calculate 15% of $412 billion
-# [ACTION] calculator("412 * 0.15")
-# [OBSERVATION] 61.8
-# [THOUGHT] I have the answer
-# [FINAL] 15% of Apple's 2025 revenue ($412B) is $61.8 billion
-
-# Access the full reasoning trace
-print(agent.reasoning_trace)
-# [
-#   {"type": "thought", "content": "I need to find..."},
-#   {"type": "action", "tool": "web_search", "input": "Apple 2025..."},
-#   {"type": "observation", "content": "Apple reported..."},
-#   ...
-# ]
+result = await agent.run("What is 15% of Apple's 2025 revenue?")
+print(result.final_answer)
+print(result.thought_trace)
 ```
 
-### ReAct with Reflection
-```python
-# Add self-critique after each iteration
-agent = ReActAgent(
-    tools=[...],
-    enable_reflection=True,
-    reflection_prompt="Am I making progress? Should I try a different approach?",
-)
-
-async for step in agent.run(query):
-    if step.type == "REFLECTION":
-        print(f"🤔 Self-critique: {step.content}")
-```
+> **Note**: `ReActAgent.run()` returns a `ReActResult` (not a stream). If you
+> want step-level self-critique, apply `ReflectionMiddleware` to a chain step
+> that calls the agent.
 
 ---
 
@@ -553,61 +532,38 @@ async def step_b(ctx): ...
 
 ### After (With Event-Driven Execution)
 ```python
-from agentorchestrator.events import StartEvent, StopEvent, Event
-from agentorchestrator.workflow import Workflow, step
+from agentorchestrator import AgentOrchestrator
+from agentorchestrator.core.event_bus import Event
 
-# Define custom events
-class ResearchComplete(Event):
-    findings: list[str]
-    needs_more: bool
+ao = AgentOrchestrator(name="research_events")
+final_report = {}
 
-class WriteComplete(Event):
-    draft: str
-    quality_score: float
+async def search_sources(query: str) -> list[str]:
+    return [f"Finding about {query}"]
 
-# Steps subscribe to and emit events
-class ResearchWorkflow(Workflow):
+async def write_report(findings: list[str]) -> str:
+    return f"Draft report with {len(findings)} findings"
 
-    @step
-    async def start(self, event: StartEvent) -> ResearchComplete:
-        """Initial research step"""
-        findings = await self.search(event.query)
-        return ResearchComplete(
-            findings=findings,
-            needs_more=len(findings) < 5
-        )
+@ao.event_handler("ResearchTask")
+async def research(ctx, event: Event):
+    findings = await search_sources(event.payload["query"])
+    needs_more = len(findings) < 2
+    if needs_more:
+        return Event(type="ResearchTask", payload=event.payload)
+    return Event(type="WriteDraft", payload={"findings": findings})
 
-    @step
-    async def maybe_more_research(self, event: ResearchComplete) -> ResearchComplete | WriteComplete:
-        """Conditional: do more research or proceed to writing"""
-        if event.needs_more:
-            # Loop back - do more research
-            more = await self.deep_search(event.findings)
-            return ResearchComplete(findings=more, needs_more=False)
-        else:
-            # Proceed to writing
-            draft = await self.write(event.findings)
-            return WriteComplete(draft=draft, quality_score=0.8)
+@ao.event_handler("WriteDraft")
+async def write(ctx, event: Event):
+    draft = await write_report(event.payload["findings"])
+    final_report["draft"] = draft
+    return Event(type="Complete", payload={"draft": draft})
 
-    @step
-    async def review(self, event: WriteComplete) -> StopEvent:
-        """Final review"""
-        if event.quality_score < 0.9:
-            # Improve and re-emit (loop)
-            improved = await self.improve(event.draft)
-            return WriteComplete(draft=improved, quality_score=0.95)
-        return StopEvent(result=event.draft)
+result = await ao.run_event_loop(
+    seed_events=[Event(type="ResearchTask", payload={"query": "Research AI trends"})],
+    stop_when=lambda e, ctx: e.type == "Complete",
+)
 
-# Run with event streaming
-workflow = ResearchWorkflow()
-async for event in workflow.stream("Research AI trends"):
-    print(f"Event: {event.__class__.__name__}")
-    # Event: StartEvent
-    # Event: ResearchComplete (needs_more=True)
-    # Event: ResearchComplete (needs_more=False)  <- loop happened
-    # Event: WriteComplete (quality_score=0.8)
-    # Event: WriteComplete (quality_score=0.95)   <- improvement loop
-    # Event: StopEvent
+print(final_report["draft"])
 ```
 
 ---
@@ -623,51 +579,41 @@ def my_search_tool(query: str) -> str:
     # implement search...
     pass
 
-agent = LLMGatewayAgent(tools=[my_search_tool])
+from agentorchestrator.squad import LLMGatewayAgent, LLMGatewayAgentOptions
+from agentorchestrator.squad.types import AgentTools, AgentTool
+
+tools = AgentTools(tools=[
+    AgentTool(name="search", description="Search the web", func=my_search_tool),
+])
+
+agent = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="tool-agent",
+    description="Uses tools",
+    tool_config={"tool": tools},
+))
 ```
 
 ### After (With Tool Registry)
 ```python
-from agentorchestrator.tools import ToolRegistry, get_tool
+from agentorchestrator.agents.tools import get_default_registry, ToolCategory
 
 # Discover available tools
-registry = ToolRegistry()
-print(registry.list_tools())
-# ['web_search', 'tavily_search', 'file_read', 'file_write',
-#  'sql_query', 'python_repl', 'vector_search', 'calculator', ...]
+registry = get_default_registry()
+print(registry.list_all())
+# ['calculate', 'get_current_time', 'text_length']
 
-print(registry.search("search"))
-# [
-#   {"name": "web_search", "description": "Search the web using..."},
-#   {"name": "tavily_search", "description": "AI-powered search..."},
-#   {"name": "vector_search", "description": "Semantic search over..."},
-# ]
+utility_tools = registry.find_by_category(ToolCategory.UTILITY)
+print([t.name for t in utility_tools])
+# ['get_current_time', 'text_length']
 
-# Get and use built-in tools
-web_search = get_tool("web_search")
-calculator = get_tool("calculator")
-sql = get_tool("sql_query", connection_string="postgresql://...")
-
-# Create agent with registry tools
-agent = FunctionAgent(
-    tools=[
-        get_tool("web_search"),
-        get_tool("calculator"),
-        get_tool("python_repl"),
-    ]
-)
-
-# Or use tool bundles
-from agentorchestrator.tools.bundles import research_tools, data_tools
-
-agent = FunctionAgent(
-    tools=research_tools + data_tools
-)
+# Execute a built-in tool
+result = await registry.execute("calculate", expression="412 * 0.15")
+print(result.result)  # "61.8"
 ```
 
 ### Register Custom Tools
 ```python
-from agentorchestrator.tools import tool, ToolRegistry
+from agentorchestrator.agents.tools import tool, ToolRegistry
 
 @tool(
     name="stock_price",
@@ -686,7 +632,7 @@ def get_stock_price(ticker: str) -> dict:
 
 # Auto-registered and discoverable
 registry = ToolRegistry()
-print("stock_price" in registry.list_tools())  # True
+print(registry.has("stock_price"))  # True
 ```
 
 ---
@@ -713,29 +659,12 @@ mem0_client = MemoryStoreClient(
 )
 
 # Wrap in our memory interface
-memory = Mem0Memory(client=mem0_client)
+memory = Mem0Memory(client=mem0_client, default_user_id="trader-123")
 
-# Use with an agent
-agent = FunctionAgent(
-    name="trading-assistant",
-    memory=memory,
-    tools=[execute_trade, get_portfolio],
-)
-
-# Conversations are automatically stored and retrieved
-result = await agent.process_message(
-    "Execute buy order for 1000 shares of AAPL at $150",
-    user_id="trader-123",
-    session_id="session-456",
-)
-
-# Later - memory is automatically searched for context
-result = await agent.process_message(
-    "What trades did I execute today?",
-    user_id="trader-123",
-    session_id="session-789",  # Different session!
-)
-# Agent recalls: "You executed a buy order for 1000 AAPL at $150"
+# Store and recall semantic memory
+await memory.add("Executed buy order for 1000 shares of AAPL at $150")
+results = await memory.search("What trades did I execute today?")
+print(results[0].content)
 ```
 
 ### Memory Strategy Options
@@ -779,147 +708,43 @@ memory = CompositeMemory([
 ### Memory in Agent Workflow
 
 ```python
-from agentorchestrator.squad import LLMGatewayAgent
+from agentorchestrator import AgentOrchestrator
+from agentorchestrator.middleware import MemoryLifecycleMiddleware, MemoryLifecycleConfig
 from agentorchestrator.services import Mem0Memory
 from app import MemoryStoreClient
 
-# Your corporate memory store
-mem0 = MemoryStoreClient(
-    base_url="https://mem0.your-company.com",
-    agent_id="client-advisor-001"
-)
+ao = AgentOrchestrator(name="advisor")
+mem0 = MemoryStoreClient(base_url="https://mem0.your-company.com", agent_id="client-advisor-001")
 
-# Agent with persistent memory
-agent = LLMGatewayAgent(
-    name="ClientAdvisor",
-    memory=Mem0Memory(client=mem0),
-    system_prompt="You are a financial advisor. Use conversation history to personalize advice.",
-)
-
-# Session 1: Client discusses their portfolio
-await agent.process_message(
-    "I'm concerned about my tech-heavy portfolio",
-    user_id="client-abc"
-)
-# Memory stores: "Client concerned about tech concentration"
-
-# Session 2 (days later): Agent remembers context
-await agent.process_message(
-    "What should I do about the market volatility?",
-    user_id="client-abc"
-)
-# Agent retrieves memory and responds:
-# "Given your concern about tech concentration we discussed,
-#  you might consider diversifying into defensive sectors..."
+# Promote important step outputs to long-term memory
+ao.use(MemoryLifecycleMiddleware(
+    longterm_memory=Mem0Memory(client=mem0),
+    config=MemoryLifecycleConfig(importance_threshold=0.8),
+))
 ```
 
 ---
 
-## 7. Human-in-the-Loop (flow-9hm) - Enhanced
+## 7. Human-in-the-Loop (flow-9hm) - Planned
 
-### After Implementation
-
-```python
-from agentorchestrator.patterns import ApprovalWorkflow
-from agentorchestrator.approval import SlackApprover, EmailApprover
-
-# Define steps that require approval
-@ao.step(name="prepare_trade")
-async def prepare_trade(ctx):
-    return {"ticker": "AAPL", "shares": 10000, "price": 150}
-
-@ao.approval_step(
-    name="approve_trade",
-    deps=["prepare_trade"],
-    approvers=[
-        SlackApprover(channel="#trade-approvals"),
-        EmailApprover(to="risk@company.com"),
-    ],
-    timeout_hours=24,
-    on_timeout="reject",
-)
-async def approve_trade(ctx, approval_result):
-    if approval_result.approved:
-        return await execute_trade(ctx.get("prepare_trade"))
-    else:
-        return {"status": "rejected", "reason": approval_result.reason}
-
-# Run workflow
-result = await ao.launch("trade_workflow", {"order": order_data})
-
-# Slack message sent:
-# 🔔 Trade Approval Required
-# Ticker: AAPL | Shares: 10000 | Value: $1.5M
-# [Approve] [Reject] [Request More Info]
-```
+> This feature is **not implemented yet**. The proposed API includes an
+> `@ao.approval_step()` decorator and approver integrations (Slack/Email).
+> Track progress under `flow-9hm`.
 
 ---
 
-## Complete Example: Research Agent with Memory
+## Complete Example: Deep Research (Implemented)
 
-Putting it all together with your mem0 integration:
+For a full working pipeline (decompose → parallel research → synthesize → reflect),
+see `examples/deep_research_agent.py`.
 
-```python
-from agentorchestrator import AgentOrchestrator
-from agentorchestrator.patterns import DeepResearchAgent, ReActAgent  # aspirational
-from agentorchestrator.services import Mem0Memory, CompositeMemory
-from agentorchestrator.tools import get_tool, ToolRegistry
-from app import MemoryStoreClient
-
-# Setup memory with your corporate mem0
-mem0_client = MemoryStoreClient(
-    base_url="https://mem0.your-company.com",
-    agent_id="research-agent-001"
-)
-
-memory = CompositeMemory([
-    EntityMemory(entity_types=["company", "person", "product"]),
-    Mem0Memory(client=mem0_client),
-])
-
-# Create research agent with ReAct reasoning
-agent = DeepResearchAgent(
-    name="market-researcher",
-    reasoning_pattern="react",  # Use ReAct for visible reasoning
-    tools=[
-        get_tool("web_search"),
-        get_tool("sec_filings"),
-        get_tool("news_search"),
-    ],
-    memory=memory,
-    can_handoff_to=["report_writer", "user"],
-)
-
-# Run research with full observability
-async for event in agent.research_stream("Analyze Tesla's competitive position"):
-    match event.type:
-        case "thought":
-            print(f"💭 {event.content}")
-        case "action":
-            print(f"🔧 Using {event.tool}: {event.input}")
-        case "observation":
-            print(f"👁️ Found: {event.content[:100]}...")
-        case "memory_recall":
-            print(f"🧠 Recalled: {event.memory}")
-        case "handoff":
-            print(f"🔄 Handing off to {event.to_agent}")
-        case "final":
-            print(f"✅ Research complete")
-            print(event.report)
-
-# Output:
-# 💭 I should first check what we already know about Tesla
-# 🧠 Recalled: Previous research on Tesla's EV market share from last week
-# 💭 I need to find recent competitive analysis
-# 🔧 Using web_search: "Tesla competitors 2026 market analysis"
-# 👁️ Found: Rivian and Lucid gained market share while Tesla...
-# 🔧 Using sec_filings: "Tesla 10-K 2025"
-# 👁️ Found: Tesla reported 1.8M deliveries with 23% margin...
-# 💭 I have enough information to synthesize findings
-# 🔄 Handing off to report_writer
-# ✅ Research complete
-# [Full report with citations]
+```bash
+# Run the example module
+python -m agentorchestrator.examples.deep_research_agent "Analyze Tesla's competitive position"
 ```
+
+For a finance-specific, high-level API, see `examples/financial_research_agent.py`
+and the `FinancialResearchAgent` class.
 
 ---
 
@@ -1082,21 +907,52 @@ class IsolationLevel(Enum):
 ### Integration with Financial Research Agent
 
 ```python
-from agentorchestrator.examples.financial_research_agent import FinancialResearchAgent
-from agentorchestrator.squad.context import ContextIsolationManager
-
-# The financial research agent now uses context isolation internally
-agent = FinancialResearchAgent(
-    config=ResearchConfig(
-        # Context isolation is enabled by default for multi-agent steps
-        enable_context_isolation=True,
-    )
+from agentorchestrator.squad import LLMGatewayAgent, LLMGatewayAgentOptions
+from agentorchestrator.squad.context import (
+    ContextIsolationManager,
+    ResultAggregator,
+    AggregationStrategy,
 )
 
-# News, SEC, and Earnings agents each get isolated contexts
-# Their huge responses don't pollute each other
-# Coordinator aggregates only the relevant findings
-report = await agent.research("Analyze Tesla's competitive position")
+# Build a team
+team = [
+    LLMGatewayAgent(LLMGatewayAgentOptions(
+        name="Researcher",
+        description="Gathers facts",
+    )),
+    LLMGatewayAgent(LLMGatewayAgentOptions(
+        name="Writer",
+        description="Drafts summaries",
+    )),
+]
+
+ctx = ChainContext("ctx_1")
+user_query = "Analyze Tesla's competitive position"
+llm = LLMGatewayClient.from_env()
+
+# Coordinator context + isolation manager
+isolation = ContextIsolationManager(coordinator_context=ctx)
+isolation.share_with_all("query", user_query)
+
+async def process_agent(agent, query, namespace):
+    return await agent.process_request(
+        input_text=query,
+        user_id="user-1",
+        session_id="session-1",
+        chat_history=[],
+    )
+
+async with isolation.execute_parallel(team, process_agent, user_query) as results:
+    print(results)
+
+# Aggregate results
+aggregator = ResultAggregator(strategy=AggregationStrategy.SYNTHESIZE)
+for agent in team:
+    namespace = isolation.get_namespace(agent.id)
+    if namespace:
+        aggregator.add_result(agent.id, namespace.get_result())
+
+final = await aggregator.aggregate(llm=llm)
 ```
 
 ### Benefits
@@ -1115,11 +971,11 @@ report = await agent.research("Analyze Tesla's competitive position")
 
 | Feature | Before | After |
 |---------|--------|-------|
-| **Deep Research** | Manual multi-step orchestration | `DeepResearchAgent.research(topic)` - one line |
+| **Deep Research** | Manual multi-step orchestration | Example chains in `examples/deep_research_agent.py` and `examples/financial_research_agent.py` |
 | **Handoffs** | Supervisor controls everything | Agents explicitly delegate: `A → B → C → User` |
 | **ReAct** | Black-box tool execution | Visible `Thought → Action → Observation` trace |
 | **Events** | Fixed DAG dependencies | Dynamic loops, branches, streaming events |
-| **Tools** | Define every tool manually | `get_tool("web_search")` from registry |
-| **Memory** | Basic chat history | Entity tracking, semantic search, cross-session recall |
+| **Tools** | Define every tool manually | ToolRegistry + built-ins via `get_default_registry()` |
+| **Memory** | Basic chat history | Semantic memory via `Mem0Memory` (window/entity patterns planned) |
 
 All features integrate with your existing corporate infrastructure (mem0, LLM Gateway, etc.).

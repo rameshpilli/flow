@@ -106,7 +106,7 @@ For large payloads, context supports Redis offloading:
 
 ```python
 from agentorchestrator.middleware import OffloadMiddleware
-from agentorchestrator.services import RedisContextStore
+from agentorchestrator.core.context_store import RedisContextStore
 
 ao.use(OffloadMiddleware(
     store=RedisContextStore(),

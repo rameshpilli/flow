@@ -39,14 +39,22 @@ AgentOrchestrator is a DAG-based chain orchestration framework for building AI/M
 | `langchain-core` | >=0.1.0 | LLM integration |
 | `langchain-text-splitters` | >=0.0.1 | Text chunking |
 
+*Alias*: `agentorchestrator[langchain]`
+
 #### OpenAI Support (`pip install agentorchestrator[openai]`)
 | Package | Version | Purpose |
 |---------|---------|---------|
+| `langchain-core` | >=0.1.0 | LLM integration |
+| `langchain-text-splitters` | >=0.0.1 | Text chunking |
+| `tiktoken` | >=0.5.0 | Token counting |
 | `langchain-openai` | >=0.0.5 | OpenAI LLM client |
 
 #### Anthropic Support (`pip install agentorchestrator[anthropic]`)
 | Package | Version | Purpose |
 |---------|---------|---------|
+| `langchain-core` | >=0.1.0 | LLM integration |
+| `langchain-text-splitters` | >=0.0.1 | Text chunking |
+| `tiktoken` | >=0.5.0 | Token counting |
 | `langchain-anthropic` | >=0.1.0 | Claude LLM client |
 
 #### Observability (`pip install agentorchestrator[observability]`)
@@ -57,10 +65,15 @@ AgentOrchestrator is a DAG-based chain orchestration framework for building AI/M
 | `opentelemetry-exporter-otlp` | >=1.20.0 | OTLP exporter |
 | `structlog` | >=23.0.0 | Structured logging |
 
-#### Redis Context Store (`pip install redis`)
+#### HTTP Connectors (`pip install agentorchestrator[http]`)
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `redis` | >=4.0.0 | Large payload offloading |
+| `aiohttp` | >=3.9.0 | Async HTTP client for connectors/agents |
+
+#### Redis Context Store (`pip install agentorchestrator[redis]`)
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `redis` | >=5.0.0 | Large payload offloading |
 
 #### Full Installation (`pip install agentorchestrator[all]`)
 Includes all optional dependencies.
@@ -101,60 +114,86 @@ pip install "agentorchestrator[all]"
 
 ## Environment Variables
 
-### Core Configuration
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AO_SERVICE_NAME` | `agentorchestrator` | Service name for telemetry |
-| `AO_ENV` | `development` | Environment (development/staging/production) |
-| `AO_DEBUG` | `false` | Enable debug mode |
-| `AO_MAX_PARALLEL` | `10` | Max parallel step execution |
-
 ### LLM Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_API_KEY` | - | LLM API key (required for summarization) |
-| `LLM_BASE_URL` | `http://localhost:8000` | LLM service URL |
-| `LLM_MODEL` | `gpt-4` | Default LLM model |
+| `LLM_SERVER_URL` | - | LLM gateway endpoint |
+| `LLM_GATEWAY_URL` | - | Alias for `LLM_SERVER_URL` |
+| `LLM_MODEL_NAME` | `gpt-4` | Default model name |
+| `LLM_TEMPERATURE` | `0.0` | Sampling temperature |
+| `LLM_MAX_TOKENS` | `4096` | Max output tokens |
+| `LLM_TIMEOUT` | `60.0` | Request timeout (seconds) |
+| `LLM_VERIFY_SSL` | `true` | Verify TLS certificates |
+| `LLM_OAUTH_ENDPOINT` | - | OAuth token endpoint |
+| `LLM_CLIENT_ID` | - | OAuth client ID |
+| `LLM_CLIENT_SECRET` | - | OAuth client secret |
+| `LLM_OAUTH_GRANT_TYPE` | `client_credentials` | OAuth grant type |
+| `LLM_OAUTH_SCOPE` | `read` | OAuth scope |
+| `OAUTH_TOKEN_TTL` | `3500` | OAuth token cache TTL (seconds) |
+| `LLM_API_KEY` | - | API key (alternative to OAuth) |
 
-### Caching
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AO_CACHE_ENABLED` | `true` | Enable response caching |
-| `AO_CACHE_TTL_SECONDS` | `300` | Cache TTL in seconds |
-
-### Rate Limiting
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AO_RATE_LIMIT_ENABLED` | `false` | Enable rate limiting |
-| `AO_RATE_LIMIT_RPS` | `10.0` | Requests per second |
-
-### Retry Configuration
+### Chain Execution
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AO_RETRY_MAX` | `3` | Max retry attempts |
+| `CHAIN_MAX_PARALLEL_STEPS` | `5` | Max parallel steps |
+| `CHAIN_DEFAULT_TIMEOUT_MS` | `30000` | Default step timeout (ms) |
+| `CHAIN_DEFAULT_RETRIES` | `3` | Default retry count |
+| `CHAIN_ERROR_HANDLING` | `fail_fast` | fail_fast, continue, retry |
 
-### Observability
+### Context Store (large payload offloading)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | - | OTLP endpoint URL |
+| `CONTEXT_STORE_BACKEND` | `memory` | memory, redis, mem0 |
+| `CONTEXT_STORE_REDIS_HOST` | `localhost` | Redis host |
+| `CONTEXT_STORE_REDIS_PORT` | `6379` | Redis port |
+| `CONTEXT_STORE_REDIS_PASSWORD` | - | Redis password |
+| `CONTEXT_STORE_REDIS_DB` | `0` | Redis DB index |
+| `CONTEXT_STORE_REDIS_SSL` | `false` | Enable TLS for Redis |
+| `CONTEXT_STORE_TTL` | `3600` | Default TTL (seconds) |
+| `CONTEXT_STORE_OFFLOAD_THRESHOLD` | `100000` | Offload threshold (bytes) |
+| `MEM0_URL` | - | Mem0 service URL |
+| `MEM0_API_KEY` | - | Mem0 API key |
+| `MEM0_AGENT_ID` | - | Agent/user ID for mem0 scoping |
+| `MEM0_ORG_ID` | - | Mem0 organization ID |
+
+### Summarizer
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SUMMARIZER_MAX_TOKENS` | `4000` | Max output tokens for summaries |
+| `SUMMARIZER_CHUNK_SIZE` | `2000` | Text chunk size |
+| `SUMMARIZER_CHUNK_OVERLAP` | `200` | Chunk overlap |
+| `SUMMARIZER_STRATEGY` | `map_reduce` | stuff, map_reduce, refine |
+
+### Cache
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CACHE_TTL_SECONDS` | `300` | Cache TTL in seconds |
+
+### Logging & Tracing
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `LOG_LEVEL` | `INFO` | Logging level (DEBUG/INFO/WARNING/ERROR) |
-| `LOG_FORMAT` | `text` | Log format (text/json) |
+| `VERBOSE` | `false` | Enable verbose output |
+| `AO_ENABLE_TRACING` | `false` | Enable OpenTelemetry tracing |
+| `AO_TRACE_SERVICE` | `agentorchestrator` | Trace service name |
+| `AO_TRACE_SAMPLING_RATE` | `1.0` | Trace sampling rate |
+| `AO_TRACE_BATCH_SIZE` | `512` | Batch size for trace export |
+| `AO_TRACE_BATCH_DELAY_MS` | `5000` | Batch export delay (ms) |
 
-### Redis (for large payload offloading)
+### Redis Service (optional)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REDIS_HOST` | `localhost` | Redis host |
-| `REDIS_PORT` | `6380` | Redis port (default uses separate port) |
+| `REDIS_PORT` | `6379` | Redis port |
+| `REDIS_USERNAME` | - | Redis username |
 | `REDIS_PASSWORD` | - | Redis password |
-| `REDIS_MAXMEMORY` | - | Redis memory limit (e.g., "512mb") |
 
 ---
 
@@ -203,12 +242,12 @@ from agentorchestrator.core.context_store import RedisContextStore
 
 store = RedisContextStore(
     host="localhost",
-    port=6380,
+    port=6379,
     maxmemory="512mb",
 )
 ```
 
-**Requirements**: `pip install redis` + Redis server running.
+**Requirements**: `pip install agentorchestrator[redis]` + Redis server running.
 
 ---
 
@@ -227,7 +266,7 @@ store = RedisContextStore(
 - [ ] Graceful shutdown handling
 
 ### Observability
-- [ ] Structured logging enabled (`LOG_FORMAT=json`)
+- [ ] Structured logging enabled (configure logging for JSON output)
 - [ ] OpenTelemetry tracing configured (if using)
 - [ ] Health check endpoint exposed
 - [ ] Metrics collection enabled

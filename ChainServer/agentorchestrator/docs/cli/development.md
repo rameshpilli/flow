@@ -43,6 +43,12 @@ Hot reloading requires the `watchdog` package:
 pip install watchdog
 ```
 
+Or install the dev extras:
+
+```bash
+pip install agentorchestrator[dev]
+```
+
 Without `watchdog`, the command runs initial validation but won't watch for changes.
 
 ### Output

@@ -438,27 +438,26 @@ REDIS_MAX_CONNECTIONS=10
 # LLM Configuration
 # ═══════════════════════════════════════════════════════════════════════════════
 LLM_API_KEY=
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_MODEL=gpt-4
+LLM_SERVER_URL=https://api.openai.com/v1
+LLM_MODEL_NAME=gpt-4
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Logging
 # ═══════════════════════════════════════════════════════════════════════════════
 LOG_LEVEL=INFO
-LOG_FORMAT=text
+VERBOSE=false
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # OpenTelemetry (optional)
 # ═══════════════════════════════════════════════════════════════════════════════
-OTEL_ENABLED=false
-OTEL_EXPORTER_OTLP_ENDPOINT=
+AO_ENABLE_TRACING=false
+AO_TRACE_SERVICE=agentorchestrator
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # AgentOrchestrator
 # ═══════════════════════════════════════════════════════════════════════════════
-AO_MAX_PARALLEL=10
-AO_CACHE_ENABLED=true
-AO_CACHE_TTL_SECONDS=300
+CHAIN_MAX_PARALLEL_STEPS=10
+CACHE_TTL_SECONDS=300
 '''
 
 

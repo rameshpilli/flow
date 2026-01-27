@@ -138,7 +138,7 @@ async def gather_data(ctx):
 Register custom prompts for your domain:
 
 ```python
-from agentorchestrator.summarizers import LangChainSummarizer
+from agentorchestrator.middleware.summarizer import LangChainSummarizer
 
 # Register domain prompts
 LangChainSummarizer.register_domain_prompts(
@@ -220,8 +220,8 @@ from agentorchestrator.middleware import (
     TokenManagerMiddleware,
     OffloadMiddleware,
 )
-from agentorchestrator.summarizers import LangChainSummarizer, SummarizationStrategy
-from agentorchestrator.services import RedisContextStore
+from agentorchestrator.middleware.summarizer import LangChainSummarizer, SummarizationStrategy
+from agentorchestrator.core.context_store import RedisContextStore
 
 ao = AgentOrchestrator(name="research_pipeline")
 
@@ -290,5 +290,5 @@ print(f"Tokens saved: {metrics['tokens_saved']}")
 ## API Reference
 
 ::: agentorchestrator.middleware.SummarizerMiddleware
-::: agentorchestrator.summarizers.LangChainSummarizer
-::: agentorchestrator.summarizers.SummarizationStrategy
+::: agentorchestrator.middleware.summarizer.LangChainSummarizer
+::: agentorchestrator.middleware.summarizer.SummarizationStrategy

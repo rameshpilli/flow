@@ -1096,6 +1096,48 @@ class ChainContext(Generic[StateModel]):
                 # CHAIN or GLOBAL - only from shared store
                 return [k for k, v in self._store.items() if v.scope == scope]
 
+    def keys_for_step(self, step_name: str) -> list[str]:
+        """
+        Get all CHAIN/GLOBAL keys produced by a specific step.
+
+        Uses the source_step metadata recorded on ContextEntry.
+        This is useful for middleware that needs to update or replace
+        a step's outputs (e.g., summarization, offloading).
+        """
+        with self._sync_lock:
+            return [
+                key for key, entry in self._store.items()
+                if entry.source_step == step_name
+            ]
+
+    def update_step_outputs(
+        self,
+        step_name: str,
+        value: Any,
+        keys: list[str] | None = None,
+    ) -> list[str]:
+        """
+        Replace stored outputs for a step with a new value.
+
+        Args:
+            step_name: Name of the step.
+            value: Replacement value to store.
+            keys: Optional explicit list of keys to update. If None, uses
+                keys_for_step(step_name).
+
+        Returns:
+            list[str]: Keys that were updated.
+        """
+        keys = keys or self.keys_for_step(step_name)
+        updated: list[str] = []
+        for key in keys:
+            entry = self.get_entry(key)
+            if entry is None:
+                continue
+            self.set(key, value, scope=entry.scope)
+            updated.append(key)
+        return updated
+
     def add_result(self, result: StepResult) -> None:
         """
         Add a step execution result (thread-safe).
