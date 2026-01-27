@@ -1439,6 +1439,8 @@ class ChainContext(Generic[StateModel]):
             new_ctx._step_stores = copy.deepcopy(self._step_stores)
             new_ctx._results = copy.deepcopy(self._results)
             new_ctx.metadata = copy.deepcopy(self.metadata)
+            if self._state_store is not None:
+                new_ctx._state_store = self._state_store.clone()
             return new_ctx
 
     # =========================================================================

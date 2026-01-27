@@ -451,7 +451,7 @@ class SummarizerMiddleware(Middleware):
 
         if inspect.iscoroutinefunction(self._legacy_summarizer):
             return await self._legacy_summarizer(text, max_tokens)
-        return await asyncio.get_event_loop().run_in_executor(
+        return await asyncio.get_running_loop().run_in_executor(
             None, self._legacy_summarizer, text, max_tokens
         )
 

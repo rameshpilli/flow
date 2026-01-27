@@ -153,7 +153,21 @@ class StateStore(Generic[StateModel]):
         self.model_class = model_class
         self._state = initial_state or model_class()
         self._lock = asyncio.Lock()
-        self._initial_state = self._state.model_copy(deep=True)
+        self._initial_state = self._copy_state(self._state)
+
+    def _copy_state(self, state: StateModel) -> StateModel:
+        """
+        Deep copy a Pydantic model across v1/v2.
+
+        Pydantic v2: model_copy(deep=True)
+        Pydantic v1: copy(deep=True)
+        Fallback: copy.deepcopy
+        """
+        if hasattr(state, "model_copy"):
+            return state.model_copy(deep=True)
+        if hasattr(state, "copy"):
+            return state.copy(deep=True)
+        return copy.deepcopy(state)
     
     @property
     def state(self) -> StateModel:
@@ -203,7 +217,7 @@ class StateStore(Generic[StateModel]):
         """
         async with self._lock:
             # Create a deep copy for modification
-            state_copy = self._state.model_copy(deep=True)
+            state_copy = self._copy_state(self._state)
             
             try:
                 yield state_copy
@@ -239,7 +253,7 @@ class StateStore(Generic[StateModel]):
             >>> store.reset()
             >>> print(store.state.count)  # 0 (back to initial)
         """
-        self._state = self._initial_state.model_copy(deep=True)
+        self._state = self._copy_state(self._initial_state)
         logger.debug("State reset to initial values")
     
     def to_dict(self) -> dict[str, Any]:
@@ -301,7 +315,7 @@ class StateStore(Generic[StateModel]):
         """
         return StateStore(
             self.model_class,
-            initial_state=self._state.model_copy(deep=True)
+            initial_state=self._copy_state(self._state)
         )
     
     def __repr__(self) -> str:

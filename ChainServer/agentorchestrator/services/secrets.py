@@ -83,7 +83,7 @@ class VaultSecretProvider(SecretProvider):
         
         Uses run_in_executor to avoid blocking the event loop since hvac is synchronous.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(_executor, partial(self._read_secret_sync, key))
 
 class SecretService:

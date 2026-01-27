@@ -466,7 +466,7 @@ class MCPAdapterAgent(BaseAgent):
             payload["_meta"] = {"sessionId": self._session_id}
         
         # Create future for response
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future = loop.create_future()
         self._pending_responses[request_id] = future
         

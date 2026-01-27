@@ -126,7 +126,7 @@ class EventSubscription:
             event = await self._queue.get()
             return event
         except asyncio.CancelledError:
-            self._closed = True
+            await self.aclose()
             raise StopAsyncIteration
     
     async def aclose(self) -> None:
