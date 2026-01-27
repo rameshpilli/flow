@@ -39,31 +39,81 @@ from pathlib import Path
 _definition_paths: list[Path] | None = None
 _observability_configured = False
 
+# ANSI Color codes
+class Colors:
+    CYAN = "\033[0;36m"
+    MAGENTA = "\033[0;35m"
+    GREEN = "\033[0;32m"
+    YELLOW = "\033[1;33m"
+    BLUE = "\033[0;34m"
+    BOLD = "\033[1m"
+    NC = "\033[0m"  # No Color
+
+
 # ASCII Art Banner
 AO_BANNER = r"""
-    ___    ____
-   /   |  / __ \
-  / /| | / / / /
- / ___ |/ /_/ /
-/_/  |_|\____/
-
+     ___    ____
+    /   |  / __ \
+   / /| | / / / /
+  / ___ |/ /_/ /
+ /_/  |_|\____/
 """
 
 AO_TAGLINE = "Your Agentic AI Workflow"
 
 
-def print_banner(include_version: bool = True) -> None:
+def print_banner(include_version: bool = True, colorful: bool = True) -> None:
     """Print the AO ASCII art banner."""
-    print(AO_BANNER)
-    print(f"  {AO_TAGLINE}")
-    if include_version:
-        try:
-            from agentorchestrator.config import get_version
-            version_info = get_version()
-            print(f"  v{version_info.get('version', '0.1.0')}")
-        except Exception:
-            print("  v0.1.0")
+    if colorful and sys.stdout.isatty():
+        print(f"{Colors.CYAN}{Colors.BOLD}{AO_BANNER}{Colors.NC}")
+        print(f"  {Colors.BOLD}AgentOrchestrator{Colors.NC}")
+        print(f"  {Colors.MAGENTA}{AO_TAGLINE}{Colors.NC}")
+        if include_version:
+            try:
+                from agentorchestrator.config import get_version
+                version_info = get_version()
+                print(f"  {Colors.GREEN}v{version_info.get('version', '0.1.0')}{Colors.NC}")
+            except Exception:
+                print(f"  {Colors.GREEN}v0.1.0{Colors.NC}")
+    else:
+        print(AO_BANNER)
+        print(f"  AgentOrchestrator")
+        print(f"  {AO_TAGLINE}")
+        if include_version:
+            try:
+                from agentorchestrator.config import get_version
+                version_info = get_version()
+                print(f"  v{version_info.get('version', '0.1.0')}")
+            except Exception:
+                print("  v0.1.0")
     print()
+
+
+def print_install_complete() -> None:
+    """Print installation complete message (called from setup hooks)."""
+    if sys.stdout.isatty():
+        print()
+        print(f"{Colors.YELLOW}✨{Colors.NC} {Colors.BOLD}Installation Complete!{Colors.NC} {Colors.YELLOW}✨{Colors.NC}")
+        print()
+        print(f"{Colors.BOLD}Quick Start:{Colors.NC}")
+        print()
+        print(f"   {Colors.CYAN}# Check installation{Colors.NC}")
+        print("   ao version")
+        print()
+        print(f"   {Colors.CYAN}# Create a new agent{Colors.NC}")
+        print("   ao new agent my_agent")
+        print()
+        print(f"   {Colors.CYAN}# Run health check{Colors.NC}")
+        print("   ao health --detailed")
+        print()
+        print("Happy coding! 🚀")
+        print()
+    else:
+        print()
+        print("Installation Complete!")
+        print()
+        print("Run 'ao version' to verify installation.")
+        print()
 
 
 def _env_flag(key: str, default: bool = False) -> bool:
@@ -1357,16 +1407,135 @@ def cmd_version(args: argparse.Namespace) -> int:
             print(json.dumps(version_info, indent=2))
         else:
             print_banner(include_version=False)
-            print(f"{'═' * 40}")
-            print(f"  {version_info['name']} v{version_info['version']}")
-            print(f"  Environment: {version_info['environment']}")
-            print(f"{'═' * 40}\n")
+            if sys.stdout.isatty():
+                print(f"{Colors.CYAN}{'═' * 40}{Colors.NC}")
+                print(f"  {Colors.BOLD}{version_info['name']}{Colors.NC} {Colors.GREEN}v{version_info['version']}{Colors.NC}")
+                print(f"  Environment: {Colors.YELLOW}{version_info['environment']}{Colors.NC}")
+                print(f"{Colors.CYAN}{'═' * 40}{Colors.NC}\n")
+            else:
+                print(f"{'═' * 40}")
+                print(f"  {version_info['name']} v{version_info['version']}")
+                print(f"  Environment: {version_info['environment']}")
+                print(f"{'═' * 40}\n")
 
         return 0
 
     except Exception as e:
         print(f"Error getting version: {e}")
         return 1
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    """
+    Show setup/welcome message and verify installation.
+
+    This command displays the installation complete message
+    and verifies that the package is properly installed.
+    """
+    print_banner()
+
+    if sys.stdout.isatty():
+        print(f"{Colors.BOLD}Verifying installation...{Colors.NC}\n")
+    else:
+        print("Verifying installation...\n")
+
+    checks_passed = 0
+    checks_total = 0
+
+    # Check 1: Core import
+    checks_total += 1
+    try:
+        from agentorchestrator import AgentOrchestrator
+        if sys.stdout.isatty():
+            print(f"{Colors.GREEN}✓{Colors.NC} Core module imported successfully")
+        else:
+            print("✓ Core module imported successfully")
+        checks_passed += 1
+    except ImportError as e:
+        if sys.stdout.isatty():
+            print(f"{Colors.RED}✗{Colors.NC} Core module import failed: {e}")
+        else:
+            print(f"✗ Core module import failed: {e}")
+
+    # Check 2: Config
+    checks_total += 1
+    try:
+        from agentorchestrator.config import get_config
+        get_config()
+        if sys.stdout.isatty():
+            print(f"{Colors.GREEN}✓{Colors.NC} Configuration loaded")
+        else:
+            print("✓ Configuration loaded")
+        checks_passed += 1
+    except Exception as e:
+        if sys.stdout.isatty():
+            print(f"{Colors.RED}✗{Colors.NC} Configuration error: {e}")
+        else:
+            print(f"✗ Configuration error: {e}")
+
+    # Check 3: CLI available
+    checks_total += 1
+    import shutil
+    if shutil.which("ao"):
+        if sys.stdout.isatty():
+            print(f"{Colors.GREEN}✓{Colors.NC} CLI command 'ao' available")
+        else:
+            print("✓ CLI command 'ao' available")
+        checks_passed += 1
+    else:
+        if sys.stdout.isatty():
+            print(f"{Colors.YELLOW}!{Colors.NC} CLI 'ao' not in PATH (may need shell restart)")
+        else:
+            print("! CLI 'ao' not in PATH (may need shell restart)")
+        checks_passed += 1  # Not a failure
+
+    # Check 4: Optional dependencies
+    checks_total += 1
+    optional_deps = []
+    try:
+        import redis
+        optional_deps.append("redis")
+    except ImportError:
+        pass
+    try:
+        import langchain_core
+        optional_deps.append("langchain")
+    except ImportError:
+        pass
+    try:
+        import opentelemetry
+        optional_deps.append("observability")
+    except ImportError:
+        pass
+    try:
+        import mem0ai
+        optional_deps.append("memory")
+    except ImportError:
+        pass
+    try:
+        import hvac
+        optional_deps.append("secrets")
+    except ImportError:
+        pass
+
+    if optional_deps:
+        if sys.stdout.isatty():
+            print(f"{Colors.GREEN}✓{Colors.NC} Optional extras: {', '.join(optional_deps)}")
+        else:
+            print(f"✓ Optional extras: {', '.join(optional_deps)}")
+    else:
+        if sys.stdout.isatty():
+            print(f"{Colors.YELLOW}!{Colors.NC} No optional extras installed")
+        else:
+            print("! No optional extras installed")
+    checks_passed += 1
+
+    print()
+
+    # Show completion message
+    print_install_complete()
+
+    return 0 if checks_passed == checks_total else 1
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -2098,6 +2267,13 @@ Examples:
         help="Diagnose common issues with AgentOrchestrator setup"
     )
     doctor_parser.set_defaults(func=cmd_doctor)
+
+    # setup command (post-install welcome)
+    setup_parser = subparsers.add_parser(
+        "setup",
+        help="Verify installation and show welcome message"
+    )
+    setup_parser.set_defaults(func=cmd_setup)
 
     # config command
     config_parser = subparsers.add_parser("config", help="Show configuration (secrets masked)")
