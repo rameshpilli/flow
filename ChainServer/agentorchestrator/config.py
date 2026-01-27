@@ -464,11 +464,11 @@ class ContextStoreConfig:
             # Common
             default_ttl_seconds=_get_env_int("CONTEXT_STORE_TTL", 3600),
             offload_threshold_bytes=_get_env_int("CONTEXT_STORE_OFFLOAD_THRESHOLD", 100_000),
-            # mem0 - prefer simple MEM0_* vars, fall back to CONTEXT_STORE_MEM0_*
-            mem0_api_key=_get_env("MEM0_API_KEY") or _get_env("CONTEXT_STORE_MEM0_API_KEY"),
-            mem0_host=_get_env("MEM0_URL") or _get_env("CONTEXT_STORE_MEM0_HOST"),
-            mem0_user_id=_get_env("MEM0_AGENT_ID") or _get_env("CONTEXT_STORE_MEM0_USER_ID"),
-            mem0_org_id=_get_env("MEM0_ORG_ID") or _get_env("CONTEXT_STORE_MEM0_ORG_ID"),
+            # mem0
+            mem0_api_key=_get_env("MEM0_API_KEY"),
+            mem0_host=_get_env("MEM0_URL"),
+            mem0_user_id=_get_env("MEM0_AGENT_ID"),
+            mem0_org_id=_get_env("MEM0_ORG_ID"),
         )
 
     @property
