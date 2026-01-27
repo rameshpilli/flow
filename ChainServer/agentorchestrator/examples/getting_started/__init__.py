@@ -12,6 +12,10 @@ from agentorchestrator.examples.getting_started.parallel_steps import (
     create_parallel_orchestrator,
     run_parallel_example,
 )
+from agentorchestrator.examples.getting_started.ai_workflow_dag import (
+    create_ai_workflow_orchestrator,
+    run_ai_workflow,
+)
 
 __all__ = [
     "create_hello_world_orchestrator",
@@ -20,4 +24,6 @@ __all__ = [
     "run_simple_chain",
     "create_parallel_orchestrator",
     "run_parallel_example",
+    "create_ai_workflow_orchestrator",
+    "run_ai_workflow",
 ]

@@ -45,6 +45,7 @@ __all__ = [
     "ExecutionPlan",
     "ChainRunner",
     "DebugCallback",
+    "resolve_state_model",
 ]
 
 
@@ -328,6 +329,43 @@ class DAGBuilder:
                         in_degree[dependent] -= 1
 
         return execution_order
+
+
+def resolve_state_model(
+    chain_name: str,
+    chain_registry: Any,
+    step_registry: Any,
+) -> type | None:
+    """
+    Resolve a single typed state model for a chain, if defined.
+
+    Returns the unique state_model used by any step in the chain.
+    Raises ValueError if multiple distinct models are found.
+    """
+    chain_spec = chain_registry.get_spec(chain_name)
+    if not chain_spec:
+        return None
+
+    state_models: list[type] = []
+    for step_name in chain_spec.steps:
+        step_spec = step_registry.get_spec(step_name)
+        if step_spec and getattr(step_spec, "state_model", None) is not None:
+            state_models.append(step_spec.state_model)
+
+    unique_models = {model for model in state_models}
+    if len(unique_models) > 1:
+        model_names = ", ".join(
+            sorted(
+                model.__name__ if hasattr(model, "__name__") else str(model)
+                for model in unique_models
+            )
+        )
+        raise ValueError(
+            f"Chain '{chain_name}' uses multiple state models: {model_names}. "
+            "Use a single shared state model per chain."
+        )
+
+    return next(iter(unique_models), None)
 
 
 class DAGExecutor:
@@ -1286,16 +1324,23 @@ class ChainRunner:
         else:
             validated_data = self._validate_chain_input(chain_name, initial_data)
 
-        ctx = ChainContext(
-            request_id=request_id,
-            initial_data=validated_data,
-        )
-
         start_time = time.perf_counter()
         error_info: dict[str, Any] | None = None
         success = True
+        ctx: ChainContext | None = None
 
         try:
+            state_model = resolve_state_model(
+                chain_name,
+                self.executor.chain_registry,
+                self.executor.builder.step_registry,
+            )
+
+            ctx = ChainContext(
+                request_id=request_id,
+                initial_data=validated_data,
+                state_model=state_model,
+            )
             ctx = await self.executor.execute(
                 chain_name, ctx, debug_callback=debug_callback
             )
@@ -1349,6 +1394,12 @@ class ChainRunner:
             )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
+
+        if ctx is None:
+            ctx = ChainContext(
+                request_id=request_id,
+                initial_data=validated_data,
+            )
 
         # Log completion with structured attributes
         log_level = logging.INFO if success else logging.WARNING

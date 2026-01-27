@@ -485,10 +485,18 @@ class ResumableChainRunner:
 
         await self._store.save_checkpoint(checkpoint)
 
-        # Create context
+        # Create context with typed state model if configured on steps
+        from agentorchestrator.core.dag import resolve_state_model
+
+        state_model = resolve_state_model(
+            chain_name,
+            self._executor.chain_registry,
+            self._executor.builder.step_registry,
+        )
         ctx = ChainContext(
             request_id=run_id,
             initial_data=initial_data,
+            state_model=state_model,
         )
 
         # Define step callback for checkpointing (must be sync as per DebugCallback protocol)
@@ -585,10 +593,18 @@ class ResumableChainRunner:
         checkpoint.updated_at = datetime.utcnow().isoformat()
         await self._store.save_checkpoint(checkpoint)
 
-        # Create context with restored data
+        # Create context with restored data and typed state model if configured
+        from agentorchestrator.core.dag import resolve_state_model
+
+        state_model = resolve_state_model(
+            checkpoint.chain_name,
+            self._executor.chain_registry,
+            self._executor.builder.step_registry,
+        )
         ctx = ChainContext(
             request_id=run_id,
             initial_data=initial_data,
+            state_model=state_model,
         )
 
         # Execute remaining steps (completed steps are pre-marked)
@@ -664,9 +680,17 @@ class ResumableChainRunner:
         checkpoint.updated_at = datetime.utcnow().isoformat()
         await self._store.save_checkpoint(checkpoint)
 
+        from agentorchestrator.core.dag import resolve_state_model
+
+        state_model = resolve_state_model(
+            checkpoint.chain_name,
+            self._executor.chain_registry,
+            self._executor.builder.step_registry,
+        )
         ctx = ChainContext(
             request_id=run_id,
             initial_data=initial_data,
+            state_model=state_model,
         )
 
         try:

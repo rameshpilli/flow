@@ -129,6 +129,7 @@ def create_parallel_orchestrator() -> AgentOrchestrator:
             "data_sources": 3,
         }
 
+        ctx.set("report", report)
         return report
 
     @ao.chain(name="parallel_chain")
@@ -169,11 +170,13 @@ def main():
     """CLI entry point."""
     result = asyncio.run(run_parallel_example())
 
+    report = result["context"]["data"]["report"]
+
     print("\nCombined Result:")
-    print(f"  - News articles: {result.get('news_count')}")
-    print(f"  - Stocks tracked: {result.get('stocks_tracked')}")
-    print(f"  - Weather: {result.get('weather_summary')}")
-    print(f"  - Data sources: {result.get('data_sources')}")
+    print(f"  - News articles: {report.get('news_count')}")
+    print(f"  - Stocks tracked: {report.get('stocks_tracked')}")
+    print(f"  - Weather: {report.get('weather_summary')}")
+    print(f"  - Data sources: {report.get('data_sources')}")
 
 
 if __name__ == "__main__":

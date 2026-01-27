@@ -81,8 +81,9 @@ def main():
     args = parser.parse_args()
 
     result = asyncio.run(run_hello_world(args.name))
+    greeting = result["context"]["data"]["greeting"]
 
-    print(f"\nResult: {result['greeting']}")
+    print(f"\nResult: {greeting}")
     print(f"\nFull result: {result}")
 
 

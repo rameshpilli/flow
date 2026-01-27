@@ -236,11 +236,7 @@ async def test_context_edit_state_without_model_raises():
 async def test_step_with_state_model():
     """Test step decorated with state_model parameter."""
     ao = AgentOrchestrator(name="test", isolated=True)
-    
-    # Note: The state_model parameter is stored in the step metadata
-    # but currently needs to be passed at context creation time.
-    # This test verifies the decorator accepts the parameter.
-    
+
     @ao.step(name="increment", state_model=CounterState)
     async def increment(ctx: Context[CounterState]):
         async with ctx.edit_state() as state:
@@ -251,16 +247,15 @@ async def test_step_with_state_model():
     step_spec = ao._step_registry.get_spec("increment")
     assert hasattr(increment, "_fg_state_model")
     assert increment._fg_state_model == CounterState
-    
-    # For now, we test the step directly with a context that has the state model
-    from agentorchestrator.core.context import ChainContext
-    ctx = ChainContext("req_1", state_model=CounterState)
-    
-    async with ctx.step_scope("increment"):
-        result = await increment(ctx)
-    
-    assert result["count"] == 1
-    assert ctx.state.count == 1
+
+    @ao.chain(name="state_chain")
+    class StateChain:
+        steps = ["increment"]
+
+    result = await ao.launch("state_chain")
+
+    assert result["success"] is True
+    assert result["results"][0]["output"]["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -311,6 +306,31 @@ async def test_state_with_parallel_steps():
     assert ctx.state.counter == 5
     assert len(ctx.state.items) == 5
     assert set(ctx.state.items) == {"item1", "item2", "item3", "item4", "item5"}
+
+
+@pytest.mark.asyncio
+async def test_chain_rejects_multiple_state_models():
+    """Chains should not mix different state models."""
+    ao = AgentOrchestrator(name="state_model_conflict", isolated=True)
+
+    @ao.step(name="step1", state_model=CounterState)
+    async def step1(ctx: Context[CounterState]):
+        async with ctx.edit_state() as state:
+            state.count += 1
+        return {"count": ctx.state.count}
+
+    @ao.step(name="step2", deps=["step1"], state_model=PipelineState)
+    async def step2(ctx: Context[PipelineState]):
+        async with ctx.edit_state() as state:
+            state.counter += 1
+        return {"counter": ctx.state.counter}
+
+    @ao.chain(name="bad_state_chain")
+    class BadStateChain:
+        steps = ["step1", "step2"]
+
+    with pytest.raises(ValueError, match="multiple state models"):
+        await ao.launch("bad_state_chain")
 
 
 # =============================================================================

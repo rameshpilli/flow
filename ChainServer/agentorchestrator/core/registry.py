@@ -129,6 +129,8 @@ class StepSpec:
     output_model: type | None = None  # Pydantic model for output validation
     input_key: str | None = None  # Key in context to validate as input (default: "request")
     validate_output: bool = True  # Whether to validate output against output_model
+    # Optional typed state model for ChainContext
+    state_model: type | None = None
 
 
 @dataclass
@@ -337,6 +339,7 @@ class StepRegistry(BaseRegistry):
         output_model: type | None = None,
         input_key: str | None = None,
         validate_output: bool = True,
+        state_model: type | None = None,
         **kwargs,  # Accept extra kwargs for forward compatibility
     ) -> None:
         """
@@ -409,6 +412,7 @@ class StepRegistry(BaseRegistry):
             output_model=output_model,
             input_key=input_key,
             validate_output=validate_output,
+            state_model=state_model,
         )
         self.register(name, spec, aliases, strict=strict)
 

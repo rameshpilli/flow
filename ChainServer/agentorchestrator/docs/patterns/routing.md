@@ -31,6 +31,10 @@ A router agent analyzes intent and delegates to specialists:
 └───────────────┘   └───────────────┘   └───────────────┘
 ```
 
+> **Status:** `RouterAgent`, `AgentNetwork`, `CapabilityRouter`, and `LoadBalancer`
+> are planned but not yet implemented. For production routing today, use
+> `MultiAgentOrchestrator` with an intent classifier.
+
 ## When to Use
 
 | Scenario | Use Routing? |
@@ -41,7 +45,45 @@ A router agent analyzes intent and delegates to specialists:
 | Single-purpose pipeline | :material-close: No |
 | Static workflows | :material-close: No |
 
-## Implementation
+## Current Implementation (MultiAgentOrchestrator)
+
+```python
+from agentorchestrator.squad import (
+    MultiAgentOrchestrator,
+    LLMGatewayClassifier,
+    LLMGatewayAgent,
+    LLMGatewayAgentOptions,
+)
+
+classifier = LLMGatewayClassifier()
+orchestrator = MultiAgentOrchestrator(classifier=classifier)
+
+orchestrator.add_agent(LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="financial",
+    description="Financial analysis",
+)))
+orchestrator.add_agent(LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="technical",
+    description="API support",
+)))
+
+orchestrator.set_default_agent(
+    LLMGatewayAgent(LLMGatewayAgentOptions(
+        name="general",
+        description="General assistance",
+    ))
+)
+
+response = await orchestrator.route_request(
+    user_input="What is NVDA's P/E ratio?",
+    user_id="user-1",
+    session_id="session-1",
+)
+```
+
+## Planned APIs (Not Yet Implemented)
+
+The following examples are forward-looking and will not run in the current release.
 
 ### Basic Router
 

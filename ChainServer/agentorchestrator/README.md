@@ -150,8 +150,51 @@ class HelloChain:
 # Run
 import asyncio
 result = asyncio.run(ao.launch("hello_chain", {"name": "AgentOrchestrator"}))
-print(result["greeting"])  # "Hello, AgentOrchestrator!"
+print(result["results"][0]["output"]["greeting"])  # "Hello, AgentOrchestrator!"
 ```
+
+### DAG-Style AI Workflow (Parallel Branches)
+
+Define a DAG-style AI workflow in a few lines:
+
+```python
+from agentorchestrator import AgentOrchestrator
+
+ao = AgentOrchestrator(name="ai_workflow")
+
+@ao.step(name="plan")
+async def plan(ctx):
+    question = ctx.get("question")
+    ctx.set("query", question)
+    return {"plan": f"Research '{question}'"}
+
+@ao.step(name="search_web", deps=["plan"])
+async def search_web(ctx):
+    web = f"Web notes for {ctx.get('query')}"
+    ctx.set("web", web)
+    return {"web": web}
+
+@ao.step(name="retrieve_docs", deps=["plan"])
+async def retrieve_docs(ctx):
+    docs = f"Doc notes for {ctx.get('query')}"
+    ctx.set("docs", docs)
+    return {"docs": docs}
+
+@ao.step(name="synthesize", deps=["search_web", "retrieve_docs"])
+async def synthesize(ctx):
+    return {"summary": f"{ctx.get('web')}; {ctx.get('docs')}"}
+
+@ao.chain(name="ai_workflow")
+class AIWorkflow:
+    steps = ["plan", "search_web", "retrieve_docs", "synthesize"]
+
+result = asyncio.run(ao.launch("ai_workflow", {"question": "AI trends"}))
+print(result["results"][-1]["output"]["summary"])
+```
+
+Swap the stubbed strings with real LLM/tool calls — the DAG wiring stays the same.
+
+See the runnable example in `agentorchestrator/examples/getting_started/ai_workflow_dag.py`.
 
 ### Multi-Step Pipeline with Dependencies
 
@@ -177,7 +220,8 @@ class DataPipeline:
     steps = ["fetch", "process", "summarize"]
 
 result = asyncio.run(ao.launch("data_pipeline", {}))
-# {"sum": 30, "count": 5, ...}
+summary = result["results"][-1]["output"]
+print(f"Sum: {summary['sum']}, Count: {summary['count']}")
 ```
 
 ### Type-Safe State with Pydantic
@@ -206,7 +250,11 @@ async def process(ctx: Context[PipelineState]):
     count = ctx.state.counter  # ← Typed!
     return {"count": count}
 
-# Create context with state model
+# When you launch the chain, the state model is picked up automatically
+# (all steps must share the same state model).
+# result = await ao.launch("typed_pipeline")
+
+# Optional: create a context manually with a state model
 from agentorchestrator.core.context import ChainContext
 ctx = ChainContext("req_123", state_model=PipelineState)
 ```

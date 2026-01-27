@@ -32,7 +32,7 @@ import asyncio
 
 async def main():
     result = await ao.launch("hello_chain", {"name": "AgentOrchestrator"})
-    print(result["greeting"])  # "Hello, AgentOrchestrator!"
+    print(result["results"][0]["output"]["greeting"])  # "Hello, AgentOrchestrator!"
 
 asyncio.run(main())
 ```
@@ -69,7 +69,8 @@ class DataPipeline:
 # Run
 async def main():
     result = await ao.launch("data_pipeline", {})
-    print(f"Sum: {result['sum']}, Count: {result['count']}")
+    summary = result["results"][-1]["output"]
+    print(f"Sum: {summary['sum']}, Count: {summary['count']}")
 
 asyncio.run(main())
 ```
@@ -99,6 +100,65 @@ class ParallelChain:
 
 # fetch_a and fetch_b run in parallel (total ~1s, not 2s)
 ```
+
+## DAG-Style AI Workflow (Quick)
+
+Define a DAG in minutes with just `deps=...`:
+
+```python
+from agentorchestrator import AgentOrchestrator
+
+ao = AgentOrchestrator(name="ai_workflow")
+
+def fake_llm(prompt: str) -> str:
+    return f"Plan: research '{prompt}'"
+
+def fake_search(query: str) -> str:
+    return f"Web notes for {query}"
+
+def fake_retrieve(query: str) -> str:
+    return f"Doc notes for {query}"
+
+@ao.step(name="plan")
+async def plan(ctx):
+    question = ctx.get("question")
+    ctx.set("query", question)
+    return {"plan": fake_llm(question)}
+
+# These two steps run in parallel (same dependency)
+@ao.step(name="search_web", deps=["plan"])
+async def search_web(ctx):
+    web = fake_search(ctx.get("query"))
+    ctx.set("web", web)
+    return {"web": web}
+
+@ao.step(name="retrieve_docs", deps=["plan"])
+async def retrieve_docs(ctx):
+    docs = fake_retrieve(ctx.get("query"))
+    ctx.set("docs", docs)
+    return {"docs": docs}
+
+@ao.step(name="synthesize", deps=["search_web", "retrieve_docs"])
+async def synthesize(ctx):
+    web = ctx.get("web")
+    docs = ctx.get("docs")
+    summary = f"{web}; {docs}"
+    return {"summary": summary}
+
+@ao.chain(name="ai_workflow")
+class AIWorkflow:
+    steps = ["plan", "search_web", "retrieve_docs", "synthesize"]
+
+# Run it
+result = await ao.launch("ai_workflow", {"question": "AI trends"})
+summary = result["results"][-1]["output"]["summary"]
+print(summary)
+
+# Visualize the DAG
+ao.graph("ai_workflow")
+```
+
+Swap `fake_*` with real tools or LLM calls — the DAG wiring stays the same.
 
 ## Add Middleware
 
@@ -247,6 +307,10 @@ async def process(ctx: Context[PipelineState]):
 @ao.chain(name="typed_pipeline")
 class TypedPipeline:
     steps = ["process"]
+
+# When you launch the chain, the state model is picked up automatically
+# (all steps must share the same state model).
+# result = await ao.launch("typed_pipeline")
 ```
 
 ## Event-Driven Workflows

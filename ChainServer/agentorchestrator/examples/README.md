@@ -11,6 +11,7 @@ Start here if you're new to AgentOrchestrator:
 | [hello_world](getting_started/hello_world.py) | Simplest possible chain - your first step |
 | [simple_chain](getting_started/simple_chain.py) | Multi-step pipeline with dependencies |
 | [parallel_steps](getting_started/parallel_steps.py) | Steps running in parallel |
+| [ai_workflow_dag](getting_started/ai_workflow_dag.py) | DAG-style AI workflow with parallel research branches |
 
 ## Core Examples
 
@@ -65,6 +66,7 @@ Each example can be run directly:
 ```bash
 # Getting started examples
 python -m agentorchestrator.examples.getting_started.hello_world
+python -m agentorchestrator.examples.getting_started.ai_workflow_dag
 
 # State management
 python -m agentorchestrator.examples.pydantic_state

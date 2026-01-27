@@ -740,6 +740,7 @@ class AgentOrchestrator:
                 output_model=output_model,  # Output contract
                 input_key=input_key,  # Key to validate
                 validate_output=validate_output,  # Whether to validate output
+                state_model=state_model,  # Typed state model (optional)
             )
             func._fg_name = step_name
             func._fg_type = "step"
@@ -2081,7 +2082,7 @@ class AgentOrchestrator:
 
         # Create isolated context for this step test
         req_id = request_id or f"step_test_{uuid.uuid4().hex[:8]}"
-        ctx = self.create_context(req_id, data)
+        ctx = self.create_context(req_id, data, state_model=getattr(step_spec, "state_model", None))
 
         start_time = time.perf_counter()
 

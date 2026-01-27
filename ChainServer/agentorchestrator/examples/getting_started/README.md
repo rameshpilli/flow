@@ -44,6 +44,19 @@ python parallel_steps.py
 - Multiple steps feeding into one
 - Performance benefits of DAG execution
 
+### 4. AI Workflow DAG
+
+A tiny AI workflow with parallel research branches.
+
+```bash
+python ai_workflow_dag.py
+```
+
+**What you'll learn:**
+- DAG-style AI workflows in a few steps
+- Parallel branches with shared dependencies
+- Clear data flow via context
+
 ## Next Steps
 
 After completing these examples:

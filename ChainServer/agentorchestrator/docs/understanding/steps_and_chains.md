@@ -144,8 +144,8 @@ async def planner(ctx):
 
 The executor will automatically:
 1. Register the new steps
-2. Rebuild the execution plan
-3. Continue execution including the new steps
+2. Execute them immediately after the current step
+3. Make their outputs available to subsequent steps
 
 ### Sub-Chains
 

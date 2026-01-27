@@ -81,32 +81,54 @@ AgentOrchestrator is a lightweight, decorator-driven framework for building data
 
 ---
 
-## Quick Example
+## DAG in 60 Seconds
+
+Define a DAG-style AI workflow with a single dependency list:
 
 ```python
 from agentorchestrator import AgentOrchestrator
 
-ao = AgentOrchestrator(name="my_app")
+ao = AgentOrchestrator(name="ai_workflow")
 
-@ao.step(name="fetch")
-async def fetch(ctx):
-    ctx.set("data", [1, 2, 3])
-    return {"fetched": True}
+def fake_llm(prompt: str) -> str:
+    return f"Plan: research '{prompt}'"
 
-@ao.step(name="process", deps=["fetch"])
-async def process(ctx):
-    data = ctx.get("data")
-    return {"sum": sum(data)}
+@ao.step(name="plan")
+async def plan(ctx):
+    question = ctx.get("question")
+    ctx.set("query", question)
+    return {"plan": fake_llm(question)}
 
-@ao.chain(name="my_pipeline")
-class MyPipeline:
-    steps = ["fetch", "process"]
+# Parallel branches
+@ao.step(name="search_web", deps=["plan"])
+async def search_web(ctx):
+    web = f"Web notes for {ctx.get('query')}"
+    ctx.set("web", web)
+    return {"web": web}
 
-# Run the pipeline
+@ao.step(name="retrieve_docs", deps=["plan"])
+async def retrieve_docs(ctx):
+    docs = f"Doc notes for {ctx.get('query')}"
+    ctx.set("docs", docs)
+    return {"docs": docs}
+
+@ao.step(name="synthesize", deps=["search_web", "retrieve_docs"])
+async def synthesize(ctx):
+    return {"summary": f"{ctx.get('web')}; {ctx.get('docs')}"}
+
+@ao.chain(name="ai_workflow")
+class AIWorkflow:
+    steps = ["plan", "search_web", "retrieve_docs", "synthesize"]
+
 import asyncio
-result = asyncio.run(ao.launch("my_pipeline", {}))
-print(result)  # {"sum": 6, ...}
+result = asyncio.run(ao.launch("ai_workflow", {"question": "AI trends"}))
+print(result["results"][-1]["output"]["summary"])
+
+# Visualize the DAG
+ao.graph("ai_workflow")
 ```
+
+Swap the stubbed functions with real LLM/tool calls (LLMGateway, RAG, etc.) — the DAG stays the same.
 
 ---
 

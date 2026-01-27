@@ -89,11 +89,8 @@ ao.use(SummarizerMiddleware(
 
 ```python
 # Route to the right agent dynamically
-router = RouterAgent(agents={
-    "research": researcher,
-    "analysis": analyst,
-})
-result = await router.route(query)
+orchestrator = MultiAgentOrchestrator(classifier=LLMGatewayClassifier())
+response = await orchestrator.route_request(user_input=query, user_id="user-1")
 ```
 
 [:material-arrow-right: Full Guide](routing.md)

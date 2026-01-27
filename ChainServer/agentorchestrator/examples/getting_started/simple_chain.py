@@ -97,6 +97,7 @@ def create_simple_chain_orchestrator() -> AgentOrchestrator:
             "max": max(processed_data) if processed_data else 0,
         }
 
+        ctx.set("summary", summary)
         return summary
 
     @ao.chain(name="data_pipeline")
@@ -132,11 +133,13 @@ def main():
     """CLI entry point."""
     result = asyncio.run(run_simple_chain())
 
+    summary = result["context"]["data"]["summary"]
+
     print("\nResult:")
-    print(f"  - Sum: {result.get('sum')}")
-    print(f"  - Count: {result.get('count')}")
-    print(f"  - Min: {result.get('min')}")
-    print(f"  - Max: {result.get('max')}")
+    print(f"  - Sum: {summary.get('sum')}")
+    print(f"  - Count: {summary.get('count')}")
+    print(f"  - Min: {summary.get('min')}")
+    print(f"  - Max: {summary.get('max')}")
 
 
 if __name__ == "__main__":
