@@ -26,28 +26,59 @@ class ConfigError(Exception):
 
 class SecretString:
     """
-    A string that masks itself in logs and repr.
+    A string that masks itself in logs, repr, and str to prevent accidental exposure.
 
     Usage:
         api_key = SecretString(os.getenv("API_KEY"))
-        print(api_key)  # Output: ***REDACTED***
-        str(api_key)    # Returns actual value for use
+        print(api_key)              # Output: SecretString('***')
+        str(api_key)                # Output: "***"
+        api_key.get_secret_value()  # Returns actual value for APIs
+
+    Example:
+        >>> password = SecretString("my-secret-password")
+        >>> print(password)              # SecretString('***')
+        >>> f"Password: {password}"      # "Password: ***"
+        >>> password.get_secret_value()  # "my-secret-password"
+
+    Security:
+        - __str__ and __repr__ always return masked values
+        - Use get_secret_value() explicitly when you need the actual secret
+        - This prevents accidental logging of secrets
     """
 
     def __init__(self, value: str | None):
         self._value = value
 
     def __repr__(self) -> str:
-        if self._value:
-            return "***REDACTED***"
-        return "None"
+        """Safe repr that never exposes the secret."""
+        return "SecretString('***')"
 
     def __str__(self) -> str:
-        """Returns actual value - use for passing to APIs."""
-        return self._value or ""
+        """Safe str that never exposes the secret. Use get_secret_value() for actual value."""
+        return "***"
 
     def __bool__(self) -> bool:
         return bool(self._value)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, SecretString):
+            return self._value == other._value
+        return False
+
+    def __hash__(self) -> int:
+        return hash(self._value)
+
+    def get_secret_value(self) -> str:
+        """
+        Get the actual secret value.
+
+        Use this method when you need to pass the secret to APIs or other services.
+        Never log or print the return value.
+
+        Returns:
+            str: The actual secret value, or empty string if None.
+        """
+        return self._value or ""
 
     def get_masked(self, show_chars: int = 4) -> str:
         """Show last N characters for debugging."""
@@ -59,7 +90,11 @@ class SecretString:
 
     @property
     def value(self) -> str | None:
-        """Explicit access to the actual value."""
+        """
+        Explicit access to the actual value.
+
+        Deprecated: Use get_secret_value() instead.
+        """
         return self._value
 
 # Load .env file if python-dotenv is available
@@ -378,8 +413,11 @@ class ContextStoreConfig:
         CONTEXT_STORE_REDIS_DB: Redis database number (default: 0)
         CONTEXT_STORE_REDIS_MAXMEMORY: Memory limit (e.g., "128mb", "1gb")
         CONTEXT_STORE_TTL: Default TTL in seconds (default: 3600)
-        CONTEXT_STORE_MEM0_API_KEY: mem0 API key (for cloud mem0)
-        CONTEXT_STORE_MEM0_HOST: mem0 host (for self-hosted)
+
+        Mem0 (preferred simple naming):
+        MEM0_URL: Mem0 service URL (for self-hosted)
+        MEM0_API_KEY: Mem0 API key (for cloud mem0)
+        MEM0_AGENT_ID: Agent/user ID for memory scoping
     """
 
     # Backend selection
@@ -426,11 +464,11 @@ class ContextStoreConfig:
             # Common
             default_ttl_seconds=_get_env_int("CONTEXT_STORE_TTL", 3600),
             offload_threshold_bytes=_get_env_int("CONTEXT_STORE_OFFLOAD_THRESHOLD", 100_000),
-            # mem0
-            mem0_api_key=_get_env("CONTEXT_STORE_MEM0_API_KEY"),
-            mem0_host=_get_env("CONTEXT_STORE_MEM0_HOST"),
-            mem0_user_id=_get_env("CONTEXT_STORE_MEM0_USER_ID"),
-            mem0_org_id=_get_env("CONTEXT_STORE_MEM0_ORG_ID"),
+            # mem0 - prefer simple MEM0_* vars, fall back to CONTEXT_STORE_MEM0_*
+            mem0_api_key=_get_env("MEM0_API_KEY") or _get_env("CONTEXT_STORE_MEM0_API_KEY"),
+            mem0_host=_get_env("MEM0_URL") or _get_env("CONTEXT_STORE_MEM0_HOST"),
+            mem0_user_id=_get_env("MEM0_AGENT_ID") or _get_env("CONTEXT_STORE_MEM0_USER_ID"),
+            mem0_org_id=_get_env("MEM0_ORG_ID") or _get_env("CONTEXT_STORE_MEM0_ORG_ID"),
         )
 
     @property
@@ -644,11 +682,13 @@ class Config:
 
             # mem0 cloud (semantic memory)
             CONTEXT_STORE_BACKEND=mem0
-            CONTEXT_STORE_MEM0_API_KEY=m0-xxx
+            MEM0_API_KEY=m0-xxx
+            MEM0_AGENT_ID=my-agent
 
             # mem0 self-hosted
             CONTEXT_STORE_BACKEND=mem0
-            CONTEXT_STORE_MEM0_HOST=http://mem0.internal:8080
+            MEM0_URL=http://mem0.internal:8080
+            MEM0_AGENT_ID=my-agent
         """
         from agentorchestrator.core.context_store import create_context_store
 

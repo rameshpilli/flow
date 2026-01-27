@@ -1418,9 +1418,15 @@ from agentorchestrator.utils import (
 | `CONTEXT_STORE_REDIS_MAXMEMORY` | Memory limit (e.g., `128mb`) | - |
 | `CONTEXT_STORE_REDIS_MAXMEMORY_POLICY` | Eviction policy | `allkeys-lru` |
 | `CONTEXT_STORE_TTL` | Default TTL in seconds | `3600` |
-| `CONTEXT_STORE_MEM0_API_KEY` | Mem0 cloud API key | - |
-| `CONTEXT_STORE_MEM0_HOST` | Self-hosted Mem0 URL | - |
-| `CONTEXT_STORE_MEM0_USER_ID` | User ID for scoped memory | - |
+
+### Mem0 Semantic Memory
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MEM0_URL` | Mem0 service URL (self-hosted) | - |
+| `MEM0_API_KEY` | Mem0 cloud API key | - |
+| `MEM0_AGENT_ID` | Agent/user ID for memory scoping | - |
+| `MEM0_ORG_ID` | Organization ID (optional) | - |
 
 ### Cohere Compass (RAG)
 
@@ -1440,7 +1446,7 @@ from agentorchestrator.utils import (
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `VAULT_URL` | HashiCorp Vault URL | - |
+| `VAULT_ADDR` | HashiCorp Vault URL (standard naming) | - |
 | `VAULT_TOKEN` | Vault authentication token | - |
 | `VAULT_MOUNT_POINT` | Vault KV mount point name | `secret` |
 
