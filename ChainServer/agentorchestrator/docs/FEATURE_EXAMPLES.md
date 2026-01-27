@@ -268,7 +268,7 @@ LLM_SERVER_URL=https://llm-gateway/v1/chat/completions
 LLM_MODEL_NAME=claude-sonnet-4
 
 # Memory (optional)
-MEM0_URL=https://mem0.cfk.devfg.rbc.com
+MEM0_URL=https://mem0.your-company.com
 ```
 
 ### Context Management for Large Responses
@@ -708,7 +708,7 @@ from agentorchestrator.services import (
 
 # Connect to your corporate mem0
 mem0_client = MemoryStoreClient(
-    base_url="https://mem0.cfk.devfg.rbc.com",
+    base_url="https://mem0.your-company.com",
     agent_id="trading-agent-001"
 )
 
@@ -763,7 +763,7 @@ memory = EntityMemory(
 # 4. Semantic Memory (mem0) - Vector search over memories
 memory = Mem0Memory(
     client=MemoryStoreClient(
-        base_url="https://mem0.cfk.devfg.rbc.com",
+        base_url="https://mem0.your-company.com",
         agent_id="my-agent"
     )
 )
@@ -785,7 +785,7 @@ from app import MemoryStoreClient
 
 # Your corporate memory store
 mem0 = MemoryStoreClient(
-    base_url="https://mem0.cfk.devfg.rbc.com",
+    base_url="https://mem0.your-company.com",
     agent_id="client-advisor-001"
 )
 
@@ -868,7 +868,7 @@ from app import MemoryStoreClient
 
 # Setup memory with your corporate mem0
 mem0_client = MemoryStoreClient(
-    base_url="https://mem0.cfk.devfg.rbc.com",
+    base_url="https://mem0.your-company.com",
     agent_id="research-agent-001"
 )
 

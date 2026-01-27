@@ -109,7 +109,7 @@ class ResearchConfig:
 
     # Memory store (optional)
     mem0_url: str = field(
-        default_factory=lambda: os.getenv("MEM0_URL", "https://mem0.cfk.devfg.rbc.com")
+        default_factory=lambda: os.getenv("MEM0_URL", "https://mem0.your-company.com")
     )
 
     # Research settings
@@ -973,7 +973,7 @@ async def main():
     try:
         from app import MemoryStoreClient
         mem0_client = MemoryStoreClient(
-            base_url=os.getenv("MEM0_URL", "https://mem0.cfk.devfg.rbc.com"),
+            base_url=os.getenv("MEM0_URL", "https://mem0.your-company.com"),
             agent_id="financial-research-agent",
         )
         agent.with_memory(Mem0Memory(client=mem0_client))

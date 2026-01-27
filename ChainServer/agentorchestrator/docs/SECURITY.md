@@ -88,12 +88,22 @@ Use `SecretString` to prevent accidental logging:
 ```python
 from agentorchestrator.config import SecretString
 
-# SecretString redacts value in logs/repr
+# Create a secret
 password = SecretString("my-secret-password")
-print(password)  # Output: SecretString('***')
-str(password)    # Output: "***"
-password.get_secret_value()  # Returns actual value
+
+# Safe operations (always redacted):
+print(password)              # Output: SecretString('***')
+str(password)                # Output: "***"
+f"Password: {password}"      # Output: "Password: ***"
+repr(password)               # Output: "SecretString('***')"
+
+# To get the actual value (use carefully, never log!):
+actual = password.get_secret_value()  # Returns "my-secret-password"
+# Or use the .value property:
+actual = password.value               # Returns "my-secret-password"
 ```
+
+**Important:** Always use `get_secret_value()` or `.value` when passing secrets to APIs. Never log the return value.
 
 ## Context Data Protection
 
