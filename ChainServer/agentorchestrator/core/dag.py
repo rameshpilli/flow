@@ -537,6 +537,15 @@ class DAGExecutor:
         # Tag context with chain name for downstream events
         ctx.set("_chain_name", chain_name, scope=ContextScope.CHAIN)
 
+        # Emit ChainStarted event
+        await self._emit_event(
+            "ChainStarted",
+            chain_name,
+            None,  # No specific step
+            ctx.request_id,
+            payload={"total_steps": plan.total_steps, "groups": len(plan.execution_order)},
+        )
+
         # Apply precompleted results (e.g., resumability) before execution
         if precompleted_results:
             for group in plan.execution_order:
@@ -569,14 +578,17 @@ class DAGExecutor:
                             ctx.add_result(node.result)
 
         # Wrap execution in chain-level tracing span
+        chain_failed = False
+        chain_error: Exception | None = None
         with self._chain_span(tracer, plan.total_steps):
-            group_idx = 0
-            while group_idx < len(plan.execution_order):
-                group = plan.execution_order[group_idx]
-                logger.debug(
-                    f"Executing group {group_idx + 1}/{len(plan.execution_order)}: "
-                    f"{group} (max_parallel={self.max_parallel})"
-                )
+            try:
+                group_idx = 0
+                while group_idx < len(plan.execution_order):
+                    group = plan.execution_order[group_idx]
+                    logger.debug(
+                        f"Executing group {group_idx + 1}/{len(plan.execution_order)}: "
+                        f"{group} (max_parallel={self.max_parallel})"
+                    )
 
                 # Get pending steps in this group
                 pending_steps = [
@@ -638,7 +650,34 @@ class DAGExecutor:
                     if effective_error_handling == "continue":
                         await self._propagate_failures_to_dependents(plan.nodes, ctx, chain_name)
 
-                group_idx += 1
+                    group_idx += 1
+
+            except Exception as e:
+                chain_failed = True
+                chain_error = e
+                raise
+
+        # Emit chain completion events
+        if chain_failed:
+            await self._emit_event(
+                "ChainFailed",
+                chain_name,
+                None,
+                ctx.request_id,
+                payload={"error": str(chain_error)},
+            )
+        else:
+            # Count completed/failed/skipped steps
+            completed = sum(1 for n in plan.nodes.values() if n.state == StepState.COMPLETED)
+            failed = sum(1 for n in plan.nodes.values() if n.state == StepState.FAILED)
+            skipped = sum(1 for n in plan.nodes.values() if n.state == StepState.SKIPPED)
+            await self._emit_event(
+                "ChainCompleted",
+                chain_name,
+                None,
+                ctx.request_id,
+                payload={"completed": completed, "failed": failed, "skipped": skipped},
+            )
 
         logger.info(f"Chain {chain_name} completed")
         return ctx
@@ -658,8 +697,23 @@ class DAGExecutor:
         """
         Determine concurrency limit for a group of steps.
 
-        Uses the minimum per-step limit if any steps have limits,
-        otherwise uses the global max_parallel.
+        IMPORTANT: This applies the MINIMUM per-step limit across all steps
+        in the group. This means if step A has max_concurrency=2 and step B
+        has max_concurrency=10, the entire parallel group is limited to 2
+        concurrent executions total.
+
+        This is a group-level throttle, NOT per-step. For true per-step
+        concurrency limits, consider:
+        - Putting rate-limited steps in their own parallel group
+        - Using external rate limiting (e.g., in the step handler itself)
+        - Using a resource semaphore pattern
+
+        Args:
+            nodes: All DAG nodes
+            step_names: Steps in the current parallel group
+
+        Returns:
+            int: The concurrency limit for this group
         """
         limits = [
             nodes[name].max_concurrency
@@ -668,7 +722,7 @@ class DAGExecutor:
         ]
 
         if limits:
-            # Use the most restrictive limit
+            # Use the most restrictive limit (group-level throttle)
             return min(limits)
         return self.max_parallel
 
@@ -1228,10 +1282,26 @@ class DAGExecutor:
     ) -> None:
         """
         Handle dynamic steps returned by a step handler.
-        
-        Dynamically adds new steps to the registry and EXECUTES them immediately.
-        This provides true dynamic DAG capability where steps can spawn new steps.
-        
+
+        IMPORTANT: Dynamic steps execute IMMEDIATELY after the parent step completes.
+        They do NOT integrate into the DAG execution plan. Any `deps` declared on
+        dynamic steps (beyond the implicit parent dependency) are IGNORED at runtime.
+        The steps are registered with deps for documentation purposes only.
+
+        Use cases for dynamic steps:
+        - Spawning cleanup/validation tasks that run right after the parent
+        - Conditional sub-workflows that execute immediately
+        - Fan-out patterns where results spawn follow-up work
+
+        NOT suitable for:
+        - Steps that need to wait for other parallel steps to complete
+        - Steps that need to be scheduled based on complex dependencies
+        - Steps that should integrate into the main DAG execution order
+
+        For complex dynamic workflows, consider:
+        - Setting ctx.set("__dag_needs_rebuild__", True) to trigger a full rebuild
+        - Pre-registering conditional steps and using skip conditions instead
+
         Args:
             dynamic_steps: List of step definitions or names to inject.
                 Each can be:
@@ -1240,7 +1310,7 @@ class DAGExecutor:
             parent_node: The node that returned the dynamic steps.
             ctx: Current execution context.
             chain_name: Name of the executing chain (for registration).
-        
+
         Example return from a step handler:
             >>> return {
             ...     "result": "processed",
@@ -1248,7 +1318,7 @@ class DAGExecutor:
             ...         {
             ...             "name": "extra_validation",
             ...             "handler": async_validate_func,
-            ...             "deps": [],  # Will depend on parent automatically
+            ...             # deps are registered but execution is immediate
             ...         },
             ...         "existing_cleanup_step",  # Reference existing step
             ...     ],

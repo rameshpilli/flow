@@ -1719,7 +1719,8 @@ class AgentOrchestrator:
             chain_results.append(result)
 
             status = "✓" if result["valid"] else "✗"
-            print(f"  {status} {cname}")
+            dataflow_badge = " [dataflow]" if result.get("dataflow") else ""
+            print(f"  {status} {cname}{dataflow_badge}")
 
             # Show execution levels
             for level_idx, level in enumerate(result.get("levels", [])):
@@ -1731,13 +1732,15 @@ class AgentOrchestrator:
                     for step in level:
                         deps_str = f" ← {step['deps']}" if step.get("deps") else ""
                         prod_str = f" → {step['produces']}" if step.get("produces") else ""
-                        print(f"{indent}│  • {step['name']}{deps_str}{prod_str}")
+                        cons_str = f" ⇐ {step['consumes']}" if step.get("consumes") else ""
+                        print(f"{indent}│  • {step['name']}{deps_str}{cons_str}{prod_str}")
                 else:
                     step = level[0]
                     deps_str = f" ← {step['deps']}" if step.get("deps") else ""
                     prod_str = f" → {step['produces']}" if step.get("produces") else ""
+                    cons_str = f" ⇐ {step['consumes']}" if step.get("consumes") else ""
                     prefix = "├─" if level_idx < len(result.get("levels", [])) - 1 else "└─"
-                    print(f"{indent}{prefix} {step['name']}{deps_str}{prod_str}")
+                    print(f"{indent}{prefix} {step['name']}{deps_str}{cons_str}{prod_str}")
 
             if result.get("errors"):
                 errors.extend(result["errors"])
@@ -1762,7 +1765,7 @@ class AgentOrchestrator:
         }
 
     def _check_chain(self, chain_name: str) -> dict[str, Any]:
-        """Validate a single chain."""
+        """Validate a single chain, including dataflow dependencies if enabled."""
         chain_spec = self._chain_registry.get_spec(chain_name)
         if not chain_spec:
             return {
@@ -1771,7 +1774,36 @@ class AgentOrchestrator:
                 "errors": [f"Chain not found: {chain_name}"],
             }
 
-        result = {"name": chain_name, "valid": True, "errors": [], "levels": []}
+        result = {"name": chain_name, "valid": True, "errors": [], "warnings": [], "levels": []}
+
+        # If dataflow is enabled, resolve produces/consumes dependencies
+        dataflow_deps: dict[str, set[str]] = {}
+        if chain_spec.dataflow:
+            result["dataflow"] = True
+            # Build produces index
+            produces_index: dict[str, list[str]] = {}
+            for step_name in chain_spec.steps:
+                step_spec = self._step_registry.get_spec(step_name)
+                if step_spec:
+                    for key in step_spec.produces:
+                        if key not in produces_index:
+                            produces_index[key] = []
+                        produces_index[key].append(step_name)
+
+            # Resolve consumes -> dependencies
+            for step_name in chain_spec.steps:
+                step_spec = self._step_registry.get_spec(step_name)
+                if step_spec and step_spec.consumes:
+                    dataflow_deps[step_name] = set()
+                    for key in step_spec.consumes:
+                        producers = produces_index.get(key, [])
+                        if not producers:
+                            result["warnings"].append(
+                                f"{step_name} consumes '{key}' but no step produces it"
+                            )
+                        for producer in producers:
+                            if producer != step_name:
+                                dataflow_deps[step_name].add(producer)
 
         # Build execution levels
         remaining = list(chain_spec.steps)
@@ -1786,7 +1818,10 @@ class AgentOrchestrator:
                     remaining.remove(step_name)
                     continue
 
+                # Combine explicit deps with dataflow-resolved deps
                 deps = set(step_spec.dependencies) if step_spec.dependencies else set()
+                if step_name in dataflow_deps:
+                    deps = deps | dataflow_deps[step_name]
 
                 # Check for missing dependencies
                 missing = deps - placed - set(chain_spec.steps)
@@ -1799,6 +1834,7 @@ class AgentOrchestrator:
                             "name": step_name,
                             "deps": list(deps) if deps else None,
                             "produces": step_spec.produces if step_spec.produces else None,
+                            "consumes": step_spec.consumes if step_spec.consumes else None,
                         }
                     )
                     remaining.remove(step_name)

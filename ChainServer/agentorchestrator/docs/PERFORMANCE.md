@@ -32,8 +32,12 @@ ao = AgentOrchestrator(
     default_timeout_ms=30000,  # Default: 30s
 )
 
-# Per-step concurrency limits
-@ao.step(max_concurrency=3)  # Limit concurrent instances
+# Group-level concurrency limits
+# NOTE: max_concurrency applies at the parallel GROUP level, not per-step.
+# If multiple steps in a group have different limits, the MINIMUM is used
+# for the entire group. For true per-step limits, put rate-limited steps
+# in their own parallel group or use in-handler rate limiting.
+@ao.step(max_concurrency=3)  # Limits this step's parallel group
 async def rate_limited_step(ctx):
     ...
 ```

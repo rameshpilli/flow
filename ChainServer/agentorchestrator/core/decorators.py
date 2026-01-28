@@ -616,15 +616,18 @@ def produces(*context_keys: str):
         ...     return {"summary": summary}
 
     Note:
-        This is metadata for documentation and introspection.
-        It does NOT automatically create dependencies. Use
-        @depends_on or deps=[] for actual dependency ordering.
-        The DAG executor uses explicit dependencies, not inferred
-        ones from produces declarations.
+        By default, produces is metadata for documentation and introspection.
+        However, when a chain has `dataflow=True`, produces declarations are
+        used to automatically resolve dependencies:
+
+        - If step A has produces=["foo"] and step B has consumes=["foo"],
+          then B will automatically depend on A when dataflow=True.
+        - Without dataflow=True, use @depends_on or deps=[] for ordering.
 
     See Also:
         step: Main step decorator with produces parameter.
-        depends_on: Declare step dependencies (execution order).
+        consumes: Declare what context keys a step requires.
+        depends_on: Declare explicit step dependencies (name-based).
     """
 
     def decorator(func: F) -> F:

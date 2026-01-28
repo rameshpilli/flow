@@ -73,7 +73,10 @@ class DAGVisualizer:
                 deps = step_spec.dependencies if step_spec else []
 
                 step_box = self._step_box(
-                    step_name, deps, produces=step_spec.produces if step_spec else []
+                    step_name,
+                    deps,
+                    produces=step_spec.produces if step_spec else [],
+                    consumes=step_spec.consumes if step_spec else None,
                 )
                 lines.append(step_box)
 
@@ -161,7 +164,9 @@ class DAGVisualizer:
         bottom = "└" + "─" * (width - 2) + "┘"
         return f"{top}\n{middle}\n{bottom}"
 
-    def _step_box(self, name: str, deps: list[str], produces: list[str]) -> str:
+    def _step_box(
+        self, name: str, deps: list[str], produces: list[str], consumes: list[str] | None = None
+    ) -> str:
         """Create a step representation"""
         lines = []
         lines.append(self._center(f"┌{'─' * 40}┐", 60))
@@ -169,6 +174,9 @@ class DAGVisualizer:
         if deps:
             dep_str = f"deps: {', '.join(deps)}"[:37]
             lines.append(self._center(f"│ {dep_str:<38} │", 60))
+        if consumes:
+            cons_str = f"⇐ {', '.join(consumes)}"[:37]
+            lines.append(self._center(f"│ {cons_str:<38} │", 60))
         if produces:
             prod_str = f"→ {', '.join(produces)}"[:37]
             lines.append(self._center(f"│ {prod_str:<38} │", 60))
