@@ -119,6 +119,7 @@ class StepSpec:
     handler: Callable
     dependencies: list[str] = field(default_factory=list)
     produces: list[str] = field(default_factory=list)
+    consumes: list[str] = field(default_factory=list)  # Context keys this step needs
     resources: list[str] = field(default_factory=list)  # Resource dependencies
     retry_config: RetryConfig = field(default_factory=RetryConfig)
     max_concurrency: int | None = None  # Max parallel instances (None = unlimited)
@@ -142,6 +143,8 @@ class ChainSpec:
     chain_class: type | None = None
     parallel_groups: list[list[str]] = field(default_factory=list)
     error_handling: str = "fail_fast"  # fail_fast, continue, retry
+    # Dataflow-based dependency resolution
+    dataflow: bool = False  # Enable automatic dependency resolution via produces/consumes
     # Chain composition support
     is_subchain: bool = False  # Whether this chain is used as a subchain
     parent_chain: str | None = None  # Parent chain name if this is a subchain
@@ -326,6 +329,7 @@ class StepRegistry(BaseRegistry):
         handler: Callable,
         dependencies: list[str] | None = None,
         produces: list[str] | None = None,
+        consumes: list[str] | None = None,
         resources: list[str] | None = None,
         version: str = "1.0.0",
         description: str = "",
@@ -354,6 +358,7 @@ class StepRegistry(BaseRegistry):
             handler: Async or sync function to execute
             dependencies: List of step names this step depends on
             produces: List of context keys this step produces
+            consumes: List of context keys this step requires (for dataflow deps)
             resources: List of resource names to inject
             version: Step version
             description: Step description
@@ -407,6 +412,7 @@ class StepRegistry(BaseRegistry):
             handler=handler,
             dependencies=dependencies or [],
             produces=produces or [],
+            consumes=consumes or [],
             resources=resources or [],
             retry_config=rc,
             max_concurrency=max_concurrency,
@@ -447,6 +453,7 @@ class ChainRegistry(BaseRegistry):
         chain_class: type | None = None,
         parallel_groups: list[list[str]] | None = None,
         error_handling: str = "fail_fast",
+        dataflow: bool = False,
         version: str = "1.0.0",
         description: str = "",
         aliases: list[str] | None = None,
@@ -457,7 +464,7 @@ class ChainRegistry(BaseRegistry):
         input_key: str = "request",
         **kwargs,  # Accept extra kwargs for forward compatibility
     ) -> None:
-        """Register a new chain with optional input/output validation models."""
+        """Register a new chain with optional input/output validation models and dataflow resolution."""
         metadata = ComponentMetadata(
             name=name,
             version=version,
@@ -470,6 +477,7 @@ class ChainRegistry(BaseRegistry):
             chain_class=chain_class,
             parallel_groups=parallel_groups or [],
             error_handling=error_handling,
+            dataflow=dataflow,
             input_model=input_model,
             output_model=output_model,
             input_key=input_key,

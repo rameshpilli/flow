@@ -158,10 +158,48 @@ class DAGBuilder:
         self.step_registry = get_step_registry()
         self.chain_registry = get_chain_registry()
 
+    def _resolve_dataflow_deps(self, nodes: dict[str, DAGNode]) -> None:
+        """
+        Resolve dataflow-based dependencies from produces/consumes declarations.
+
+        For each step with consumes=[...], find steps that produce those keys
+        and add them as dependencies. This enables DAG-style dataflow where
+        data dependencies are declared rather than step order.
+
+        Args:
+            nodes: Dict of step name -> DAGNode (modified in place)
+        """
+        # Build produces index: context_key -> list of step names that produce it
+        produces_index: dict[str, list[str]] = {}
+        for name, node in nodes.items():
+            for key in node.spec.produces:
+                if key not in produces_index:
+                    produces_index[key] = []
+                produces_index[key].append(name)
+
+        # Resolve consumes -> dependencies
+        for name, node in nodes.items():
+            for key in node.spec.consumes:
+                producers = produces_index.get(key, [])
+                if not producers:
+                    logger.warning(
+                        f"Step '{name}' consumes '{key}' but no step in this chain produces it. "
+                        "Data must be provided in initial_data or set by a prior step."
+                    )
+                    continue
+
+                # Add all producers as dependencies (exclude self)
+                for producer in producers:
+                    if producer != name and producer not in node.dependencies:
+                        node.dependencies.add(producer)
+                        logger.debug(
+                            f"Dataflow: '{name}' now depends on '{producer}' (consumes '{key}')"
+                        )
+
     def build(self, chain_name: str, existing_nodes: dict[str, DAGNode] | None = None) -> ExecutionPlan:
         """
         Build an execution plan for a chain.
-        
+
         Args:
             chain_name: Name of the chain
             existing_nodes: Optional dict of existing nodes to preserve state
@@ -188,6 +226,10 @@ class DAGBuilder:
                 dependencies=set(step_spec.dependencies),
                 max_concurrency=step_spec.max_concurrency,
             )
+
+        # Resolve dataflow dependencies if enabled
+        if chain_spec.dataflow:
+            self._resolve_dataflow_deps(nodes)
 
         # Build dependency graph (add dependents)
         for name, node in nodes.items():
@@ -239,6 +281,18 @@ class DAGBuilder:
         executed = set()
         all_steps = set(chain_spec.steps)
         grouped_steps = set()
+
+        # Check for duplicates across all groups
+        seen_in_groups: dict[str, int] = {}
+        for group_idx, group in enumerate(chain_spec.parallel_groups):
+            for step_name in group:
+                if step_name in seen_in_groups:
+                    raise ValueError(
+                        f"Step '{step_name}' appears in multiple parallel_groups: "
+                        f"groups[{seen_in_groups[step_name]}] and groups[{group_idx}]. "
+                        "Each step can only be in one group."
+                    )
+                seen_in_groups[step_name] = group_idx
 
         for group_idx, group in enumerate(chain_spec.parallel_groups):
             # Validate group steps exist
@@ -301,18 +355,31 @@ class DAGBuilder:
 
         # Clone dependencies to avoid mutation, excluding already executed
         in_degree = {}
+        all_missing_deps: list[tuple[str, set[str]]] = []
+
         for name, node in nodes.items():
             # Only count dependencies that are in this node set and not executed
             deps = node.dependencies - already_executed
-            # Warn about deps that reference steps not in this chain
+            # Check for deps that reference steps not in this chain
             missing_deps = deps - node_names - already_executed
             if missing_deps:
-                logger.warning(
-                    f"Step '{name}' has dependencies {missing_deps} that are not in the chain. "
-                    f"These will be ignored. Use ao.check() to validate chain configuration."
-                )
+                all_missing_deps.append((name, missing_deps))
             deps = deps & node_names  # Only count deps within this set
             in_degree[name] = len(deps)
+
+        # Fail if any steps have missing dependencies (enforce DAG correctness)
+        if all_missing_deps:
+            error_lines = [
+                f"  - Step '{name}' depends on {deps} which are not in the chain"
+                for name, deps in all_missing_deps
+            ]
+            raise ValueError(
+                f"DAG has unresolved dependencies:\n" + "\n".join(error_lines) +
+                "\n\nFix by either:\n"
+                "  1. Adding the missing steps to the chain\n"
+                "  2. Removing the invalid dependencies from the steps\n"
+                "  3. Use ao.check() before launch() to catch these issues early"
+            )
 
         dependents = {name: node.dependents.copy() for name, node in nodes.items()}
 
@@ -321,7 +388,8 @@ class DAGBuilder:
 
         while remaining:
             # Find all nodes with no remaining dependencies
-            ready = [name for name in remaining if in_degree[name] == 0]
+            # Sort for deterministic execution order across runs
+            ready = sorted([name for name in remaining if in_degree[name] == 0])
 
             if not ready:
                 # Circular dependency detected

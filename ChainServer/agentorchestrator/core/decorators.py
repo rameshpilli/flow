@@ -17,6 +17,7 @@ Functions:
     parallel: Decorator to mark steps that can run in parallel.
     depends_on: Alternative way to declare step dependencies.
     produces: Alternative way to declare what a step produces.
+    consumes: Declare what context keys a step requires (dataflow deps).
 
 Usage:
     from agentorchestrator.core.decorators import agent, step, chain
@@ -629,6 +630,58 @@ def produces(*context_keys: str):
     def decorator(func: F) -> F:
         existing = getattr(func, "_ao_produces", [])
         func._ao_produces = existing + list(context_keys)
+        return func
+
+    return decorator
+
+
+def consumes(*context_keys: str):
+    """
+    Declare what context keys a step requires (enables dataflow-based dependencies).
+
+    Use this decorator to declare data dependencies. When dataflow resolution
+    is enabled, the DAG executor will automatically create dependencies
+    between steps based on produces/consumes declarations.
+
+    For example, if step A produces=["foo"] and step B consumes=["foo"],
+    then step B will automatically depend on step A.
+
+    Args:
+        *context_keys (str): Context keys this step requires from other steps.
+
+    Returns:
+        Callable[[F], F]: The decorator function.
+
+    Example:
+        >>> @produces("company_data")
+        ... @step(name="fetch_company")
+        ... async def fetch_company(ctx):
+        ...     data = await api.get_company("AAPL")
+        ...     ctx.set("company_data", data)
+        ...     return data
+        >>>
+        >>> # This step will automatically depend on fetch_company
+        >>> @consumes("company_data")
+        ... @produces("analysis")
+        ... @step(name="analyze")
+        ... async def analyze(ctx):
+        ...     data = ctx.get("company_data")
+        ...     return {"analysis": analyze_data(data)}
+
+    Note:
+        - When dataflow=True on the chain, consumes creates automatic dependencies
+        - Explicit deps=[] always take precedence and are merged with dataflow deps
+        - Use ao.check() to validate dataflow resolution before running
+
+    See Also:
+        produces: Declare what context keys a step outputs.
+        depends_on: Declare explicit step dependencies (name-based).
+        step: Main step decorator.
+    """
+
+    def decorator(func: F) -> F:
+        existing = getattr(func, "_ao_consumes", [])
+        func._ao_consumes = existing + list(context_keys)
         return func
 
     return decorator

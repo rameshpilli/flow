@@ -606,6 +606,7 @@ class AgentOrchestrator:
         deps: list[Any] | None = None,
         dependencies: list[Any] | None = None,  # Alias for deps
         produces: list[str] | None = None,
+        consumes: list[str] | None = None,
         resources: list[str] | None = None,
         description: str = "",
         group: str | None = None,
@@ -632,6 +633,9 @@ class AgentOrchestrator:
                 Can be step functions or string names.
             dependencies (list[Any] | None): Alias for deps (backward compat).
             produces (list[str] | None): Context keys this step produces.
+            consumes (list[str] | None): Context keys this step requires.
+                Enables dataflow-based dependency resolution when the chain
+                has dataflow=True.
             resources (list[str] | None): Resource names to inject as kwargs.
             description (str): Human-readable description.
             group (str | None): Step group for organization.
@@ -696,6 +700,10 @@ class AgentOrchestrator:
             decorator_produces = getattr(func, "_ao_produces", [])
             all_produces = list(produces or []) + list(decorator_produces)
 
+            # Merge consumes from @consumes decorator with explicit consumes parameter
+            decorator_consumes = getattr(func, "_ao_consumes", [])
+            all_consumes = list(consumes or []) + list(decorator_consumes)
+
             # Resolve dependencies - can be functions or strings
             resolved_deps = []
             for dep in all_deps:
@@ -738,6 +746,7 @@ class AgentOrchestrator:
                 handler=handler,
                 dependencies=resolved_deps,
                 produces=all_produces or None,  # Merged from decorator and param
+                consumes=all_consumes or None,  # Merged from decorator and param
                 resources=resources,  # Dedicated resources field
                 description=description,
                 group=group,
@@ -754,6 +763,7 @@ class AgentOrchestrator:
             func._fg_type = "step"
             func._fg_deps = resolved_deps
             func._fg_produces = all_produces or []
+            func._fg_consumes = all_consumes or []
             func._fg_resources = resources or []
             func._fg_input_model = input_model
             func._fg_output_model = output_model
@@ -771,6 +781,7 @@ class AgentOrchestrator:
         name: str | None = None,
         description: str = "",
         group: str | None = None,
+        dataflow: bool = False,
         input_model: type | None = None,
         output_model: type | None = None,
         input_key: str = "request",
@@ -787,6 +798,10 @@ class AgentOrchestrator:
             name (str | None): Custom chain name. Default: class name.
             description (str): Human-readable description.
             group (str | None): Chain group for organization.
+            dataflow (bool): Enable automatic dependency resolution via
+                produces/consumes declarations. When True, if step A has
+                produces=["foo"] and step B has consumes=["foo"], then B
+                will automatically depend on A. Default: False.
             input_model (type | None): Pydantic model for chain input validation.
                 If set, input data is validated at launch() time before any
                 steps execute (fail-fast). Can also be set as class attribute.
@@ -881,12 +896,16 @@ class AgentOrchestrator:
             chain_output_model = output_model or getattr(cls, "output_model", None)
             chain_input_key = input_key if input_key != "request" else getattr(cls, "input_key", "request")
 
+            # Extract dataflow from class if not explicitly set
+            chain_dataflow = dataflow or getattr(cls, "dataflow", False)
+
             self._chain_registry.register_chain(
                 name=chain_name,
                 steps=resolved_steps,
                 description=description,
                 group=group,
                 error_handling=error_handling,
+                dataflow=chain_dataflow,
                 parallel_groups=parallel_groups,
                 input_model=chain_input_model,
                 output_model=chain_output_model,

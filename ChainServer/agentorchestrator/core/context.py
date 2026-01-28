@@ -863,8 +863,13 @@ class ChainContext(Generic[StateModel]):
                 if key in step_store:
                     entry.created_at = step_store[key].created_at
                 step_store[key] = entry
+            elif scope == ContextScope.GLOBAL:
+                # GLOBAL scoped data goes to the singleton ContextManager's global store
+                # This allows it to persist across multiple chain executions
+                manager = ContextManager()
+                manager.set_global(key, entry)
             else:
-                # CHAIN and GLOBAL scoped data goes into shared store
+                # CHAIN scoped data goes into per-context shared store
                 if key in self._store:
                     entry.created_at = self._store[key].created_at
                 self._store[key] = entry
@@ -952,8 +957,12 @@ class ChainContext(Generic[StateModel]):
                     if key in step_store:
                         entry.created_at = step_store[key].created_at
                     step_store[key] = entry
+                elif scope == ContextScope.GLOBAL:
+                    # GLOBAL scoped data goes to the singleton ContextManager's global store
+                    manager = ContextManager()
+                    manager.set_global(key, entry)
                 else:
-                    # CHAIN and GLOBAL scoped data goes into shared store
+                    # CHAIN scoped data goes into per-context shared store
                     if key in self._store:
                         entry.created_at = self._store[key].created_at
                     self._store[key] = entry
@@ -967,7 +976,7 @@ class ChainContext(Generic[StateModel]):
         Retrieve a value from the context.
 
         Checks step-scoped storage first (current step only),
-        then falls back to chain/global storage.
+        then chain-scoped storage, then global storage.
 
         Args:
             key (str): The key to look up.
@@ -988,11 +997,20 @@ class ChainContext(Generic[StateModel]):
                 if key in step_store:
                     return step_store[key].value
 
-            # Then check shared store (CHAIN and GLOBAL scoped)
+            # Then check chain-scoped store
             entry = self._store.get(key)
-            if entry is None:
-                return default
-            return entry.value
+            if entry is not None:
+                return entry.value
+
+            # Finally check global store (ContextManager singleton)
+            manager = ContextManager()
+            global_entry = manager.get_global(key)
+            if global_entry is not None:
+                # Global store contains ContextEntry objects
+                if isinstance(global_entry, ContextEntry):
+                    return global_entry.value
+                return global_entry
+            return default
 
     def get_entry(self, key: str) -> ContextEntry | None:
         """
@@ -1021,13 +1039,23 @@ class ChainContext(Generic[StateModel]):
                 if key in step_store:
                     return step_store[key]
 
-            return self._store.get(key)
+            # Then check chain-scoped store
+            entry = self._store.get(key)
+            if entry is not None:
+                return entry
+
+            # Finally check global store
+            manager = ContextManager()
+            global_entry = manager.get_global(key)
+            if isinstance(global_entry, ContextEntry):
+                return global_entry
+            return None
 
     def has(self, key: str) -> bool:
         """
         Check if a key exists in context.
 
-        Checks both step-scoped and shared storage.
+        Checks step-scoped, chain-scoped, and global storage.
 
         Args:
             key (str): The key to check.
@@ -1045,13 +1073,18 @@ class ChainContext(Generic[StateModel]):
             if current_step and current_step in self._step_stores:
                 if key in self._step_stores[current_step]:
                     return True
-            return key in self._store
+            # Check chain-scoped store
+            if key in self._store:
+                return True
+            # Check global store
+            manager = ContextManager()
+            return manager.get_global(key) is not None
 
     def delete(self, key: str) -> bool:
         """
         Remove a key from context.
 
-        Checks step-scoped storage first, then shared storage.
+        Checks step-scoped storage first, then chain-scoped, then global storage.
 
         Args:
             key (str): The key to delete.
@@ -1072,8 +1105,15 @@ class ChainContext(Generic[StateModel]):
                     del step_store[key]
                     return True
 
+            # Check chain-scoped store
             if key in self._store:
                 del self._store[key]
+                return True
+
+            # Check global store
+            manager = ContextManager()
+            if manager.get_global(key) is not None:
+                manager.delete_global(key)
                 return True
             return False
 
@@ -1083,7 +1123,7 @@ class ChainContext(Generic[StateModel]):
 
         Args:
             scope (ContextScope | None): Filter by scope. If None, returns
-                all keys from shared store plus current step's storage.
+                all keys from all scopes (step + chain + global).
 
         Returns:
             list[str]: List of keys matching the filter.
@@ -1097,6 +1137,9 @@ class ChainContext(Generic[StateModel]):
             >>>
             >>> # Get only chain-scoped keys
             >>> chain_keys = ctx.keys(scope=ContextScope.CHAIN)
+            >>>
+            >>> # Get only global keys
+            >>> global_keys = ctx.keys(scope=ContextScope.GLOBAL)
         """
         with self._sync_lock:
             if scope == ContextScope.STEP:
@@ -1105,16 +1148,23 @@ class ChainContext(Generic[StateModel]):
                 if current_step and current_step in self._step_stores:
                     return list(self._step_stores[current_step].keys())
                 return []
-            elif scope is None:
-                # Return all keys (shared + current step's step-scoped)
+            elif scope == ContextScope.GLOBAL:
+                # Return keys from the global store
+                manager = ContextManager()
+                return manager.global_keys()
+            elif scope == ContextScope.CHAIN:
+                # Only from chain-scoped store (filter out any misplaced entries)
+                return [k for k, v in self._store.items() if v.scope == ContextScope.CHAIN]
+            else:
+                # None - Return all keys (step + chain + global)
                 all_keys = list(self._store.keys())
                 current_step = self.current_step
                 if current_step and current_step in self._step_stores:
                     all_keys.extend(self._step_stores[current_step].keys())
+                # Include global keys
+                manager = ContextManager()
+                all_keys.extend(manager.global_keys())
                 return all_keys
-            else:
-                # CHAIN or GLOBAL - only from shared store
-                return [k for k, v in self._store.items() if v.scope == scope]
 
     def keys_for_step(self, step_name: str) -> list[str]:
         """
@@ -1852,3 +1902,35 @@ class ContextManager:
             >>> config = manager.get_global("api_config", {})
         """
         return self._global_store.get(key, default)
+
+    def delete_global(self, key: str) -> bool:
+        """
+        Delete a global value.
+
+        Args:
+            key (str): The key to delete.
+
+        Returns:
+            bool: True if key was found and deleted.
+
+        Example:
+            >>> if manager.delete_global("api_config"):
+            ...     print("Global config removed")
+        """
+        if key in self._global_store:
+            del self._global_store[key]
+            return True
+        return False
+
+    def global_keys(self) -> list[str]:
+        """
+        Get all keys in the global store.
+
+        Returns:
+            list[str]: List of all global keys.
+
+        Example:
+            >>> for key in manager.global_keys():
+            ...     print(f"Global: {key}")
+        """
+        return list(self._global_store.keys())
