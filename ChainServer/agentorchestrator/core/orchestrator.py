@@ -763,6 +763,9 @@ class AgentOrchestrator:
         name: str | None = None,
         description: str = "",
         group: str | None = None,
+        input_model: type | None = None,
+        output_model: type | None = None,
+        input_key: str = "request",
     ) -> type[T] | Callable[[type[T]], type[T]]:
         """
         Register a chain (similar to Dagster's @job).
@@ -776,6 +779,11 @@ class AgentOrchestrator:
             name (str | None): Custom chain name. Default: class name.
             description (str): Human-readable description.
             group (str | None): Chain group for organization.
+            input_model (type | None): Pydantic model for chain input validation.
+                If set, input data is validated at launch() time before any
+                steps execute (fail-fast). Can also be set as class attribute.
+            output_model (type | None): Pydantic model for chain output validation.
+            input_key (str): Key in initial data to validate. Default: "request".
 
         Returns:
             type[T] | Callable[[type[T]], type[T]]: Decorated class or decorator.
@@ -785,10 +793,15 @@ class AgentOrchestrator:
             ... class MeetingPrepChain:
             ...     steps = ["extract_company", "fetch_data", "build_response"]
             >>>
-            >>> # With step functions directly
-            >>> @ao.chain
-            ... class MyChain:
-            ...     steps = [extract_company, fetch_data]
+            >>> # With input validation
+            >>> from pydantic import BaseModel
+            >>> class MeetingRequest(BaseModel):
+            ...     company: str
+            ...     meeting_date: str
+            >>>
+            >>> @ao.chain(input_model=MeetingRequest)
+            ... class ValidatedChain:
+            ...     steps = ["prepare", "process"]
             >>>
             >>> # Chain composition - include other chains as steps
             >>> @ao.chain
@@ -809,6 +822,9 @@ class AgentOrchestrator:
             steps (list): Required. List of step functions or names.
             error_handling (str): Optional. "fail_fast" or "continue".
             parallel_groups (list[list[str]]): Optional. Parallel step groups.
+            input_model (type): Optional. Can also be set via decorator arg.
+            output_model (type): Optional. Can also be set via decorator arg.
+            input_key (str): Optional. Can also be set via decorator arg.
 
         See Also:
             launch(): Execute a registered chain.
@@ -849,6 +865,11 @@ class AgentOrchestrator:
             # Extract parallel_groups from class if defined
             parallel_groups = getattr(cls, "parallel_groups", None)
 
+            # Extract input/output models - decorator args take precedence over class attrs
+            chain_input_model = input_model or getattr(cls, "input_model", None)
+            chain_output_model = output_model or getattr(cls, "output_model", None)
+            chain_input_key = input_key if input_key != "request" else getattr(cls, "input_key", "request")
+
             self._chain_registry.register_chain(
                 name=chain_name,
                 steps=resolved_steps,
@@ -856,6 +877,9 @@ class AgentOrchestrator:
                 group=group,
                 error_handling=error_handling,
                 parallel_groups=parallel_groups,
+                input_model=chain_input_model,
+                output_model=chain_output_model,
+                input_key=chain_input_key,
             )
             cls._fg_name = chain_name
             cls._fg_type = "chain"
@@ -1903,31 +1927,35 @@ class AgentOrchestrator:
         # Chain-level input validation (fail-fast)
         validated = False
         if validate_input and data is not None:
-            data = self._validate_chain_input(chain_name, data)
-            validated = True
+            data, validated = self._validate_chain_input(chain_name, data)
 
         return await self._runner.run(
             chain_name=chain_name,
             initial_data=data,
             request_id=request_id,
             debug_callback=debug_callback,
-            skip_validation=validated,  # Skip double validation in runner
+            skip_validation=validated,  # Skip double validation in runner only if we validated
         )
 
     def _validate_chain_input(
         self,
         chain_name: str,
         data: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], bool]:
         """
         Validate chain input data before execution starts.
 
         Checks for input_model on:
-        1. The chain definition itself
-        2. The first step in the chain
+        1. The chain definition itself (if input_model is set on ChainSpec)
+        2. The first step in the chain (fallback)
+
+        Note: Only the first step's input_model is checked as a fallback.
+        Mid-chain steps with input_model are validated when they execute,
+        not at chain launch time.
 
         Returns:
-            Validated data (possibly with validated model instances)
+            Tuple of (validated_data, was_validated) where was_validated
+            indicates if actual Pydantic validation occurred.
 
         Raises:
             ContractValidationError: If validation fails
@@ -1937,7 +1965,7 @@ class AgentOrchestrator:
         # Get chain spec
         chain_spec = self._chain_registry.get_spec(chain_name)
         if not chain_spec:
-            return data  # No chain spec, skip validation
+            return data, False  # No chain spec, skip validation
 
         # Check for chain-level input_model
         chain_input_model = getattr(chain_spec, "input_model", None)
@@ -1947,15 +1975,16 @@ class AgentOrchestrator:
             logger.debug(f"Validating chain '{chain_name}' input against {chain_input_model.__name__}")
             first_step = chain_spec.steps[0] if chain_spec.steps else chain_name
             first_step_name = first_step if isinstance(first_step, str) else getattr(first_step, "_fg_name", str(first_step))
-            return validate_chain_input(
+            validated_data = validate_chain_input(
                 chain_name=chain_name,
                 first_step_name=first_step_name,
                 input_model=chain_input_model,
                 initial_data=data,
                 input_key=chain_input_key,
             )
+            return validated_data, True
 
-        # Check first step for input_model
+        # Check first step for input_model (fallback)
         if chain_spec.steps:
             first_step = chain_spec.steps[0]
             first_step_name = first_step if isinstance(first_step, str) else getattr(first_step, "_fg_name", str(first_step))
@@ -1967,15 +1996,16 @@ class AgentOrchestrator:
 
                 if is_pydantic_model(step_input_model):
                     logger.debug(f"Validating step '{first_step_name}' input against {step_input_model.__name__}")
-                    return validate_chain_input(
+                    validated_data = validate_chain_input(
                         chain_name=chain_name,
                         first_step_name=first_step_name,
                         input_model=step_input_model,
                         initial_data=data,
                         input_key=step_input_key,
                     )
+                    return validated_data, True
 
-        return data  # No validation configured
+        return data, False  # No validation configured
 
     def launch_sync(
         self,

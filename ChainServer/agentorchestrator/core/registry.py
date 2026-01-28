@@ -145,6 +145,10 @@ class ChainSpec:
     # Chain composition support
     is_subchain: bool = False  # Whether this chain is used as a subchain
     parent_chain: str | None = None  # Parent chain name if this is a subchain
+    # Input/Output contracts for chain-level validation
+    input_model: type | None = None  # Pydantic model for input validation
+    output_model: type | None = None  # Pydantic model for output validation
+    input_key: str = "request"  # Key in context to validate as input
 
 
 class BaseRegistry:
@@ -448,9 +452,12 @@ class ChainRegistry(BaseRegistry):
         aliases: list[str] | None = None,
         group: str | None = None,
         strict: bool = False,
+        input_model: type | None = None,
+        output_model: type | None = None,
+        input_key: str = "request",
         **kwargs,  # Accept extra kwargs for forward compatibility
     ) -> None:
-        """Register a new chain"""
+        """Register a new chain with optional input/output validation models."""
         metadata = ComponentMetadata(
             name=name,
             version=version,
@@ -463,6 +470,9 @@ class ChainRegistry(BaseRegistry):
             chain_class=chain_class,
             parallel_groups=parallel_groups or [],
             error_handling=error_handling,
+            input_model=input_model,
+            output_model=output_model,
+            input_key=input_key,
         )
         self.register(name, spec, aliases, strict=strict)
 

@@ -187,10 +187,15 @@ class UserRequest(BaseModel):
 
 @ao.step(input_model=UserRequest, input_key="request")
 async def process_request(ctx):
-    # Note: input_model validation happens on chain launch for the first step.
+    # Note: input_model on the first step is validated at chain launch (fail-fast).
     # For mid-chain steps, validate manually if needed: UserRequest(**ctx.get("request"))
     request = ctx.get("request")
     ...
+
+# Or set input_model at the chain level for explicit validation:
+@ao.chain(input_model=UserRequest, input_key="request")
+class SecureChain:
+    steps = ["process_request", "handle_response"]
 ```
 
 ### SQL/NoSQL Injection Prevention
