@@ -33,6 +33,7 @@ from agentorchestrator.core.validation import (
     ContractValidationError,
     is_pydantic_model,
     validate_chain_input,
+    validate_chain_output,
     validate_output,
 )
 
@@ -590,65 +591,63 @@ class DAGExecutor:
                         f"{group} (max_parallel={self.max_parallel})"
                     )
 
-                # Get pending steps in this group
-                pending_steps = [
-                    name for name in group
-                    if plan.nodes[name].state == StepState.PENDING
-                ]
+                    # Get pending steps in this group
+                    pending_steps = [
+                        name for name in group
+                        if plan.nodes[name].state == StepState.PENDING
+                    ]
 
-                if pending_steps:
-                    # Check for per-group concurrency limits
-                    group_concurrency = self._get_group_concurrency(plan.nodes, pending_steps)
+                    if pending_steps:
+                        # Check for per-group concurrency limits
+                        group_concurrency = self._get_group_concurrency(plan.nodes, pending_steps)
 
-                    # Execute steps in parallel within the group
-                    await self._execute_group(
-                        plan.nodes,
-                        pending_steps,
-                        ctx,
-                        effective_error_handling,
-                        group_concurrency,
-                        chain_name=chain_name,
-                        debug_callback=debug_callback,
-                        tracer=tracer,
-                    )
+                        # Execute steps in parallel within the group
+                        await self._execute_group(
+                            plan.nodes,
+                            pending_steps,
+                            ctx,
+                            effective_error_handling,
+                            group_concurrency,
+                            chain_name=chain_name,
+                            debug_callback=debug_callback,
+                            tracer=tracer,
+                        )
 
-                    # Check if any step requested a DAG rebuild
-                    if ctx.get("__dag_needs_rebuild__"):
-                        ctx.delete("__dag_needs_rebuild__")
-                        
-                        # ══════════════════════════════════════════════════════════════
-                        # PERFORMANCE NOTE: Full DAG Rebuild
-                        # ══════════════════════════════════════════════════════════════
-                        # Currently, we rebuild the entire DAG when dynamic steps are
-                        # injected. For large DAGs (100+ steps), this can be expensive.
-                        #
-                        # OPTIMIZATION OPPORTUNITY: Implement incremental DAG updates
-                        # that only modify affected portions of the execution plan:
-                        #
-                        # 1. Track which nodes need recalculation based on new deps
-                        # 2. Only recompute execution_order for affected subgraph
-                        # 3. Use a dirty flag to avoid unnecessary rebuilds
-                        # 4. Consider lazy rebuilding (defer until next group)
-                        #
-                        # For typical use cases (<50 steps), the current implementation
-                        # is fast enough (~1-5ms rebuild time).
-                        # ══════════════════════════════════════════════════════════════
-                        
-                        # Rebuild plan and execution order, preserving existing node states
-                        plan = self.builder.build(chain_name, existing_nodes=plan.nodes)
-                        # We stay at same group_idx but group content changed
-                        # and len(execution_order) might have increased
-                        logger.info(f"DAG rebuilt dynamically. New order: {plan.execution_order}")
-                        # We don't increment group_idx here because we need to 
-                        # process the newly built plan from the beginning of 
-                        # what's now 'pending'
-                        group_idx = 0 
-                        continue
+                        # Check if any step requested a DAG rebuild
+                        if ctx.get("__dag_needs_rebuild__"):
+                            ctx.delete("__dag_needs_rebuild__")
 
-                    # In "continue" mode, propagate failures to dependents
-                    # Skip dependents whose dependencies have failed
-                    if effective_error_handling == "continue":
-                        await self._propagate_failures_to_dependents(plan.nodes, ctx, chain_name)
+                            # ══════════════════════════════════════════════════════════════
+                            # DYNAMIC DAG REBUILD
+                            # ══════════════════════════════════════════════════════════════
+                            # When a step sets ctx.set("__dag_needs_rebuild__", True), we
+                            # rebuild the DAG to incorporate newly registered steps.
+                            #
+                            # DOUBLE-EXECUTION PROTECTION:
+                            # - existing_nodes preserves nodes with their COMPLETED states
+                            # - Steps in COMPLETED state are skipped (filter by PENDING above)
+                            # - _handle_dynamic_steps also checks ctx.get_result() to skip
+                            #   already-executed steps
+                            #
+                            # PERFORMANCE NOTE:
+                            # Currently rebuilds the entire DAG. For large DAGs (100+ steps),
+                            # consider implementing incremental updates that only modify
+                            # affected portions. For typical use cases (<50 steps), the
+                            # current implementation is fast enough (~1-5ms rebuild time).
+                            # ══════════════════════════════════════════════════════════════
+
+                            # Rebuild plan and execution order, preserving existing node states
+                            plan = self.builder.build(chain_name, existing_nodes=plan.nodes)
+                            logger.info(f"DAG rebuilt dynamically. New order: {plan.execution_order}")
+                            # Restart from group 0 - completed steps (state != PENDING)
+                            # will be skipped automatically in the pending_steps filter
+                            group_idx = 0
+                            continue
+
+                        # In "continue" mode, propagate failures to dependents
+                        # Skip dependents whose dependencies have failed
+                        if effective_error_handling == "continue":
+                            await self._propagate_failures_to_dependents(plan.nodes, ctx, chain_name)
 
                     group_idx += 1
 
@@ -1372,12 +1371,29 @@ class DAGExecutor:
             
             # EXECUTE the dynamic steps immediately
             # Build nodes for the new steps and execute them
+            #
+            # IMPORTANT: Double-execution protection
+            # ══════════════════════════════════════════════════════════════════
+            # If a dynamic step references an existing step that has already
+            # executed (has results in context), we skip it to prevent double
+            # execution. This can happen when:
+            # - A step returns an existing step name in __dynamic_steps__
+            # - __dag_needs_rebuild__ is used but the step was already run
+            # ══════════════════════════════════════════════════════════════════
             for step_name in new_step_names:
+                # Skip if step already has results (was already executed)
+                if ctx.get_result(step_name) is not None:
+                    logger.debug(
+                        f"Skipping dynamic step '{step_name}' - already executed "
+                        f"(result exists in context)"
+                    )
+                    continue
+
                 spec = self.builder.step_registry.get_spec(step_name)
                 if spec:
                     # Create a node for the dynamic step
                     dynamic_node = DAGNode(name=step_name, spec=spec)
-                    
+
                     # Execute the dynamic step
                     try:
                         logger.info(f"Executing dynamic step: {step_name}")
@@ -1602,6 +1618,14 @@ class ChainRunner:
         if error_info:
             result["error"] = error_info
 
+        # ══════════════════════════════════════════════════════════════════
+        #                    CHAIN OUTPUT VALIDATION
+        # ══════════════════════════════════════════════════════════════════
+        # Validate chain output against chain-level output_model if defined
+        # Only validate successful chains (failed chains may have incomplete output)
+        if success and not skip_validation:
+            self._validate_chain_output(chain_name, ctx, result)
+
         return result
 
     def _validate_chain_input(
@@ -1651,6 +1675,52 @@ class ChainRunner:
 
         # No input validation required
         return initial_data
+
+    def _validate_chain_output(
+        self,
+        chain_name: str,
+        ctx: ChainContext,
+        result: dict[str, Any],
+    ) -> None:
+        """
+        Validate chain output against chain-level output_model if defined.
+
+        Args:
+            chain_name: Name of the chain
+            ctx: The chain context after execution
+            result: The result dict (may be modified to include validated output)
+
+        Raises:
+            ContractValidationError: If validation fails
+        """
+        chain_spec = self.executor.chain_registry.get_spec(chain_name)
+        if not chain_spec or not chain_spec.output_model:
+            return
+
+        if not is_pydantic_model(chain_spec.output_model):
+            return
+
+        # Get the last step's output as primary validation target
+        last_step_output = None
+        if ctx.results:
+            last_result = ctx.results[-1]
+            if last_result.success:
+                last_step_output = last_result.output
+
+        logger.debug(
+            f"Validating chain output against {chain_spec.output_model.__name__}"
+        )
+
+        # Validate and store the validated output
+        validated = validate_chain_output(
+            chain_name=chain_name,
+            output_model=chain_spec.output_model,
+            ctx_data=ctx.to_dict().get("data", {}),
+            last_step_output=last_step_output,
+        )
+
+        # Add validated output to result for type-safe access
+        result["validated_output"] = validated
 
     def _capture_error(
         self,

@@ -256,6 +256,59 @@ def validate_chain_input(
     return result
 
 
+def validate_chain_output(
+    chain_name: str,
+    output_model: type,
+    ctx_data: dict[str, Any],
+    last_step_output: Any = None,
+) -> Any:
+    """
+    Validate chain output data after execution completes.
+
+    Called by ChainRunner.run() to validate output before returning results.
+
+    Args:
+        chain_name: Name of the chain (for error messages)
+        output_model: Pydantic model class to validate against
+        ctx_data: The final context data dictionary
+        last_step_output: The output from the last step (if available)
+
+    Returns:
+        Validated model instance
+
+    Raises:
+        ContractValidationError: If validation fails
+    """
+    # Try to validate the last step's output first (most common pattern)
+    if last_step_output is not None:
+        try:
+            return validate_output(
+                step_name=f"{chain_name}:output",
+                output_model=output_model,
+                value=last_step_output,
+            )
+        except ContractValidationError:
+            # Fall through to try context data
+            pass
+
+    # Try validating the entire context data
+    try:
+        return validate_output(
+            step_name=f"{chain_name}:output",
+            output_model=output_model,
+            value=ctx_data,
+        )
+    except ContractValidationError as e:
+        # Re-raise with chain-level context
+        raise ContractValidationError(
+            step_name=chain_name,
+            contract_type="output",
+            model_name=output_model.__name__,
+            errors=e.errors,
+            raw_value=e.raw_value,
+        ) from e
+
+
 def _truncate_value(value: Any, max_length: int = 200) -> str:
     """Truncate a value for safe logging/error messages."""
     try:

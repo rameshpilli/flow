@@ -176,6 +176,7 @@ def step(
     deps: list[Any] | None = None,
     dependencies: list[Any] | None = None,  # Alias for deps
     produces: list[str] | None = None,
+    consumes: list[str] | None = None,
     resources: list[str] | None = None,
     description: str = "",
     group: str | None = None,
@@ -214,6 +215,9 @@ def step(
         dependencies (list[Any] | None): Alias for deps (backward compat).
         produces (list[str] | None): Context keys this step produces.
             Used for dependency tracking and validation.
+        consumes (list[str] | None): Context keys this step requires.
+            When chain has dataflow=True, creates automatic dependencies
+            on steps that produce these keys.
         resources (list[str] | None): Resource names to inject as kwargs.
             Resources are registered via ao.register_resource().
         description (str): Human-readable description.
@@ -303,6 +307,7 @@ def step(
             name=name,
             deps=resolved_deps,
             produces=produces,
+            consumes=consumes,
             resources=resources,
             description=description,
             group=group,
@@ -327,6 +332,10 @@ def chain(
     name: str | None = None,
     description: str = "",
     group: str | None = None,
+    dataflow: bool = False,
+    input_model: type | None = None,
+    output_model: type | None = None,
+    input_key: str = "request",
 ) -> type[T] | Callable[[type[T]], type[T]]:
     """
     Decorator to register a class as a chain definition.
@@ -348,6 +357,13 @@ def chain(
         name (str | None): Custom chain name. Default: class name.
         description (str): Human-readable description.
         group (str | None): Chain group for organization.
+        dataflow (bool): Enable automatic dependency resolution via
+            produces/consumes. When True, steps declaring consumes=["key"]
+            will automatically depend on steps with produces=["key"].
+        input_model (type | None): Pydantic model for chain input validation.
+            If set, input is validated at launch() time before any steps run.
+        output_model (type | None): Pydantic model for chain output validation.
+        input_key (str): Key in initial data to validate. Default: "request".
 
     Returns:
         type[T] | Callable[[type[T]], type[T]]: The decorated class or
@@ -361,6 +377,20 @@ def chain(
         >>> @chain(name="my_chain", group="workflows")
         ... class MyChain:
         ...     steps = [extract_company, fetch_data]
+        >>>
+        >>> # With dataflow-based dependency resolution
+        >>> @chain(dataflow=True)
+        ... class DataflowChain:
+        ...     steps = ["producer", "consumer"]  # consumer auto-depends on producer
+        >>>
+        >>> # With input validation
+        >>> from pydantic import BaseModel
+        >>> class MeetingRequest(BaseModel):
+        ...     company: str
+        >>>
+        >>> @chain(input_model=MeetingRequest)
+        ... class ValidatedChain:
+        ...     steps = ["prepare", "process"]
         >>>
         >>> # With error handling configuration
         >>> @chain
@@ -380,6 +410,10 @@ def chain(
             Default: "fail_fast".
         parallel_groups (list[list[str]]): Optional. Groups of steps
             that can run in parallel.
+        dataflow (bool): Optional. Enable dataflow dependency resolution.
+        input_model (type): Optional. Can also be set via decorator arg.
+        output_model (type): Optional. Can also be set via decorator arg.
+        input_key (str): Optional. Can also be set via decorator arg.
 
     Note:
         The decorated class will have `_fg_name` and `_fg_type`
@@ -387,6 +421,8 @@ def chain(
 
     See Also:
         step: Decorator for individual steps.
+        consumes: Decorator to declare data requirements (for dataflow).
+        produces: Decorator to declare data outputs (for dataflow).
         AgentOrchestrator.launch(): Execute a registered chain.
     """
     def decorator(cls: type[T]) -> type[T]:
@@ -395,6 +431,10 @@ def chain(
             name=name,
             description=description,
             group=group,
+            dataflow=dataflow,
+            input_model=input_model,
+            output_model=output_model,
+            input_key=input_key,
         )
 
     if cls is not None:
