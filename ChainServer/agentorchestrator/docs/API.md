@@ -836,13 +836,15 @@ tools = [
         name="calculator",
         description="Calculate mathematical expressions",
         func=calculate,
-        parameters={"expression": "str"},
+        parameters={"expression": {"type": "string", "description": "Math expression to evaluate"}},
+        required_params=["expression"],  # Validates required parameters
     ),
     Tool(
         name="search",
         description="Search for information",
         func=search,
-        parameters={"query": "str"},
+        parameters={"query": {"type": "string", "description": "Search query"}},
+        required_params=["query"],
     ),
 ]
 

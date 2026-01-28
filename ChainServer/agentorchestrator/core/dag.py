@@ -1062,6 +1062,18 @@ class DAGExecutor:
 
                         await node.set_failed(step_result)
                         ctx.add_result(step_result)
+                        await self._emit_event(
+                            "StepFailed",
+                            chain_name,
+                            node.name,
+                            ctx.request_id,
+                            payload={
+                                "error": str(e),
+                                "error_type": type(e).__name__,
+                                "duration_ms": duration_ms,
+                                "retry_count": attempt,
+                            },
+                        )
 
                         if debug_callback is not None:
                             self._invoke_debug_callback(

@@ -1251,7 +1251,7 @@ class AgentOrchestrator:
                             chain_name="__event_loop__",
                             status="running",
                             context_data=ctx.to_dict(),
-                            step_outputs={"processed_events": processed_event_types.copy()},
+                            initial_data={"processed_events": processed_event_types.copy()},
                         )
                         await run_store.save_checkpoint(checkpoint)
                         checkpoint_id = run_id

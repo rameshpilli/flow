@@ -187,7 +187,9 @@ class UserRequest(BaseModel):
 
 @ao.step(input_model=UserRequest, input_key="request")
 async def process_request(ctx):
-    request = ctx.get("request")  # Already validated
+    # Note: input_model validation happens on chain launch for the first step.
+    # For mid-chain steps, validate manually if needed: UserRequest(**ctx.get("request"))
+    request = ctx.get("request")
     ...
 ```
 
