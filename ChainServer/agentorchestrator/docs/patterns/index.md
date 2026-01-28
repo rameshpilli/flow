@@ -17,6 +17,7 @@ When you have multiple agents working together, you face several challenges:
 |---------|---------------|-------------|
 | [Context Isolation](context_isolation.md) | Pollution & explosion | 3+ agents working in parallel |
 | [Summarization](summarization.md) | Large responses | Single agent returns huge data |
+| [Large Response Handling](large_response_handling.md) | Per-step middleware | Configure summarize/offload per agent |
 | [Routing](routing.md) | Task distribution | Dynamic agent selection |
 | [Aggregation](aggregation.md) | Result synthesis | Combining specialist outputs |
 
@@ -148,5 +149,6 @@ Choose the pattern that matches your need:
 
 - **Agents interfering?** → [Context Isolation](context_isolation.md)
 - **Responses too large?** → [Summarization](summarization.md)
+- **Need per-step control?** → [Large Response Handling](large_response_handling.md)
 - **Need dynamic routing?** → [Routing](routing.md)
 - **Combining outputs?** → [Aggregation](aggregation.md)

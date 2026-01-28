@@ -450,6 +450,145 @@ async def my_func():
 
 ---
 
+## Middleware Issues
+
+### Summarization Losing Important Data
+
+**Symptoms**: Downstream steps missing key information after summarization.
+
+**Solutions**:
+1. Use domain-specific prompts:
+   ```python
+   from agentorchestrator.middleware.summarizer import LangChainSummarizer
+
+   LangChainSummarizer.register_domain_prompts(
+       domain="sec_filings",
+       map_prompt="""Extract key data, preserving:
+- Revenue and earnings figures
+- Risk factors
+- Forward guidance
+
+{text}
+
+KEY DATA:""",
+   )
+   ```
+2. Increase `max_tokens` for critical steps:
+   ```python
+   ao.use(SummarizerMiddleware(
+       step_max_tokens={
+           "gather_sec": 8000,  # Allow more tokens
+       },
+   ))
+   ```
+3. Use `REFINE` strategy for better coherence:
+   ```python
+   ao.use(SummarizerMiddleware(
+       step_strategies={
+           "critical_step": SummarizationStrategy.REFINE,
+       },
+   ))
+   ```
+
+### Offload Middleware Not Triggering
+
+**Symptoms**: Large data staying in context, not being offloaded.
+
+**Solutions**:
+1. Check threshold is in bytes (not tokens):
+   ```python
+   ao.use(OffloadMiddleware(
+       default_threshold_bytes=100_000,  # 100KB, not tokens
+   ))
+   ```
+2. Verify middleware is applied to the step:
+   ```python
+   ao.use(OffloadMiddleware(
+       applies_to=["gather_sec"],  # Must include step name
+   ))
+   ```
+3. Check data serialization size:
+   ```python
+   import json
+   data_size = len(json.dumps(data).encode())
+   print(f"Data size: {data_size} bytes")
+   ```
+
+### Token Manager Warnings
+
+**Warning**: `Token budget at 85% (85000/100000 tokens)`
+
+**Solutions**:
+1. Enable auto-compression:
+   ```python
+   ao.use(TokenManagerMiddleware(
+       max_total_tokens=100_000,
+       auto_summarize=True,
+       auto_offload=True,
+   ))
+   ```
+2. Add summarization middleware:
+   ```python
+   ao.use(SummarizerMiddleware(
+       max_tokens=5000,
+       applies_to=["heavy_step_1", "heavy_step_2"],
+   ))
+   ```
+3. Reduce parallel agent output:
+   ```python
+   # Limit items per source
+   from agentorchestrator.middleware.offload import cap_per_source
+   capped, metadata = cap_per_source(items, max_per_source=10)
+   ```
+
+### Middleware Not Applied to Step
+
+**Symptoms**: Middleware hooks not running for specific steps.
+
+**Solutions**:
+1. Check `applies_to` includes the step:
+   ```python
+   ao.use(SummarizerMiddleware(
+       applies_to=["step_a", "step_b"],  # Must list explicitly
+   ))
+   ```
+2. Verify middleware priority order:
+   ```python
+   # Lower priority runs first
+   ao.use(TokenManagerMiddleware(priority=20))
+   ao.use(SummarizerMiddleware(priority=50))
+   ao.use(OffloadMiddleware(priority=60))
+   ```
+3. Check for exceptions in middleware:
+   ```python
+   import logging
+   logging.getLogger("agentorchestrator.middleware").setLevel(logging.DEBUG)
+   ```
+
+### Redis Connection for Offloading
+
+**Error**: `Cannot connect to Redis for offloading`
+
+**Solutions**:
+1. Use in-memory store for development:
+   ```python
+   from agentorchestrator.core.context_store import InMemoryContextStore
+   ao.use(OffloadMiddleware(store=InMemoryContextStore()))
+   ```
+2. Check Redis connection:
+   ```bash
+   redis-cli -h localhost -p 6379 ping
+   ```
+3. Use environment variable:
+   ```python
+   from agentorchestrator.core.context_store import create_context_store
+   store = create_context_store()  # Uses REDIS_URL if set
+   ```
+
+See [Large Response Handling](patterns/large_response_handling.md) for comprehensive middleware configuration.
+
+---
+
 ## Getting Help
 
 1. **Check logs:** Enable debug logging:
