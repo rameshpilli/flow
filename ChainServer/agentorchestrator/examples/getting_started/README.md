@@ -123,6 +123,47 @@ class MeetingChain:
 async def prepare(ctx): ...
 ```
 
+### 8. Dataflow Dependencies
+
+Automatic dependency resolution using produces/consumes declarations.
+
+```bash
+python dataflow_example.py
+```
+
+**What you'll learn:**
+- Using `@produces` and `@consumes` decorators
+- Enabling `dataflow=True` on a chain
+- Automatic dependency resolution based on data flow
+- Validating dataflow with `ao.check()`
+
+**Key patterns:**
+
+```python
+from agentorchestrator import AgentOrchestrator, produces, consumes
+
+ao = AgentOrchestrator(name="dataflow_example")
+
+@produces("company_data")
+@ao.step(name="fetch_company")
+async def fetch_company(ctx):
+    ctx.set("company_data", {"ticker": "AAPL"})
+    return {"fetched": True}
+
+# This step automatically depends on fetch_company
+@consumes("company_data")
+@produces("analysis")
+@ao.step(name="analyze")
+async def analyze(ctx):
+    data = ctx.get("company_data")
+    return {"analysis": f"Analyzed {data['ticker']}"}
+
+# Enable dataflow resolution
+@ao.chain(name="research_chain", dataflow=True)
+class ResearchChain:
+    steps = ["fetch_company", "analyze"]
+```
+
 ## Next Steps
 
 After completing these examples:

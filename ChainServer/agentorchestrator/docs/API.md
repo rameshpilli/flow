@@ -327,6 +327,7 @@ Register a processing step.
     name="process_data",              # Required: Unique step name
     deps=["fetch_data"],              # Optional: Dependencies (run after these)
     produces=["processed_data"],      # Optional: Keys this step produces
+    consumes=["raw_data"],            # Optional: Keys this step requires (for dataflow)
     retry=3,                          # Optional: Retry count on failure
     timeout_ms=30000,                 # Optional: Timeout in milliseconds
     max_concurrency=5,                # Optional: Max parallel instances
@@ -343,7 +344,11 @@ Register a chain of steps.
 ```python
 @ao.chain(
     name="my_pipeline",               # Required: Unique chain name
-    error_handling="fail_fast",       # Optional: "fail_fast" or "continue"
+    error_handling="fail_fast",       # Optional: "fail_fast", "continue", or "retry"
+    dataflow=False,                   # Optional: Enable dataflow-based dependency resolution
+    input_model=MyInputModel,         # Optional: Pydantic model for input validation
+    output_model=MyOutputModel,       # Optional: Pydantic model for output validation
+    input_key="request",              # Optional: Key in initial_data to validate
 )
 class MyPipeline:
     steps = ["step_a", "step_b", "step_c"]
@@ -353,6 +358,96 @@ class MyPipeline:
         ["step_a"],                   # Group 1: runs first
         ["step_b", "step_c"],         # Group 2: runs in parallel
     ]
+```
+
+#### Error Handling Modes
+
+| Mode | Behavior |
+|------|----------|
+| `fail_fast` | Stop chain immediately on first step failure (default) |
+| `continue` | Continue executing independent steps; skip dependents of failed steps |
+| `retry` | Retry failed steps according to their retry configuration before failing |
+
+#### Chain Output Validation
+
+When `output_model` is set, the chain output is validated after successful execution:
+
+```python
+from pydantic import BaseModel
+
+class ReportOutput(BaseModel):
+    summary: str
+    score: float
+
+@ao.chain(name="report_chain", output_model=ReportOutput)
+class ReportChain:
+    steps = ["analyze", "summarize"]
+
+# After execution, result["validated_output"] contains the validated model instance
+result = await ao.launch("report_chain", {"data": ...})
+if result["success"]:
+    report = result["validated_output"]  # ReportOutput instance
+```
+
+#### Dataflow-Based Dependencies
+
+When `dataflow=True`, the DAG executor automatically resolves dependencies based on `produces`/`consumes` declarations:
+
+```python
+from agentorchestrator import AgentOrchestrator, produces, consumes
+
+ao = AgentOrchestrator(name="dataflow_example")
+
+@produces("company_data")
+@ao.step(name="fetch_company")
+async def fetch_company(ctx):
+    data = await api.get_company("AAPL")
+    ctx.set("company_data", data)
+    return data
+
+@consumes("company_data")
+@produces("analysis")
+@ao.step(name="analyze")
+async def analyze(ctx):
+    data = ctx.get("company_data")
+    return {"analysis": analyze_data(data)}
+
+@consumes("company_data", "analysis")
+@ao.step(name="report")
+async def report(ctx):
+    return {"report": generate_report(ctx)}
+
+# Enable dataflow resolution
+@ao.chain(name="research_chain", dataflow=True)
+class ResearchChain:
+    steps = ["fetch_company", "analyze", "report"]
+
+# Dependencies are resolved automatically:
+# - analyze depends on fetch_company (consumes company_data)
+# - report depends on both (consumes company_data and analysis)
+```
+
+Explicit `deps=[]` declarations are merged with dataflow-inferred dependencies. Use `ao.check()` to validate dataflow resolution before running.
+
+#### Chain Lifecycle Events
+
+The executor emits these events during chain execution:
+
+| Event | When Emitted | Payload |
+|-------|--------------|---------|
+| `ChainStarted` | Before first step executes | `{step_count}` |
+| `ChainCompleted` | After all steps complete successfully | `{completed, failed, skipped}` |
+| `ChainFailed` | When chain execution fails | `{error}` |
+
+```python
+from agentorchestrator.core.event_bus import get_event_bus
+
+bus = get_event_bus()
+
+@ao.event_handler("ChainCompleted")
+async def on_chain_complete(ctx, event):
+    print(f"Chain finished: {event.payload['completed']} completed, "
+          f"{event.payload['failed']} failed")
 ```
 
 ### @ao.agent

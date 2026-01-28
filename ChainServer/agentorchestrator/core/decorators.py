@@ -623,11 +623,11 @@ def depends_on(*step_names: str):
 
 def produces(*context_keys: str):
     """
-    Declare what context keys a step produces (metadata only).
+    Declare what context keys a step produces.
 
     Use this decorator in addition to @step when you want to
-    document what a step outputs. Useful for code organization
-    and introspection via CLI tools.
+    document what a step outputs. When used with `dataflow=True`
+    on a chain, these declarations drive automatic dependency resolution.
 
     Args:
         *context_keys (str): Context keys this step produces.

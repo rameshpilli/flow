@@ -55,7 +55,8 @@ async def analyze_task(ctx):
                 {
                     "name": "do_research",
                     "handler": research_handler,
-                    "deps": [],  # Will automatically depend on parent
+                    # NOTE: deps are registered for documentation but IGNORED
+                    # at runtime - dynamic steps always execute immediately
                     "produces": ["research_results"],
                 },
             ],
@@ -106,10 +107,15 @@ Each dynamic step can be defined as either:
 {
     "name": "step_name",           # Required: Unique step name
     "handler": async_function,      # Required: Async function to execute
-    "deps": ["parent_step"],        # Optional: Dependencies (auto-adds parent if empty)
+    "deps": ["parent_step"],        # Optional: Registered for documentation only (IGNORED at runtime)
     "produces": ["output_key"],     # Optional: Keys this step produces
 }
 ```
+
+> **Important**: Dynamic steps execute IMMEDIATELY after their parent step completes.
+> The `deps` field is stored for documentation/introspection purposes only—it does NOT
+> affect execution order. If you need complex dependency orchestration, consider using
+> `ctx.set("__dag_needs_rebuild__", True)` to trigger a full DAG rebuild instead.
 
 ### 2. String Reference
 
@@ -304,13 +310,41 @@ async def recursive_with_limit(ctx):
 
 ## Limitations
 
-1. **Execution Order**: Dynamic steps execute immediately after their parent. They cannot be inserted into earlier parts of the DAG.
+1. **Immediate Execution**: Dynamic steps execute IMMEDIATELY after their parent step completes. They bypass the normal DAG scheduling—any `deps` declared on dynamic steps are registered for documentation but **IGNORED at runtime**.
 
-2. **Dependencies**: Dynamic steps can only depend on steps that have already executed.
+2. **No Retroactive Dependencies**: Dynamic steps can only access data from steps that have already executed. They cannot wait for parallel branches to complete.
 
 3. **Performance**: Heavy use of dynamic steps can impact performance due to registration overhead.
 
 4. **Debugging**: Dynamic DAGs are harder to visualize and debug. Use events and logging liberally.
+
+5. **Double-Execution Protection**: If you inject a step by name that has already executed, it will be skipped (the executor checks `ctx.get_result()` to prevent re-execution).
+
+### Alternative: Full DAG Rebuild
+
+If you need dynamic steps that respect complex dependencies, use the DAG rebuild mechanism instead:
+
+```python
+@ao.step(name="inject_with_deps")
+async def inject_with_deps(ctx):
+    # Register the new step
+    ao.step_registry.register_step(
+        name="new_step",
+        handler=new_handler,
+        dependencies=["step_a", "step_b"],  # These WILL be honored
+    )
+
+    # Add to chain and trigger rebuild
+    chain_spec = ao.chain_registry.get_spec("my_chain")
+    chain_spec.steps.append("new_step")
+
+    # Signal executor to rebuild DAG
+    ctx.set("__dag_needs_rebuild__", True)
+
+    return {"injected": "new_step"}
+```
+
+With `__dag_needs_rebuild__`, the executor rebuilds the DAG and processes steps according to the normal topological order, respecting all declared dependencies.
 
 ## See Also
 

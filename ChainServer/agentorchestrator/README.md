@@ -291,6 +291,47 @@ class ParallelChain:
 # fetch_news and fetch_stocks run in parallel (~1s total, not 2s)
 ```
 
+### Dataflow-Based Dependencies
+
+Automatically resolve step dependencies based on data flow using `produces`/`consumes`:
+
+```python
+from agentorchestrator import AgentOrchestrator, produces, consumes
+
+ao = AgentOrchestrator(name="dataflow_example")
+
+@produces("company_data")
+@ao.step(name="fetch_company")
+async def fetch_company(ctx):
+    data = await api.get_company("AAPL")
+    ctx.set("company_data", data)
+    return data
+
+@consumes("company_data")
+@produces("analysis")
+@ao.step(name="analyze")
+async def analyze(ctx):
+    data = ctx.get("company_data")
+    return {"analysis": analyze_data(data)}
+
+@consumes("company_data", "analysis")
+@ao.step(name="report")
+async def report(ctx):
+    return {"report": generate_report(ctx)}
+
+# Enable dataflow resolution on the chain
+@ao.chain(name="research_chain", dataflow=True)
+class ResearchChain:
+    steps = ["fetch_company", "analyze", "report"]
+```
+
+With `dataflow=True`:
+- `analyze` automatically depends on `fetch_company` (consumes `company_data`)
+- `report` automatically depends on both (consumes `company_data` and `analysis`)
+- Explicit `deps=[]` declarations are merged with dataflow-inferred dependencies
+
+Use `ao.check()` to validate dataflow resolution and see the resolved dependency graph.
+
 ---
 
 ## Multi-Agent Patterns
@@ -635,12 +676,23 @@ ao = AgentOrchestrator(event_bus=event_bus)
 
 The DAG executor emits these events automatically:
 
+**Step Events:**
+
 | Event Type | Payload | When Emitted |
 |------------|---------|--------------|
 | `StepStarted` | `{attempt}` | Step begins execution |
 | `StepCompleted` | `{duration_ms, retry_count}` | Step completes successfully |
 | `StepFailed` | `{error, error_type, duration_ms}` | Step fails |
 | `StepSkipped` | `{reason}` | Step skipped (dependency failed) |
+
+**Chain Lifecycle Events:**
+
+| Event Type | Payload | When Emitted |
+|------------|---------|--------------|
+| `ChainStarted` | `{step_count}` | Before first step executes |
+| `ChainCompleted` | `{completed, failed, skipped}` | After all steps complete successfully |
+| `ChainFailed` | `{error}` | When chain execution fails |
+| `DynamicStepInjected` | `{injected_steps, parent_step}` | When dynamic steps are added |
 
 See: [examples/event_workflow.py](examples/event_workflow.py)
 
@@ -1205,6 +1257,8 @@ print(f"Quality Score: {step_trace['quality_score']}")
 print(f"Revisions: {step_trace['revision_count']}")
 print(f"Passed Threshold: {step_trace['passed_threshold']}")
 ```
+
+> **Note**: The examples directory does not currently include a dedicated self-critique/reflection example. Use the middleware configuration shown above to add reflection to your pipelines.
 
 ---
 
