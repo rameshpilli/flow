@@ -775,6 +775,14 @@ class ChainContext(Generic[StateModel]):
             )
         return self._state_store.state
 
+    def _is_async_context(self) -> bool:
+        """Check if we're running inside an async event loop."""
+        try:
+            asyncio.get_running_loop()
+            return True
+        except RuntimeError:
+            return False
+
     def set(
         self,
         key: str,
@@ -785,6 +793,9 @@ class ChainContext(Generic[StateModel]):
     ) -> None:
         """
         Store a value in the context.
+
+        This method uses both sync and async locking to prevent race conditions
+        in parallel step execution.
 
         Args:
             key (str): Unique identifier for the value.
@@ -799,6 +810,10 @@ class ChainContext(Generic[StateModel]):
         Note:
             STEP-scoped data is isolated per step - parallel steps cannot
             see or interfere with each other's step-scoped data.
+
+            For CHAIN-scoped data modified by parallel async steps, consider
+            using `await ctx.async_set()` for explicit async-safe operations,
+            or use `async with ctx.edit_state()` for validated state updates.
 
         Example:
             >>> # Store chain-wide data
@@ -826,6 +841,9 @@ class ChainContext(Generic[StateModel]):
             metadata=metadata or {},
         )
 
+        # Use sync lock - this serializes access even from parallel async tasks
+        # since they share the same thread. The lock prevents interleaving
+        # of the read-check-write operations below.
         with self._sync_lock:
             if scope == ContextScope.STEP:
                 # Step-scoped data goes into per-step isolated storage
@@ -1366,6 +1384,7 @@ class ChainContext(Generic[StateModel]):
         self,
         serializer: "ContextSerializer | None" = None,
         include_data: bool = True,
+        include_state: bool = True,
     ) -> dict[str, Any]:
         """
         Export context as dictionary (for serialization).
@@ -1376,6 +1395,8 @@ class ChainContext(Generic[StateModel]):
                 serialization (may be large!).
             include_data (bool): Whether to include context data.
                 Set False for lightweight summary. Default: True.
+            include_state (bool): Whether to include typed state (if present).
+                Set False to exclude Pydantic state from export. Default: True.
 
         Returns:
             dict[str, Any]: JSON-serializable dictionary.
@@ -1390,6 +1411,10 @@ class ChainContext(Generic[StateModel]):
             >>>
             >>> # Lightweight summary only
             >>> summary = ctx.to_dict(include_data=False)
+            >>>
+            >>> # Include typed state for checkpointing
+            >>> checkpoint = ctx.to_dict(include_state=True)
+            >>> # checkpoint["typed_state"] = {"model": "MyState", "data": {...}}
         """
         with self._sync_lock:
             result = {
@@ -1413,6 +1438,14 @@ class ChainContext(Generic[StateModel]):
                     )
                 else:
                     result["data"] = {k: v.value for k, v in self._store.items()}
+
+            # Include typed state if present and requested
+            if include_state and self._state_store is not None:
+                result["typed_state"] = {
+                    "model": self._state_store.model_class.__name__,
+                    "module": self._state_store.model_class.__module__,
+                    "data": self._state_store.to_dict(),
+                }
 
             return result
 
@@ -1442,6 +1475,67 @@ class ChainContext(Generic[StateModel]):
             if self._state_store is not None:
                 new_ctx._state_store = self._state_store.clone()
             return new_ctx
+
+    def load_state_from_dict(
+        self,
+        typed_state_dict: dict[str, Any],
+        state_model: type | None = None,
+    ) -> None:
+        """
+        Restore typed state from dictionary (for checkpoint restoration).
+
+        This method loads typed state that was exported via to_dict() with
+        include_state=True. It reconstructs the StateStore and loads the data.
+
+        Args:
+            typed_state_dict: Dictionary with keys "model", "module", "data"
+                as produced by to_dict(include_state=True).
+            state_model: Optional Pydantic model class. If None, attempts
+                to import the model using "module" and "model" from the dict.
+
+        Raises:
+            RuntimeError: If state model cannot be resolved.
+            ValidationError: If data doesn't match the model schema.
+
+        Example:
+            >>> # Save checkpoint
+            >>> checkpoint = ctx.to_dict(include_state=True)
+            >>>
+            >>> # Later, restore
+            >>> new_ctx = ChainContext(request_id=checkpoint["request_id"])
+            >>> if "typed_state" in checkpoint:
+            ...     new_ctx.load_state_from_dict(
+            ...         checkpoint["typed_state"],
+            ...         state_model=MyState,  # Pass model class
+            ...     )
+        """
+        if state_model is None:
+            # Try to import the model dynamically
+            model_name = typed_state_dict.get("model", "")
+            module_name = typed_state_dict.get("module", "")
+            if not model_name or not module_name:
+                raise RuntimeError(
+                    "Cannot restore typed state: missing 'model' or 'module' in dict. "
+                    "Pass state_model explicitly."
+                )
+            try:
+                import importlib
+                module = importlib.import_module(module_name)
+                state_model = getattr(module, model_name)
+            except (ImportError, AttributeError) as e:
+                raise RuntimeError(
+                    f"Cannot import state model {module_name}.{model_name}: {e}. "
+                    "Pass state_model explicitly."
+                ) from e
+
+        # Create state store with the model
+        from agentorchestrator.core.state import StateStore
+        self._state_store = StateStore(state_model)
+
+        # Load the data
+        state_data = typed_state_dict.get("data", {})
+        if state_data:
+            self._state_store.from_dict(state_data)
 
     # =========================================================================
     # Citation Support

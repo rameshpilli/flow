@@ -70,8 +70,23 @@ python conditional_workflow.py --query "complex analysis needed"
 **What you'll learn:**
 - Conditional step execution based on context
 - Dynamic routing between workflow branches
-- Error handling in production DAG workflows
 - Early termination patterns
+
+### 6. Error Handling
+
+Production-ready error handling patterns.
+
+```bash
+python error_handling.py          # Run successfully
+python error_handling.py --fail   # Simulate failure
+```
+
+**What you'll learn:**
+- Try-except around `ao.launch()`
+- Checking `result["success"]` status
+- Accessing error details from `result["error"]`
+- Step-level error handling
+- Graceful degradation patterns
 
 ## Next Steps
 
