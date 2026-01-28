@@ -467,6 +467,13 @@ class AgentOrchestrator:
             # We're in an async context - schedule the cleanup
             # Create a task and let it run (fire-and-forget in sync __exit__)
             # The async __aexit__ will properly await cleanup
+            
+            logger.warning(
+                "Using synchronous context manager ('with AgentOrchestrator()') inside a running event loop. "
+                "Resource cleanup will be scheduled as a background task and may not complete before the program exits. "
+                "Use 'async with AgentOrchestrator()' instead to ensure proper cleanup."
+            )
+            
             task = loop.create_task(self.cleanup_resources(timeout_seconds))
             # Add callback to log errors
             def _on_done(t):

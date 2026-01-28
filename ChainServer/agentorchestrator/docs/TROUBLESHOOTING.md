@@ -422,6 +422,34 @@ app.add_middleware(
 
 ---
 
+---
+
+## Context Management Issues
+
+### Async/Sync Context Mismatch
+
+**Warning:** `Using synchronous context manager ('with AgentOrchestrator()') inside a running event loop.`
+
+**Problem:** 
+You are using the synchronous context manager `with AgentOrchestrator()` inside an asynchronous function. This forces resource cleanup to be scheduled as a "fire-and-forget" background task because `asyncio.run()` cannot be called from within a running loop. This may lead to resources (DB connections, HTTP clients) not being cleaned up properly if the program exits immediately.
+
+**Solution:**
+Use the async context manager `async with AgentOrchestrator()` when inside async code:
+
+```python
+# BAD (Risky cleanup)
+async def my_func():
+    with AgentOrchestrator() as ao:
+        await ao.launch(...)
+
+# GOOD (Guaranteed cleanup)
+async def my_func():
+    async with AgentOrchestrator() as ao:
+        await ao.launch(...)
+```
+
+---
+
 ## Getting Help
 
 1. **Check logs:** Enable debug logging:
