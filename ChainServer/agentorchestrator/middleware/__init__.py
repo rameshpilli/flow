@@ -75,7 +75,15 @@ from agentorchestrator.middleware.memory_lifecycle import (
     PromotionResult,
     create_memory_lifecycle_middleware,
 )
-from agentorchestrator.middleware.token_manager import TokenManagerMiddleware
+from agentorchestrator.middleware.token_manager import (
+    BudgetStatus,
+    TokenBudget,
+    TokenManagerMiddleware,
+)
+from agentorchestrator.middleware.rolling_summary import (
+    RollingSummaryMiddleware,
+    RollingSummaryState,
+)
 
 __all__ = [
     # Base
@@ -143,8 +151,14 @@ __all__ = [
     "LLMImportanceEvaluator",
     "PromotionResult",
     "create_memory_lifecycle_middleware",
+    # Token Management
+    "TokenManagerMiddleware",
+    "TokenBudget",
+    "BudgetStatus",
+    # Rolling Summary (Incremental Summarization)
+    "RollingSummaryMiddleware",
+    "RollingSummaryState",
     # Other middleware
     "CacheMiddleware",
     "LoggerMiddleware",
-    "TokenManagerMiddleware",
 ]

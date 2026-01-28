@@ -52,7 +52,10 @@ See Also:
     - agentorchestrator.core.context: ChainContext and StepResult classes.
 """
 
+import fnmatch
 from abc import ABC
+from collections.abc import Callable
+from typing import Any
 
 from agentorchestrator.core.context import ChainContext, StepResult
 
@@ -107,7 +110,9 @@ class Middleware(ABC):
     Attributes:
         _ao_middleware (bool): Marker identifying this as AO middleware.
         _ao_priority (int): Execution priority (lower = earlier). Default: 100.
-        _ao_applies_to (list[str] | None): Step names to apply to. None = all steps.
+        _ao_applies_to (list[str] | None): Step names/patterns to apply to. None = all steps.
+        _ao_excludes (list[str] | None): Step names/patterns to exclude.
+        _ao_applies_when (Callable | None): Conditional function for dynamic filtering.
 
     Methods:
         before(): Pre-execution hook. Override to add pre-processing.
@@ -141,6 +146,23 @@ class Middleware(ABC):
         ...             applies_to=["fetch_data", "transform_data"],
         ...         )
 
+    Glob Pattern Matching:
+        >>> # Apply to all steps matching pattern
+        >>> class GatherMiddleware(Middleware):
+        ...     def __init__(self):
+        ...         super().__init__(
+        ...             applies_to=["gather_*", "fetch_*"],  # Glob patterns
+        ...             excludes=["*_final", "fetch_summary"],  # Exclusions
+        ...         )
+
+    Conditional Application:
+        >>> # Apply based on runtime conditions
+        >>> class LargeOutputMiddleware(Middleware):
+        ...     def __init__(self):
+        ...         super().__init__(
+        ...             applies_when=lambda ctx, result: result.token_count > 2000,
+        ...         )
+
     See Also:
         SkipStep: Exception to skip step execution.
         CompositeMiddleware: Combine multiple middleware.
@@ -150,8 +172,16 @@ class Middleware(ABC):
     _ao_middleware = True
     _ao_priority = 100
     _ao_applies_to: list[str] | None = None
+    _ao_excludes: list[str] | None = None
+    _ao_applies_when: Callable[[ChainContext, Any], bool] | None = None
 
-    def __init__(self, priority: int = 100, applies_to: list[str] | None = None):
+    def __init__(
+        self,
+        priority: int = 100,
+        applies_to: list[str] | None = None,
+        excludes: list[str] | None = None,
+        applies_when: Callable[[ChainContext, Any], bool] | None = None,
+    ):
         """
         Initialize the middleware with optional configuration.
 
@@ -163,8 +193,20 @@ class Middleware(ABC):
                 - 10-50: High (rate limiting, validation)
                 - 50-100: Normal (logging, metrics)
                 - 100+: Low (cleanup, reporting)
-            applies_to (list[str] | None): List of step names this middleware
-                applies to. If None, applies to all steps. Default: None.
+            applies_to (list[str] | None): List of step names or glob patterns
+                this middleware applies to. Supports Unix shell-style wildcards:
+                - `*` matches everything
+                - `?` matches any single character
+                - `[seq]` matches any character in seq
+                - `[!seq]` matches any character not in seq
+                If None, applies to all steps. Default: None.
+            excludes (list[str] | None): List of step names or glob patterns to
+                exclude from application. Exclusions are checked first and take
+                precedence over applies_to. Default: None.
+            applies_when (Callable | None): Optional function that receives
+                (ctx: ChainContext, result: Any) and returns bool. When provided,
+                middleware only applies if this returns True. Useful for
+                conditional application based on runtime state. Default: None.
 
         Example:
             >>> # High priority, all steps
@@ -175,9 +217,23 @@ class Middleware(ABC):
             ...     priority=50,
             ...     applies_to=["fetch_news", "fetch_sec"],
             ... )
+            >>>
+            >>> # Glob patterns with exclusions
+            >>> middleware = Middleware(
+            ...     applies_to=["gather_*", "research_*"],
+            ...     excludes=["gather_final", "*_summary"],
+            ... )
+            >>>
+            >>> # Conditional application
+            >>> middleware = Middleware(
+            ...     applies_to=["*"],
+            ...     applies_when=lambda ctx, result: getattr(result, 'token_count', 0) > 2000,
+            ... )
         """
         self._ao_priority = priority
         self._ao_applies_to = applies_to
+        self._ao_excludes = excludes or []
+        self._ao_applies_when = applies_when
 
     async def before(self, ctx: ChainContext, step_name: str) -> None:
         """
@@ -289,15 +345,28 @@ class Middleware(ABC):
         """
         pass
 
-    def should_apply(self, step_name: str) -> bool:
+    def should_apply(
+        self,
+        step_name: str,
+        ctx: ChainContext | None = None,
+        result: Any = None,
+    ) -> bool:
         """
         Check if this middleware should apply to a given step.
 
         This method is called before each hook (before, after, on_error)
         to determine if the middleware should process this step.
 
+        Evaluation order:
+        1. Check excludes patterns (if any match, return False)
+        2. Check applies_to patterns (if specified and none match, return False)
+        3. Check applies_when condition (if specified and returns False, return False)
+        4. Return True
+
         Args:
             step_name (str): Name of the step to check.
+            ctx (ChainContext | None): The chain context (for applies_when).
+            result (Any | None): The step result (for applies_when in after hooks).
 
         Returns:
             bool: True if middleware should apply, False to skip.
@@ -307,18 +376,83 @@ class Middleware(ABC):
             >>> middleware = Middleware()
             >>> middleware.should_apply("any_step")  # True
             >>>
-            >>> # Selective application
+            >>> # Selective application with exact match
             >>> middleware = Middleware(applies_to=["fetch_data", "process"])
             >>> middleware.should_apply("fetch_data")  # True
             >>> middleware.should_apply("other_step")  # False
+            >>>
+            >>> # Glob pattern matching
+            >>> middleware = Middleware(applies_to=["gather_*", "fetch_*"])
+            >>> middleware.should_apply("gather_news")  # True
+            >>> middleware.should_apply("gather_sec")   # True
+            >>> middleware.should_apply("process_data") # False
+            >>>
+            >>> # With exclusions
+            >>> middleware = Middleware(
+            ...     applies_to=["gather_*"],
+            ...     excludes=["gather_final"],
+            ... )
+            >>> middleware.should_apply("gather_news")  # True
+            >>> middleware.should_apply("gather_final") # False (excluded)
 
         Note:
             Override this method for custom filtering logic beyond
-            the applies_to list (e.g., pattern matching, context-based).
+            patterns and conditions.
         """
-        if self._ao_applies_to is None:
+        # Step 1: Check excludes first (explicit exclusion wins)
+        if self._ao_excludes:
+            for pattern in self._ao_excludes:
+                if self._matches_pattern(step_name, pattern):
+                    return False
+
+        # Step 2: Check applies_to patterns
+        if self._ao_applies_to is not None:
+            matched = any(
+                self._matches_pattern(step_name, pattern)
+                for pattern in self._ao_applies_to
+            )
+            if not matched:
+                return False
+
+        # Step 3: Check applies_when condition
+        if self._ao_applies_when is not None:
+            try:
+                if not self._ao_applies_when(ctx, result):
+                    return False
+            except Exception:
+                # If condition check fails, default to applying
+                pass
+
+        return True
+
+    def _matches_pattern(self, step_name: str, pattern: str) -> bool:
+        """
+        Check if step_name matches a pattern.
+
+        Supports both exact matches and Unix shell-style glob patterns:
+        - `*` matches everything
+        - `?` matches any single character
+        - `[seq]` matches any character in seq
+        - `[!seq]` matches any character not in seq
+
+        Args:
+            step_name: The step name to check.
+            pattern: The pattern to match against.
+
+        Returns:
+            bool: True if step_name matches the pattern.
+
+        Example:
+            >>> middleware._matches_pattern("gather_news", "gather_*")  # True
+            >>> middleware._matches_pattern("gather_news", "gather_news")  # True
+            >>> middleware._matches_pattern("fetch_data", "gather_*")  # False
+        """
+        # First try exact match (faster)
+        if pattern == step_name:
             return True
-        return step_name in self._ao_applies_to
+
+        # Then try glob pattern
+        return fnmatch.fnmatch(step_name, pattern)
 
 
 class CompositeMiddleware(Middleware):
@@ -391,7 +525,7 @@ class CompositeMiddleware(Middleware):
             Exception: If any component raises an exception.
         """
         for mw in self._middleware:
-            if mw.should_apply(step_name):
+            if mw.should_apply(step_name, ctx=ctx):
                 await mw.before(ctx, step_name)
 
     async def after(self, ctx: ChainContext, step_name: str, result: StepResult) -> None:
@@ -407,7 +541,7 @@ class CompositeMiddleware(Middleware):
         """
         # Run in reverse order for after hooks
         for mw in reversed(self._middleware):
-            if mw.should_apply(step_name):
+            if mw.should_apply(step_name, ctx=ctx, result=result):
                 await mw.after(ctx, step_name, result)
 
     async def on_error(self, ctx: ChainContext, step_name: str, error: Exception) -> None:
@@ -420,5 +554,5 @@ class CompositeMiddleware(Middleware):
             error (Exception): The exception that was raised.
         """
         for mw in self._middleware:
-            if mw.should_apply(step_name):
+            if mw.should_apply(step_name, ctx=ctx):
                 await mw.on_error(ctx, step_name, error)

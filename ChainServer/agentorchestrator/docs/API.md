@@ -540,6 +540,206 @@ class MyMiddleware(Middleware):
 ao.use(MyMiddleware(priority=50))
 ```
 
+### Middleware Pattern Matching
+
+Middleware supports glob patterns for `applies_to` and `excludes` parameters:
+
+```python
+from agentorchestrator import Middleware
+
+# Apply to all "gather_*" steps except "gather_final"
+ao.use(SummarizerMiddleware(
+    applies_to=["gather_*", "fetch_*"],  # Glob patterns
+    excludes=["*_final", "gather_summary"],  # Exclusions take precedence
+    max_tokens=4000,
+))
+
+# Conditional application based on runtime state
+ao.use(TokenManagerMiddleware(
+    applies_to=["*"],
+    applies_when=lambda ctx, result: getattr(result, 'token_count', 0) > 2000,
+))
+```
+
+Supported glob patterns:
+- `*` matches everything
+- `?` matches any single character
+- `[seq]` matches any character in seq
+- `[!seq]` matches any character not in seq
+
+### TokenBudget (Token Reservation System)
+
+Explicit token budget allocation prevents silent truncation:
+
+```python
+from agentorchestrator.middleware import TokenBudget, TokenManagerMiddleware, BudgetStatus
+
+# Define explicit budget allocations
+budget = TokenBudget(
+    context_window=128000,      # Total LLM context window
+    reserved_output=8000,       # Reserved for model response
+    reserved_system=3000,       # Reserved for system prompt + tools
+    reserved_history=15000,     # Reserved for conversation history
+    warning_threshold=0.8,      # Warn at 80% of available
+    critical_threshold=0.95,    # Force compression at 95%
+)
+
+# Available for step outputs: 128000 - 8000 - 3000 - 15000 = 102,000 tokens
+
+ao.use(TokenManagerMiddleware(
+    budget=budget,
+    auto_summarize=True,
+    summarizer=my_summarizer,
+    target_ratio_after_compression=0.7,  # Compress to 70% when critical
+))
+
+# Check budget status
+status = budget.get_status(current_tokens=90000)
+# BudgetStatus.WARNING
+
+report = budget.get_report(current_tokens=90000)
+# {
+#     "context_window": 128000,
+#     "allocated": {"output_reserved": 8000, ...},
+#     "usage_percent": 88.2,
+#     "status": "warning",
+#     "action_needed": False,
+# }
+```
+
+#### BudgetStatus Levels
+
+| Status | Condition | Action |
+|--------|-----------|--------|
+| `OK` | Under warning threshold | None |
+| `WARNING` | Above warning, below critical | Log warning |
+| `CRITICAL` | Above critical, below overflow | Auto-compress |
+| `OVERFLOW` | Exceeded available budget | Force compress + offload |
+
+### Tree Summarization Strategy
+
+Hierarchical tree summarization for very large documents (50K+ tokens):
+
+```python
+from agentorchestrator.middleware import (
+    SummarizerMiddleware,
+    SummarizationStrategy,
+    create_openai_summarizer,
+)
+
+# Create summarizer with TREE strategy
+summarizer = create_openai_summarizer(
+    model="gpt-4",
+    strategy=SummarizationStrategy.TREE,
+    tree_group_size=4,  # Group 4 chunks at each level
+)
+
+# Use with middleware
+ao.use(SummarizerMiddleware(
+    summarizer=summarizer,
+    max_tokens=4000,
+    applies_to=["gather_sec", "gather_research"],
+))
+
+# Direct usage
+summary = await summarizer.summarize(
+    text=large_sec_filing,  # 100K tokens
+    max_tokens=4000,
+    strategy=SummarizationStrategy.TREE,
+)
+```
+
+#### How Tree Summarization Works
+
+```
+Input: 100K tokens (25 chunks of 4K each)
+
+Level 1: 25 chunks → 25 summaries (parallel, ~400 tokens each)
+Level 2: 7 groups of ~4 → 7 summaries (parallel)
+Level 3: 2 groups of ~4 → 2 summaries (parallel)
+Level 4: 1 group of 2 → 1 final summary
+
+Output: ~800 tokens (99.2% reduction)
+```
+
+#### Strategy Selection Guide
+
+| Strategy | Best For | Parallelism | Quality |
+|----------|----------|-------------|---------|
+| `STUFF` | < 4K tokens | N/A | High |
+| `MAP_REDUCE` | 10K-50K tokens | High | Good |
+| `REFINE` | Quality-critical | None (sequential) | Highest |
+| `TREE` | 50K+ tokens | High | Good |
+
+### RollingSummaryMiddleware
+
+Incremental summarization that updates progressively instead of re-summarizing everything:
+
+```python
+from agentorchestrator.middleware import RollingSummaryMiddleware, RollingSummaryState
+
+ao.use(RollingSummaryMiddleware(
+    max_tokens=4000,
+    summarizer=my_summarizer,
+    recent_buffer_tokens=1000,  # Keep last 1000 tokens in full
+    applies_to=["gather_news", "gather_social"],
+))
+
+# How it works:
+# Iteration 1: 15K tokens → summarize → 2K tokens
+# Iteration 2: +10K tokens → summarize NEW only → merge → 3K tokens
+# Iteration 3: +8K tokens → summarize NEW only → merge → 3.5K tokens
+#
+# Total processed: 33K tokens
+# Final summary: 3.5K tokens (vs re-summarizing 33K each time)
+```
+
+#### Rolling Summary State
+
+```python
+# Access rolling summary state
+state = rolling_middleware.get_state(ctx, "gather_news")
+# RollingSummaryState(
+#     summary="...",
+#     token_count=3500,
+#     sources_included=["gather_news_v0", "gather_news_v1", ...],
+#     version=3,
+#     original_tokens_processed=33000,
+# )
+
+# Get just the summary
+summary = rolling_middleware.get_summary(ctx, "gather_news")
+
+# Reset state
+rolling_middleware.reset(ctx, "gather_news")
+```
+
+### Query-Aware Compression
+
+Filter and summarize based on query relevance:
+
+```python
+from agentorchestrator.middleware import create_openai_summarizer
+
+summarizer = create_openai_summarizer(model="gpt-4")
+
+# Summarize SEC filing focusing only on risk factors
+summary = await summarizer.summarize_with_query(
+    text=sec_10k_filing,  # 100K tokens
+    query="What are the key risk factors and supply chain dependencies?",
+    max_tokens=2000,
+    relevance_threshold=0.3,  # Include chunks scoring >= 0.3 relevance
+)
+
+# How it works:
+# 1. Split into chunks
+# 2. Score each chunk's relevance to query (0.0-1.0)
+# 3. Filter chunks below threshold
+# 4. Summarize only relevant content with query focus
+#
+# Result: Focused summary on risks, ignoring irrelevant sections
+```
+
 ---
 
 ## Agents
@@ -1017,6 +1217,381 @@ register_builtin_tools(registry)
 # Available: calculate, get_current_time, text_length
 result = await registry.execute("calculate", expression="3.14 * 10")
 ```
+
+---
+
+## Multi-Agent Context Sharing
+
+The framework uses **coordinator-mediated context sharing** rather than direct access between agents. This prevents "context pollution" and enables clean result aggregation.
+
+### Multi-Agent Patterns Overview
+
+| Pattern | Key Class | How Context Flows |
+|---------|-----------|-------------------|
+| **Supervisory** | `SupervisorAgent` | Supervisor coordinates team, shares context via `send_messages` tool |
+| **Intent-Based** | `MultiAgentOrchestrator` | Classifier routes to best agent; each maintains independent history |
+| **Squad** | `Squad` | High-level wrapper around SupervisorAgent |
+
+### Context Isolation System
+
+The key mechanism is the **AgentContextNamespace** which provides isolated storage for each agent:
+
+```python
+from agentorchestrator.squad.context import (
+    ContextIsolationManager,
+    AgentContextNamespace,
+    IsolationLevel,
+)
+
+# Create isolation manager with coordinator context
+isolation = ContextIsolationManager(coordinator_context=ctx)
+
+# Create isolated namespaces for each agent
+ns_research = isolation.create_namespace("research_agent", IsolationLevel.FULL)
+ns_analyst = isolation.create_namespace("analyst_agent", IsolationLevel.FULL)
+```
+
+#### Isolation Levels
+
+| Level | Behavior |
+|-------|----------|
+| `FULL` | Agent sees ONLY its own data + explicitly shared keys (recommended) |
+| `PARTIAL` | Agent sees own data + coordinator CHAIN-scoped data (read-only) |
+| `NONE` | No isolation (legacy mode, full context sharing) |
+
+### Data Flow Architecture
+
+```
+Coordinator (ChainContext)
+    │
+    ├─→ ContextIsolationManager
+    │   │
+    │   ├─→ Agent1.Namespace (FULL isolation)
+    │   │   ├─ Local Store (agent's private data)
+    │   │   ├─ Shared Keys (query, user_id, etc.)
+    │   │   └─ Published Keys (results for others)
+    │   │
+    │   ├─→ Agent2.Namespace (FULL isolation)
+    │   │   └─ ...similar structure...
+    │   │
+    │   └─→ Provenance Tracking (audit trail)
+    │
+    └─→ ResultAggregator
+        └─ Combines outputs using selected strategy
+```
+
+### ContextIsolationManager
+
+Controls data flow between agents:
+
+```python
+from agentorchestrator.squad.context import ContextIsolationManager
+
+isolation = ContextIsolationManager(coordinator_context=ctx)
+
+# Create namespaces
+ns1 = isolation.create_namespace("agent_1", IsolationLevel.FULL)
+ns2 = isolation.create_namespace("agent_2", IsolationLevel.FULL)
+
+# Share data with all agents
+isolation.share_with_all("query")
+isolation.share_with_all("user_id")
+
+# Selective sharing between agents
+isolation.share_between(
+    source_agent="research_agent",
+    key="findings",
+    target_agents=["analyst_agent", "writer_agent"]
+)
+
+# Revoke sharing
+isolation.revoke_sharing("sensitive_data", agent_ids=["untrusted_agent"])
+
+# Execute agents in parallel with isolation
+async def process_agent(agent, namespace):
+    return await agent.process(namespace)
+
+results = await isolation.execute_parallel(agents, process_agent)
+
+# Get all results
+all_results = isolation.get_all_results()
+
+# Audit trail
+provenance = isolation.get_shared_data_provenance()
+stats = isolation.get_stats()
+```
+
+#### ContextIsolationManager Methods
+
+| Method | Description |
+|--------|-------------|
+| `create_namespace(agent_id, level)` | Create isolated namespace for an agent |
+| `get_namespace(agent_id)` | Get existing namespace |
+| `share_with_all(key, value)` | Share data with all agents |
+| `share_between(source, key, targets)` | Selective sharing between agents |
+| `revoke_sharing(key, agent_ids)` | Revoke access to shared data |
+| `execute_parallel(agents, process_fn)` | Run agents in parallel with isolation |
+| `get_all_results()` | Collect results from all namespaces |
+| `get_sharing_graph()` | Get visualization of sharing relationships |
+| `get_shared_data_provenance()` | Audit trail of all sharing operations |
+
+### AgentContextNamespace
+
+Each agent interacts with context through its namespace:
+
+```python
+# Inside an agent's execution context
+async def agent_process(namespace: AgentContextNamespace):
+    # === Private Local Storage ===
+    # Only this agent can see this data
+    namespace.set("working_data", {"temp": "value"})
+    data = namespace.get("working_data")
+
+    if namespace.has("cached_result"):
+        return namespace.get("cached_result")
+
+    # === Access Shared Data ===
+    # Request access to data shared by coordinator
+    namespace.grant_access("query")
+    query = namespace.get("query")
+
+    # === Publish Results ===
+    # Make data available to other agents (via coordinator)
+    # Stored as "agent_id:findings" in coordinator context
+    namespace.publish("findings", {
+        "summary": "Analysis complete",
+        "data": results
+    })
+
+    # === Set Final Result ===
+    namespace.set_result(
+        result={"answer": "..."},
+        metadata={"confidence": 0.95, "sources": ["doc1", "doc2"]}
+    )
+
+    return namespace.get_result()
+```
+
+#### AgentContextNamespace Methods
+
+| Method | Description |
+|--------|-------------|
+| `set(key, value)` | Store in agent's private local storage |
+| `get(key, default)` | Retrieve from local or shared storage |
+| `has(key)` | Check if key exists |
+| `delete(key)` | Remove from local storage |
+| `keys()` | List all accessible keys |
+| `grant_access(key)` | Request access to shared data |
+| `revoke_access(key)` | Release access to shared data |
+| `publish(key, value)` | Publish data for other agents |
+| `set_result(result, metadata)` | Set agent's final result |
+| `get_result()` | Get agent's result |
+| `get_all_results()` | Get all results from this namespace |
+| `get_metadata()` | Get execution metadata |
+| `snapshot()` | Export namespace state for debugging |
+
+### Result Aggregation
+
+Combine results from multiple isolated agents:
+
+```python
+from agentorchestrator.squad.context import ResultAggregator, AggregationStrategy
+
+# Create aggregator with strategy
+aggregator = ResultAggregator(
+    strategy=AggregationStrategy.SYNTHESIZE,
+    conflict_resolver=custom_resolver_fn  # Optional
+)
+
+# Add results from each agent's namespace
+aggregator.add_from_namespace("research_agent", ns_research)
+aggregator.add_from_namespace("analyst_agent", ns_analyst)
+
+# Or add results manually
+aggregator.add_result(
+    agent_id="writer_agent",
+    data={"report": "..."},
+    confidence=0.9,
+    priority=1,
+    metadata={"word_count": 500}
+)
+
+# Aggregate all results
+result = await aggregator.aggregate(llm=llm_client)
+
+# Access aggregated data
+print(result.data)        # Combined result
+print(result.confidence)  # Overall confidence (reduced by conflicts)
+print(result.conflicts)   # List of detected conflicts
+print(result.metadata)    # Aggregation metadata
+```
+
+#### Aggregation Strategies
+
+| Strategy | Behavior |
+|----------|----------|
+| `SYNTHESIZE` | LLM creates narrative combining all results (default) |
+| `MERGE` | Deep merge structured data (JSON/dicts), tracks conflicts |
+| `PRIORITIZE` | Select result with highest confidence or priority |
+| `VOTE` | Majority voting for discrete answers |
+| `CHAIN` | Sequential refinement by priority order |
+| `CONCAT` | Simple concatenation of text results |
+
+#### Conflict Resolution
+
+During `MERGE` aggregation, conflicts are detected when multiple agents provide different values for the same key:
+
+```python
+def custom_resolver(key: str, values: list[tuple[str, Any]]) -> Any:
+    """Resolve conflicts between agent outputs.
+
+    Args:
+        key: The conflicting key
+        values: List of (agent_id, value) tuples
+
+    Returns:
+        The resolved value
+    """
+    # Example: prefer the agent with higher priority
+    agent_priorities = {"analyst": 1, "researcher": 2}
+    sorted_values = sorted(values, key=lambda x: agent_priorities.get(x[0], 0))
+    return sorted_values[-1][1]
+
+aggregator = ResultAggregator(
+    strategy=AggregationStrategy.MERGE,
+    conflict_resolver=custom_resolver
+)
+```
+
+### Chat History Sharing (Supervisor Pattern)
+
+In the supervisory pattern, the supervisor maintains conversation history via `ChatStorage`:
+
+```python
+from agentorchestrator.squad.storage import InMemoryChatStorage, RedisChatStorage
+from agentorchestrator.squad.agents import SupervisorAgent
+
+# In-memory for development
+storage = InMemoryChatStorage()
+
+# Redis for production (24-hour TTL, distributed)
+storage = RedisChatStorage(redis_client=redis)
+
+# Supervisor uses storage to maintain agent memory
+supervisor = SupervisorAgent(
+    lead_agent=lead,
+    team_agents=[agent1, agent2],
+    storage=storage,
+)
+
+# How context flows in supervisor pattern:
+# 1. Supervisor fetches agent's history
+history = await storage.fetch_chat(user_id, session_id, agent_id)
+
+# 2. Passes to agent with current query
+response = await agent.process_request(
+    input_text=query,
+    user_id=user_id,
+    session_id=session_id,
+    chat_history=history,
+    additional_params={"shared_context": data}
+)
+
+# 3. Saves response back to storage
+await storage.save_chat_messages(user_id, session_id, agent_id, messages)
+
+# 4. Includes relevant history in next supervisor prompt via {{AGENTS_MEMORY}}
+```
+
+### Complete Example: Multi-Agent Research Pipeline
+
+```python
+from agentorchestrator import AgentOrchestrator, ChainContext
+from agentorchestrator.squad.context import (
+    ContextIsolationManager,
+    ResultAggregator,
+    AggregationStrategy,
+    IsolationLevel,
+)
+
+ao = AgentOrchestrator(name="research_pipeline")
+
+@ao.step(name="multi_agent_research")
+async def multi_agent_research(ctx: ChainContext):
+    # Create isolation manager
+    isolation = ContextIsolationManager(coordinator_context=ctx)
+
+    # Create isolated namespaces
+    ns_news = isolation.create_namespace("news_agent", IsolationLevel.FULL)
+    ns_finance = isolation.create_namespace("finance_agent", IsolationLevel.FULL)
+    ns_social = isolation.create_namespace("social_agent", IsolationLevel.FULL)
+
+    # Share common data with all agents
+    isolation.share_with_all("query", ctx.get("query"))
+    isolation.share_with_all("company", ctx.get("company"))
+
+    # Define agent processors
+    async def process_news(ns):
+        query = ns.get("query")
+        results = await news_api.search(query)
+        ns.publish("news_data", results)
+        ns.set_result({"articles": results}, metadata={"count": len(results)})
+
+    async def process_finance(ns):
+        company = ns.get("company")
+        data = await finance_api.get_metrics(company)
+        ns.publish("financial_data", data)
+        ns.set_result(data, metadata={"confidence": 0.95})
+
+    async def process_social(ns):
+        query = ns.get("query")
+        sentiment = await social_api.analyze(query)
+        ns.publish("sentiment", sentiment)
+        ns.set_result(sentiment, metadata={"sample_size": 1000})
+
+    # Execute all agents in parallel with isolation
+    agents = [
+        ("news_agent", ns_news, process_news),
+        ("finance_agent", ns_finance, process_finance),
+        ("social_agent", ns_social, process_social),
+    ]
+
+    await asyncio.gather(*[
+        proc(ns) for _, ns, proc in agents
+    ])
+
+    # Aggregate results
+    aggregator = ResultAggregator(strategy=AggregationStrategy.SYNTHESIZE)
+    aggregator.add_from_namespace("news_agent", ns_news)
+    aggregator.add_from_namespace("finance_agent", ns_finance)
+    aggregator.add_from_namespace("social_agent", ns_social)
+
+    result = await aggregator.aggregate(llm=llm_client)
+
+    # Store aggregated result
+    ctx.set("research_summary", result.data)
+    ctx.set("confidence", result.confidence)
+
+    # Get stats for observability
+    stats = isolation.get_stats()
+    ctx.set("isolation_stats", stats)
+
+    return {
+        "summary": result.data,
+        "confidence": result.confidence,
+        "conflicts": result.conflicts,
+    }
+```
+
+### Why Context Isolation?
+
+| Without Isolation | With Isolation |
+|-------------------|----------------|
+| N agents × full context = token explosion | Each agent sees only what it needs |
+| Risk of context pollution | Clean separation of concerns |
+| No audit trail | Full provenance tracking |
+| Difficult to debug | Easy to inspect per-agent state |
+| Hard to aggregate results | Built-in aggregation strategies |
 
 ---
 

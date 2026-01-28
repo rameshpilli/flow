@@ -37,19 +37,43 @@ def count_tokens(text: str) -> int:
 
 
 class SummarizationStrategy(str, Enum):
-    """Summarization strategies."""
+    """
+    Summarization strategies for handling large documents.
+
+    Each strategy has different trade-offs:
+
+    - STUFF: Single LLM call. Fast but limited by context window.
+      Best for: Small documents under chunk_size tokens.
+
+    - MAP_REDUCE: Parallel summarization then combine. Good parallelism.
+      Best for: Medium documents (10K-50K tokens).
+
+    - REFINE: Sequential refinement through chunks. High quality but slow.
+      Best for: Documents where context continuity matters.
+
+    - TREE: Hierarchical tree summarization. Most efficient for very large docs.
+      Best for: Large documents (50K+ tokens), SEC filings, research reports.
+      Example: 100K tokens -> Level 1 (25 summaries) -> Level 2 (5) -> Level 3 (1)
+    """
 
     STUFF = "stuff"  # Single prompt (small docs)
     MAP_REDUCE = "map_reduce"  # Parallel chunks, then combine
     REFINE = "refine"  # Iterative refinement
+    TREE = "tree"  # Hierarchical tree summarization (most efficient for large docs)
 
 
 class LangChainSummarizer:
     """
-    Summarizer using LangChain with stuff, map_reduce, or refine strategies.
+    Summarizer using LangChain with stuff, map_reduce, refine, or tree strategies.
     Falls back to simple truncation if no LLM is provided.
 
     Domain-specific prompts can be registered via register_domain_prompts().
+
+    Strategies:
+    - STUFF: Single LLM call with all text (small documents)
+    - MAP_REDUCE: Parallel chunk summarization then combine (medium documents)
+    - REFINE: Sequential refinement (quality-critical documents)
+    - TREE: Hierarchical tree summarization (large documents 50K+ tokens)
     """
 
     # Default prompts
@@ -66,6 +90,16 @@ class LangChainSummarizer:
         "Refine it using this additional context:\n{text}\n\n"
         "Refined Summary:"
     )
+    DEFAULT_TREE_INTERMEDIATE_PROMPT = (
+        "Summarize this content, preserving all key facts, numbers, dates, "
+        "and named entities. This is an intermediate summary that will be "
+        "combined with others:\n\n{text}\n\nIntermediate Summary:"
+    )
+    DEFAULT_TREE_FINAL_PROMPT = (
+        "Create a comprehensive final summary from these intermediate summaries. "
+        "Preserve all key facts, numbers, dates, and named entities from ALL summaries. "
+        "Structure the output clearly:\n\n{text}\n\nFinal Comprehensive Summary:"
+    )
 
     # Pluggable domain prompts (registered at application level)
     _domain_prompts: dict[str, dict[str, str]] = {}
@@ -80,6 +114,9 @@ class LangChainSummarizer:
         map_prompt: str | None = None,
         reduce_prompt: str | None = None,
         refine_prompt: str | None = None,
+        tree_intermediate_prompt: str | None = None,
+        tree_final_prompt: str | None = None,
+        tree_group_size: int = 4,  # Number of chunks/summaries to group at each tree level
         max_concurrent_chunks: int = 10,  # Limit parallel LLM calls to prevent rate limit issues
     ):
         self.llm = llm
@@ -87,10 +124,13 @@ class LangChainSummarizer:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.max_concurrent_chunks = max_concurrent_chunks
+        self.tree_group_size = tree_group_size
 
         self.map_prompt = map_prompt or self.DEFAULT_MAP_PROMPT
         self.reduce_prompt = reduce_prompt or self.DEFAULT_REDUCE_PROMPT
         self.refine_prompt = refine_prompt or self.DEFAULT_REFINE_PROMPT
+        self.tree_intermediate_prompt = tree_intermediate_prompt or self.DEFAULT_TREE_INTERMEDIATE_PROMPT
+        self.tree_final_prompt = tree_final_prompt or self.DEFAULT_TREE_FINAL_PROMPT
 
         # Initialize text splitter
         self.text_splitter = self._create_splitter(use_token_splitter)
@@ -190,6 +230,15 @@ class LangChainSummarizer:
             max_tokens: Maximum tokens for output
             strategy: Override default strategy
             content_type: Domain type for specialized prompts (registered via register_domain_prompts)
+
+        Returns:
+            str: Summarized text
+
+        Strategy Selection Guide:
+            - STUFF: Text under chunk_size tokens
+            - MAP_REDUCE: 10K-50K tokens, good parallelism
+            - REFINE: Quality-critical, sequential
+            - TREE: 50K+ tokens, most efficient for large docs
         """
         strategy = strategy or self.strategy
 
@@ -202,14 +251,24 @@ class LangChainSummarizer:
 
         try:
             # Small text? Just use stuff strategy
-            if count_tokens(text) <= self.chunk_size:
+            input_tokens = count_tokens(text)
+            if input_tokens <= self.chunk_size:
                 return await self._stuff_summarize(text, max_tokens)
+
+            # Auto-select TREE for very large documents if using default strategy
+            if strategy == SummarizationStrategy.MAP_REDUCE and input_tokens > 50000:
+                logger.info(
+                    f"Auto-selecting TREE strategy for large document "
+                    f"({input_tokens} tokens > 50K threshold)"
+                )
+                strategy = SummarizationStrategy.TREE
 
             # Route to appropriate strategy
             handlers = {
                 SummarizationStrategy.STUFF: self._stuff_summarize,
                 SummarizationStrategy.MAP_REDUCE: self._map_reduce_summarize,
                 SummarizationStrategy.REFINE: self._refine_summarize,
+                SummarizationStrategy.TREE: self._tree_summarize,
             }
             handler = handlers.get(strategy, self._map_reduce_summarize)
             return await handler(text, max_tokens)
@@ -330,6 +389,334 @@ class LangChainSummarizer:
         except Exception as e:
             logger.error(f"Refine summarization failed: {e}")
             raise RuntimeError(f"Summarization failed: {e}") from e
+
+    async def _tree_summarize(self, text: str, max_tokens: int | None = None) -> str:
+        """
+        Hierarchical tree summarization for very large documents.
+
+        This is the most efficient strategy for documents over 50K tokens.
+        It recursively groups and summarizes in a tree structure:
+
+        Level 1: 16 chunks → 16 summaries (parallel)
+        Level 2: 4 groups of 4 → 4 summaries (parallel)
+        Level 3: 1 group of 4 → 1 final summary
+
+        This reduces LLM calls compared to MAP_REDUCE for large documents
+        while maintaining good parallelism.
+
+        Args:
+            text: Text to summarize
+            max_tokens: Target maximum tokens for final output
+
+        Returns:
+            str: Final summarized text
+        """
+        if not self.llm:
+            raise ValueError(
+                "No LLM configured for summarization. "
+                "Use create_openai_summarizer(), create_anthropic_summarizer(), "
+                "or create_gateway_summarizer() to configure an LLM backend."
+            )
+
+        try:
+            from langchain_core.output_parsers import StrOutputParser
+            from langchain_core.prompts import ChatPromptTemplate
+
+            # Split into initial chunks
+            chunks = self.split_text(text)
+            total_chunks = len(chunks)
+            logger.info(
+                f"Tree summarization: {total_chunks} chunks, "
+                f"group_size={self.tree_group_size}, "
+                f"max_concurrent={self.max_concurrent_chunks}"
+            )
+
+            # If only one chunk, just summarize it directly
+            if len(chunks) == 1:
+                chain = (
+                    ChatPromptTemplate.from_template(self.tree_final_prompt)
+                    | self.llm
+                    | StrOutputParser()
+                )
+                return await chain.ainvoke({"text": chunks[0]})
+
+            level = 1
+            semaphore = asyncio.Semaphore(self.max_concurrent_chunks)
+
+            # Keep processing until we have a single summary
+            while len(chunks) > 1:
+                # Group chunks
+                groups = self._group_items(chunks, self.tree_group_size)
+                logger.info(
+                    f"Tree Level {level}: {len(chunks)} items → {len(groups)} groups"
+                )
+
+                # Determine if this is the final level
+                is_final = len(groups) == 1
+
+                # Select prompt based on level
+                prompt_template = (
+                    self.tree_final_prompt if is_final
+                    else self.tree_intermediate_prompt
+                )
+                chain = (
+                    ChatPromptTemplate.from_template(prompt_template)
+                    | self.llm
+                    | StrOutputParser()
+                )
+
+                # Summarize each group in parallel (with concurrency limit)
+                async def summarize_group(group: list[str], group_idx: int) -> str:
+                    async with semaphore:
+                        combined = "\n\n---\n\n".join(group)
+                        logger.debug(
+                            f"Tree Level {level}, Group {group_idx}: "
+                            f"{len(group)} items, {count_tokens(combined)} tokens"
+                        )
+                        return await chain.ainvoke({"text": combined})
+
+                # Process all groups in parallel
+                chunks = await asyncio.gather(*[
+                    summarize_group(group, idx)
+                    for idx, group in enumerate(groups)
+                ])
+                chunks = list(chunks)
+
+                # Check if we're under target token count
+                if max_tokens:
+                    total_tokens = sum(count_tokens(c) for c in chunks)
+                    if total_tokens <= max_tokens and len(chunks) <= self.tree_group_size:
+                        # Can combine remaining chunks in final pass
+                        logger.info(
+                            f"Tree Level {level}: Under target ({total_tokens} <= {max_tokens}), "
+                            f"proceeding to final combination"
+                        )
+                        if len(chunks) > 1:
+                            final_chain = (
+                                ChatPromptTemplate.from_template(self.tree_final_prompt)
+                                | self.llm
+                                | StrOutputParser()
+                            )
+                            combined = "\n\n---\n\n".join(chunks)
+                            return await final_chain.ainvoke({"text": combined})
+                        break
+
+                level += 1
+
+            final_summary = chunks[0]
+            final_tokens = count_tokens(final_summary)
+            logger.info(
+                f"Tree summarization complete: {total_chunks} chunks → "
+                f"{final_tokens} tokens in {level} levels"
+            )
+            return final_summary
+
+        except Exception as e:
+            logger.error(f"Tree summarization failed: {e}")
+            raise RuntimeError(f"Summarization failed: {e}") from e
+
+    def _group_items(self, items: list, group_size: int) -> list[list]:
+        """Group items into batches of group_size."""
+        return [items[i:i + group_size] for i in range(0, len(items), group_size)]
+
+    async def summarize_with_query(
+        self,
+        text: str,
+        query: str,
+        max_tokens: int | None = None,
+        strategy: SummarizationStrategy | None = None,
+        content_type: str | None = None,
+        relevance_threshold: float = 0.3,
+    ) -> str:
+        """
+        Summarize text with query-aware filtering.
+
+        This method first filters/extracts content relevant to the query,
+        then summarizes. This is more efficient than summarizing everything
+        when only query-relevant content is needed.
+
+        Args:
+            text: Text to summarize
+            query: Query to filter relevance by
+            max_tokens: Maximum tokens for output
+            strategy: Summarization strategy
+            content_type: Domain type for prompts
+            relevance_threshold: Minimum relevance score (0-1) to include content
+
+        Returns:
+            str: Query-focused summary
+
+        Example:
+            >>> # Summarize SEC filing focusing on risk factors
+            >>> summary = await summarizer.summarize_with_query(
+            ...     text=sec_10k_filing,
+            ...     query="What are the key risk factors?",
+            ...     max_tokens=2000,
+            ... )
+        """
+        if not self.llm:
+            raise ValueError(
+                "No LLM configured for summarization. "
+                "Use create_openai_summarizer() or similar to configure an LLM backend."
+            )
+
+        logger.info(f"Query-aware summarization: '{query[:50]}...'")
+
+        # Split into chunks
+        chunks = self.split_text(text)
+        logger.info(f"Query-aware: {len(chunks)} chunks to filter")
+
+        # Filter chunks by query relevance
+        relevant_chunks = await self._filter_by_relevance(
+            chunks, query, relevance_threshold
+        )
+
+        if not relevant_chunks:
+            logger.warning(
+                f"Query-aware: No chunks passed relevance threshold ({relevance_threshold}), "
+                "using all chunks"
+            )
+            relevant_chunks = chunks
+
+        logger.info(
+            f"Query-aware: {len(relevant_chunks)}/{len(chunks)} chunks relevant "
+            f"(threshold: {relevance_threshold})"
+        )
+
+        # Combine relevant chunks
+        filtered_text = "\n\n---\n\n".join(relevant_chunks)
+
+        # Now summarize the filtered content with query focus
+        return await self._query_focused_summarize(
+            filtered_text, query, max_tokens, strategy, content_type
+        )
+
+    async def _filter_by_relevance(
+        self,
+        chunks: list[str],
+        query: str,
+        threshold: float,
+    ) -> list[str]:
+        """
+        Filter chunks by relevance to query.
+
+        Uses LLM to score each chunk's relevance (0-1).
+        """
+        try:
+            from langchain_core.output_parsers import StrOutputParser
+            from langchain_core.prompts import ChatPromptTemplate
+
+            relevance_prompt = """Rate how relevant this text is to the query on a scale of 0.0 to 1.0.
+Only output a single decimal number between 0.0 and 1.0.
+
+Query: {query}
+
+Text: {text}
+
+Relevance Score (0.0-1.0):"""
+
+            chain = (
+                ChatPromptTemplate.from_template(relevance_prompt)
+                | self.llm
+                | StrOutputParser()
+            )
+
+            semaphore = asyncio.Semaphore(self.max_concurrent_chunks)
+
+            async def score_chunk(chunk: str) -> tuple[str, float]:
+                async with semaphore:
+                    try:
+                        # Truncate chunk if too long for scoring
+                        truncated = chunk[:4000] if len(chunk) > 4000 else chunk
+                        result = await chain.ainvoke({
+                            "query": query,
+                            "text": truncated,
+                        })
+                        # Parse score
+                        score = float(result.strip())
+                        return (chunk, min(1.0, max(0.0, score)))
+                    except (ValueError, Exception) as e:
+                        logger.debug(f"Failed to score chunk: {e}")
+                        return (chunk, 0.5)  # Default to middle score
+
+            # Score all chunks in parallel
+            scored = await asyncio.gather(*[score_chunk(c) for c in chunks])
+
+            # Filter by threshold
+            relevant = [chunk for chunk, score in scored if score >= threshold]
+            return relevant
+
+        except Exception as e:
+            logger.warning(f"Relevance filtering failed: {e}, using all chunks")
+            return chunks
+
+    async def _query_focused_summarize(
+        self,
+        text: str,
+        query: str,
+        max_tokens: int | None,
+        strategy: SummarizationStrategy | None,
+        content_type: str | None,
+    ) -> str:
+        """Summarize with query focus."""
+        try:
+            from langchain_core.output_parsers import StrOutputParser
+            from langchain_core.prompts import ChatPromptTemplate
+
+            query_prompt = """Summarize the following content, focusing specifically on information
+relevant to this query: "{query}"
+
+Preserve key facts, numbers, dates, and named entities that relate to the query.
+Omit information that is not relevant to answering the query.
+
+Content:
+{text}
+
+Query-Focused Summary:"""
+
+            # If content is small enough, use single prompt
+            if count_tokens(text) <= self.chunk_size * 2:
+                chain = (
+                    ChatPromptTemplate.from_template(query_prompt)
+                    | self.llm
+                    | StrOutputParser()
+                )
+                return await chain.ainvoke({"query": query, "text": text})
+
+            # Otherwise, use the configured strategy but with query context
+            # Store original prompts
+            original_map = self.map_prompt
+            original_reduce = self.reduce_prompt
+
+            try:
+                # Inject query into prompts
+                self.map_prompt = f"""Summarize this content focusing on: "{query}"
+Preserve facts relevant to the query.
+
+Content:
+{{text}}
+
+Summary:"""
+
+                self.reduce_prompt = f"""Combine these summaries into a final summary focused on: "{query}"
+Preserve all facts relevant to answering the query.
+
+Summaries:
+{{text}}
+
+Final Summary:"""
+
+                return await self.summarize(
+                    text, max_tokens, strategy, content_type
+                )
+            finally:
+                self.map_prompt = original_map
+                self.reduce_prompt = original_reduce
+
+        except Exception as e:
+            logger.error(f"Query-focused summarization failed: {e}")
+            # Fallback to regular summarization
+            return await self.summarize(text, max_tokens, strategy, content_type)
 
 
 class SummarizerMiddleware(Middleware):
