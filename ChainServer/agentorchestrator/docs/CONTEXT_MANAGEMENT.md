@@ -143,7 +143,7 @@ async with ctx.edit_state() as state:
 Add validation rules to your state model:
 
 ```python
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 class ValidatedState(BaseModel):
     progress: int = Field(default=0, ge=0, le=100)  # 0-100

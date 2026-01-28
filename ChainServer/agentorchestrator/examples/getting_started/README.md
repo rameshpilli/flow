@@ -57,6 +57,22 @@ python ai_workflow_dag.py
 - Parallel branches with shared dependencies
 - Clear data flow via context
 
+### 5. Conditional Workflow
+
+DAG workflows with conditional execution paths and routing.
+
+```bash
+python conditional_workflow.py
+python conditional_workflow.py --query "simple question"
+python conditional_workflow.py --query "complex analysis needed"
+```
+
+**What you'll learn:**
+- Conditional step execution based on context
+- Dynamic routing between workflow branches
+- Error handling in production DAG workflows
+- Early termination patterns
+
 ## Next Steps
 
 After completing these examples:

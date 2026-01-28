@@ -222,6 +222,48 @@ async with ao:
 # Resources cleaned up automatically
 ```
 
+#### Launch Return Value
+
+The `launch()` method returns a dictionary with the following structure:
+
+```python
+{
+    "success": True,              # Whether all steps completed successfully
+    "results": [                  # List of per-step results in execution order
+        {
+            "step": "step_name",
+            "output": {...},      # What the step returned
+            "duration_ms": 123.4,
+            "error": None,        # Error message if step failed
+            "error_type": None,   # Exception type if failed
+        },
+        # ... more steps
+    ],
+    "context": {                  # Final context state
+        "data": {...},            # CHAIN-scoped data
+        "steps": {...},           # STEP-scoped data by step name
+    },
+    "duration_ms": 1234.5,        # Total execution time in milliseconds
+    "error": None,                # Error dict if chain failed: {"step": "...", "message": "...", "traceback": "..."}
+}
+```
+
+**Accessing Step Outputs:**
+
+```python
+result = await ao.launch("my_chain", {"name": "World"})
+
+# Check success
+if result["success"]:
+    # Access first step's output
+    greeting = result["results"][0]["output"]["greeting"]
+
+    # Or access via context
+    greeting = result["context"]["data"]["greeting"]
+else:
+    print(f"Failed at step {result['error']['step']}: {result['error']['message']}")
+```
+
 ---
 
 ### ChainContext
@@ -816,7 +858,7 @@ agent = ReActAgent(
 
 # Run
 result = await agent.run("What is the population of France times 2?")
-print(result.answer)
+print(result.final_answer)
 print(result.steps)  # Shows thought/action/observation chain
 ```
 
