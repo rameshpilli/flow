@@ -73,7 +73,8 @@ AgentOrchestrator provides multiple patterns for building AI agents:
 ┌─────────────────────┬─────────────────────┬─────────────────────┐
 │     SQUAD           │   SUPERVISOR        │   FUNCTION AGENT    │
 │                     │                     │                     │
-│ squad.run(query)    │ supervisor.process()│ agent.handoff()     │
+│ squad.run(query)    │ supervisor          │ agent.handoff()     │
+│                     │ .process_request()  │                     │
 │                     │                     │                     │
 │   ┌───────┐         │      ┌───┐          │  ┌───┐    ┌───┐     │
 │   │ Lead  │         │      │ S │          │  │ A │ →  │ B │     │

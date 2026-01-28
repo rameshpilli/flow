@@ -53,7 +53,13 @@ USAGE:
     output = await service.execute(request)
 """
 
-from cmpt.chain import register_cmpt_chain, run_cmpt_chain
+from cmpt.chain import (
+    register_cmpt_chain,
+    run_cmpt_chain,
+    run_cmpt_chain_sync,
+    run_cmpt_chain_resumable,
+    CMPTState,
+)
 
 # Re-export services for direct use
 from cmpt.services import (
@@ -93,6 +99,10 @@ __all__ = [
     # Chain functions
     "register_cmpt_chain",
     "run_cmpt_chain",
+    "run_cmpt_chain_sync",
+    "run_cmpt_chain_resumable",
+    # State model
+    "CMPTState",
     # Service classes
     "ChainRequest",
     "ChainResponse",

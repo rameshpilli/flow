@@ -9,6 +9,44 @@ Decorators offer a clean, declarative way to define and register components.
 They delegate to the global AgentOrchestrator instance for unified behavior
 and automatic registration.
 
+Magic Attribute Prefixes
+------------------------
+The decorators set special attributes on decorated classes/functions for
+framework introspection. These use two prefixes:
+
+**_fg_* (Framework Generated):**
+    Attributes set by the framework during decoration. These are considered
+    internal implementation details but are stable for introspection:
+
+    - ``_fg_name``: Component name (str) - defaults to class/function name
+    - ``_fg_type``: Component type (str) - "agent", "step", "chain", "middleware"
+    - ``_fg_version``: Version string (str | None)
+    - ``_fg_deps``: Step dependencies (list[str])
+    - ``_fg_produces``: Context keys this step produces (list[str])
+    - ``_fg_consumes``: Context keys this step requires (list[str])
+    - ``_fg_resources``: Resources this step needs injected (list[str])
+    - ``_fg_group``: Grouping category (str | None) - for agents/chains
+
+**_ao_* (AgentOrchestrator Only):**
+    Attributes specific to middleware configuration. Used by the executor
+    to apply middleware selectively:
+
+    - ``_ao_middleware``: Flag indicating this is middleware (bool)
+    - ``_ao_name``: Middleware name for logging/debugging (str)
+    - ``_ao_priority``: Execution priority (int) - lower = earlier, default 100
+    - ``_ao_applies_to``: Step names this middleware applies to (list[str] | None)
+                          None means apply to all steps
+
+Example introspection::
+
+    @step(name="my_step", produces=["data"])
+    async def my_step(ctx): ...
+
+    # Inspect framework attributes
+    print(my_step._fg_name)      # "my_step"
+    print(my_step._fg_type)      # "step"
+    print(my_step._fg_produces)  # ["data"]
+
 Functions:
     agent: Decorator to register a class as a data agent.
     step: Decorator to register a function as a chain step.

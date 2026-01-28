@@ -2,8 +2,14 @@
 AgentOrchestrator Cache Middleware
 
 Provides caching for step outputs to avoid redundant computation.
+
+Thread Safety:
+    This middleware uses asyncio.Lock to protect cache operations
+    during concurrent step execution. All cache reads, writes, and
+    evictions are atomic with respect to other async tasks.
 """
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -67,6 +73,8 @@ class CacheMiddleware(Middleware):
             "misses": 0,
             "evictions": 0,
         }
+        # Lock for thread-safe cache operations during parallel step execution
+        self._lock = asyncio.Lock()
 
     def _default_cache_key(self, ctx: ChainContext, step_name: str) -> str:
         """Generate a default cache key based on context data"""
@@ -81,18 +89,20 @@ class CacheMiddleware(Middleware):
             return
 
         cache_key = self.cache_key_fn(ctx, step_name)
-        entry = self._get_entry(cache_key)
 
-        if entry:
-            # Cache hit - store result to skip execution
-            ctx.set(f"_cache_hit_{step_name}", True)
-            ctx.set(f"_cache_result_{step_name}", entry.value)
-            entry.hit_count += 1
-            self._stats["hits"] += 1
-            logger.debug(f"Cache hit for step {step_name}: {cache_key}")
-        else:
-            self._stats["misses"] += 1
-            logger.debug(f"Cache miss for step {step_name}: {cache_key}")
+        async with self._lock:
+            entry = self._get_entry(cache_key)
+
+            if entry:
+                # Cache hit - store result to skip execution
+                ctx.set(f"_cache_hit_{step_name}", True)
+                ctx.set(f"_cache_result_{step_name}", entry.value)
+                entry.hit_count += 1
+                self._stats["hits"] += 1
+                logger.debug(f"Cache hit for step {step_name}: {cache_key}")
+            else:
+                self._stats["misses"] += 1
+                logger.debug(f"Cache miss for step {step_name}: {cache_key}")
 
     async def after(self, ctx: ChainContext, step_name: str, result: StepResult) -> None:
         if not self.enabled:
@@ -109,7 +119,9 @@ class CacheMiddleware(Middleware):
             return
 
         cache_key = self.cache_key_fn(ctx, step_name)
-        self._set_entry(cache_key, result.output)
+
+        async with self._lock:
+            self._set_entry(cache_key, result.output)
         logger.debug(f"Cached result for step {step_name}: {cache_key}")
 
     def _get_entry(self, key: str) -> CacheEntry | None:

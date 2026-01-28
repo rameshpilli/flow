@@ -783,6 +783,28 @@ class ChainContext(Generic[StateModel]):
         except RuntimeError:
             return False
 
+    def _warn_parallel_chain_scope_access(self, key: str, is_write: bool = True) -> None:
+        """
+        Warn when CHAIN-scoped data is accessed in parallel async context.
+
+        This method detects potential race conditions when parallel steps
+        modify shared CHAIN-scoped data without using async_set() or edit_state().
+        """
+        if not self._is_async_context():
+            return
+
+        # Check if key already exists (read-modify-write pattern risk)
+        if is_write and key in self._store:
+            current_step = self.current_step
+            existing_entry = self._store[key]
+            if existing_entry.source_step and existing_entry.source_step != current_step:
+                logger.warning(
+                    f"Potential race condition: Step '{current_step}' is modifying "
+                    f"CHAIN-scoped key '{key}' that was set by step '{existing_entry.source_step}'. "
+                    f"For parallel steps, use `await ctx.async_set()` or `async with ctx.edit_state()` "
+                    f"to ensure atomic updates. See docs/understanding/context.md for details."
+                )
+
     def set(
         self,
         key: str,
@@ -840,6 +862,10 @@ class ChainContext(Generic[StateModel]):
             source_step=current_step,
             metadata=metadata or {},
         )
+
+        # Warn about potential race conditions in parallel async steps
+        if scope == ContextScope.CHAIN:
+            self._warn_parallel_chain_scope_access(key, is_write=True)
 
         # Use sync lock - this serializes access even from parallel async tasks
         # since they share the same thread. The lock prevents interleaving

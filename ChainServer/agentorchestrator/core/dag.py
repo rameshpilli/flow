@@ -910,7 +910,8 @@ class DAGExecutor:
         """
         Execute steps in continue mode - wait for all, collect results.
 
-        Failed steps are logged but don't stop other tasks.
+        Failed steps are logged but included in results (not silently dropped).
+        This ensures the caller has visibility into all step outcomes.
         """
         tasks = [execute_fn(name) for name in step_names]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -918,7 +919,17 @@ class DAGExecutor:
         step_results = []
         for i, name in enumerate(step_names):
             if isinstance(results[i], Exception):
-                logger.error(f"Step {name} failed: {results[i]}")
+                logger.error(f"Step {name} failed in continue mode: {results[i]}")
+                # Create a failed StepResult for the exception so it's not silently dropped
+                # Note: The actual StepResult with full error info was already added to ctx
+                # in _execute_step, but we include a reference here for return consistency
+                step_results.append(StepResult(
+                    step_name=name,
+                    output=None,
+                    duration_ms=0,
+                    error=results[i],
+                    error_type=type(results[i]).__name__,
+                ))
             else:
                 step_results.append(results[i])
 
@@ -1270,7 +1281,7 @@ class DAGExecutor:
                 )
             )
         except Exception as e:
-            logger.debug("Event publish failed (%s): %s", event_type, e)
+            logger.warning("Event publish failed (%s): %s", event_type, e)
 
     async def _handle_dynamic_steps(
         self,
@@ -1394,15 +1405,23 @@ class DAGExecutor:
                     # Create a node for the dynamic step
                     dynamic_node = DAGNode(name=step_name, spec=spec)
 
-                    # Execute the dynamic step
+                    # Execute the dynamic step with timeout protection
+                    # Use the step's configured timeout or the default
+                    timeout_ms = spec.timeout_ms or self.default_timeout_ms
                     try:
-                        logger.info(f"Executing dynamic step: {step_name}")
-                        await self._execute_step(
-                            dynamic_node,
-                            ctx,
-                            error_handling="fail_fast",
-                            chain_name=chain_name,
+                        logger.info(f"Executing dynamic step: {step_name} (timeout={timeout_ms}ms)")
+                        await asyncio.wait_for(
+                            self._execute_step(
+                                dynamic_node,
+                                ctx,
+                                error_handling="fail_fast",
+                                chain_name=chain_name,
+                            ),
+                            timeout=timeout_ms / 1000,
                         )
+                    except asyncio.TimeoutError:
+                        logger.error(f"Dynamic step {step_name} timed out after {timeout_ms}ms")
+                        raise TimeoutError(f"Dynamic step {step_name} timed out after {timeout_ms}ms")
                     except Exception as e:
                         logger.error(f"Dynamic step {step_name} failed: {e}")
                         # Re-raise to propagate failure
@@ -1419,7 +1438,17 @@ class DAGExecutor:
         for mw in self._middleware:
             if hasattr(mw, "before"):
                 applies = getattr(mw, "_ao_applies_to", None)
-                if applies is None or step_name in applies:
+                # Safe check: handle non-iterable _ao_applies_to gracefully
+                try:
+                    should_apply = applies is None or step_name in applies
+                except TypeError:
+                    # _ao_applies_to is not iterable - log and skip this middleware
+                    logger.warning(
+                        f"Middleware {mw.__class__.__name__} has invalid _ao_applies_to "
+                        f"(not iterable): {applies}. Skipping for step {step_name}."
+                    )
+                    continue
+                if should_apply:
                     try:
                         await mw.before(ctx, step_name)
                     except Exception as e:
@@ -1440,7 +1469,17 @@ class DAGExecutor:
         for mw in self._middleware:
             if hasattr(mw, "after"):
                 applies = getattr(mw, "_ao_applies_to", None)
-                if applies is None or step_name in applies:
+                # Safe check: handle non-iterable _ao_applies_to gracefully
+                try:
+                    should_apply = applies is None or step_name in applies
+                except TypeError:
+                    # _ao_applies_to is not iterable - log and skip this middleware
+                    logger.warning(
+                        f"Middleware {mw.__class__.__name__} has invalid _ao_applies_to "
+                        f"(not iterable): {applies}. Skipping for step {step_name}."
+                    )
+                    continue
+                if should_apply:
                     try:
                         await mw.after(ctx, step_name, result)
                     except Exception as e:
