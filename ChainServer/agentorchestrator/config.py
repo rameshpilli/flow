@@ -341,7 +341,18 @@ class AgentsConfig:
 
 @dataclass
 class ChainConfig:
-    """Chain execution configuration."""
+    """
+    Chain execution configuration.
+
+    Note: These values are loaded from environment but NOT automatically wired
+    into AgentOrchestrator or DAGExecutor. To use them, pass explicitly:
+
+        config = get_config()
+        ao = AgentOrchestrator()
+
+        @ao.step(timeout_ms=config.chain.default_timeout_ms, retries=config.chain.default_retries)
+        async def my_step(ctx): ...
+    """
 
     max_parallel_steps: int = 5
     default_timeout_ms: int = 30000

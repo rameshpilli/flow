@@ -90,13 +90,15 @@ class EventBus:
 class EventSubscription:
     """
     Async context manager for event subscriptions.
-    
+
     Ensures proper cleanup of subscriptions even if errors occur.
-    
+
     Usage:
-        async with bus.subscribe() as sub:
+        async with await bus.subscribe() as sub:
             async for event in sub:
                 process(event)
+
+    Note: subscribe() is async, so you must await it before using as context manager.
     """
     
     def __init__(
@@ -370,18 +372,21 @@ class EventTypes:
     STEP_STARTED = "StepStarted"
     STEP_COMPLETED = "StepCompleted"
     STEP_FAILED = "StepFailed"
-    
+    STEP_SKIPPED = "StepSkipped"  # Step was skipped (condition not met)
+
     # Agent events
     AGENT_STARTED = "AgentStarted"
     AGENT_COMPLETED = "AgentCompleted"
     AGENT_FAILED = "AgentFailed"
     AGENT_HANDOFF = "AgentHandoff"
     AGENT_THINKING = "AgentThinking"  # For streaming thought process
-    
+    AGENT_TOKEN_CHUNK = "AgentTokenChunk"  # For streaming token output
+
     # Tool events
     TOOL_STARTED = "ToolStarted"
     TOOL_COMPLETED = "ToolCompleted"
     TOOL_FAILED = "ToolFailed"
+    TOOL_CALL_RESULT = "ToolCallResult"  # Individual tool call result (for streaming)
     
     # Chain/workflow events
     CHAIN_STARTED = "ChainStarted"
