@@ -88,6 +88,41 @@ python error_handling.py --fail   # Simulate failure
 - Step-level error handling
 - Graceful degradation patterns
 
+### 7. Input Validation
+
+Pydantic-based input validation at chain and step level.
+
+```bash
+python input_validation.py                    # Valid input
+python input_validation.py --invalid          # Trigger validation error
+python input_validation.py --step-validation  # Step-level validation
+```
+
+**What you'll learn:**
+- Chain-level `input_model` for fail-fast validation
+- Step-level `input_model` for per-step validation
+- Pydantic validators for custom rules (date format, sanitization)
+- Catching `ContractValidationError`
+
+**Key patterns:**
+
+```python
+from pydantic import BaseModel, Field
+
+class MeetingRequest(BaseModel):
+    company: str = Field(..., min_length=2)
+    meeting_date: str
+
+# Chain-level validation (recommended for API inputs)
+@ao.chain(input_model=MeetingRequest, input_key="request")
+class MeetingChain:
+    steps = ["prepare", "process"]
+
+# Step-level validation (first step validated at launch)
+@ao.step(input_model=MeetingRequest, input_key="request")
+async def prepare(ctx): ...
+```
+
 ## Next Steps
 
 After completing these examples:
