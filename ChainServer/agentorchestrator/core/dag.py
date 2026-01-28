@@ -901,7 +901,12 @@ class DAGExecutor:
                                 timeout=timeout_ms / 1000,
                             )
                         else:
-                            result = handler(ctx)
+                            # Run sync handlers in thread pool with timeout protection
+                            # to prevent blocking the event loop indefinitely
+                            result = await asyncio.wait_for(
+                                asyncio.to_thread(handler, ctx),
+                                timeout=timeout_ms / 1000,
+                            )
 
                         # ══════════════════════════════════════════════════════
                         #              DYNAMIC STEP INJECTION

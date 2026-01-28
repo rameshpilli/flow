@@ -80,11 +80,13 @@ class LangChainSummarizer:
         map_prompt: str | None = None,
         reduce_prompt: str | None = None,
         refine_prompt: str | None = None,
+        max_concurrent_chunks: int = 10,  # Limit parallel LLM calls to prevent rate limit issues
     ):
         self.llm = llm
         self.strategy = strategy
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.max_concurrent_chunks = max_concurrent_chunks
 
         self.map_prompt = map_prompt or self.DEFAULT_MAP_PROMPT
         self.reduce_prompt = reduce_prompt or self.DEFAULT_REDUCE_PROMPT
@@ -230,13 +232,15 @@ class LangChainSummarizer:
             from langchain_core.prompts import ChatPromptTemplate
 
             chain = ChatPromptTemplate.from_template(self.map_prompt) | self.llm | StrOutputParser()
-            return await chain.ainvoke({"text": text})
+            # Pass max_tokens via config if specified
+            config = {"max_tokens": max_tokens} if max_tokens else {}
+            return await chain.ainvoke({"text": text}, config=config)
         except Exception as e:
             logger.error(f"Stuff summarization failed: {e}")
             raise RuntimeError(f"Summarization failed: {e}") from e
 
     async def _map_reduce_summarize(self, text: str, max_tokens: int | None = None) -> str:
-        """Summarize chunks in parallel, then combine."""
+        """Summarize chunks in parallel (with concurrency limit), then combine."""
         if not self.llm:
             raise ValueError(
                 "No LLM configured for summarization. "
@@ -249,14 +253,23 @@ class LangChainSummarizer:
             from langchain_core.prompts import ChatPromptTemplate
 
             chunks = self.split_text(text)
-            logger.info(f"Map-Reduce: {len(chunks)} chunks")
+            logger.info(f"Map-Reduce: {len(chunks)} chunks (max concurrent: {self.max_concurrent_chunks})")
 
-            # Map phase: summarize each chunk in parallel
+            # Map phase: summarize each chunk with concurrency limit
             map_chain = (
                 ChatPromptTemplate.from_template(self.map_prompt) | self.llm | StrOutputParser()
             )
+            config = {"max_tokens": max_tokens} if max_tokens else {}
+
+            # Use semaphore to limit concurrent LLM calls and prevent rate limiting
+            semaphore = asyncio.Semaphore(self.max_concurrent_chunks)
+
+            async def summarize_chunk(chunk: str) -> str:
+                async with semaphore:
+                    return await map_chain.ainvoke({"text": chunk}, config=config)
+
             chunk_summaries = await asyncio.gather(
-                *[map_chain.ainvoke({"text": chunk}) for chunk in chunks]
+                *[summarize_chunk(chunk) for chunk in chunks]
             )
 
             # Combine summaries
@@ -270,7 +283,7 @@ class LangChainSummarizer:
             reduce_chain = (
                 ChatPromptTemplate.from_template(self.reduce_prompt) | self.llm | StrOutputParser()
             )
-            return await reduce_chain.ainvoke({"text": combined})
+            return await reduce_chain.ainvoke({"text": combined}, config=config)
 
         except Exception as e:
             logger.error(f"Map-Reduce summarization failed: {e}")
@@ -291,12 +304,13 @@ class LangChainSummarizer:
 
             chunks = self.split_text(text)
             logger.info(f"Refine: {len(chunks)} chunks")
+            config = {"max_tokens": max_tokens} if max_tokens else {}
 
             # Start with first chunk
             initial_chain = (
                 ChatPromptTemplate.from_template(self.map_prompt) | self.llm | StrOutputParser()
             )
-            summary = await initial_chain.ainvoke({"text": chunks[0]})
+            summary = await initial_chain.ainvoke({"text": chunks[0]}, config=config)
 
             # Refine with remaining chunks
             refine_chain = (
@@ -307,7 +321,8 @@ class LangChainSummarizer:
                     {
                         "existing_summary": summary,
                         "text": chunk,
-                    }
+                    },
+                    config=config,
                 )
 
             return summary

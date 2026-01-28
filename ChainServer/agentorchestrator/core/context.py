@@ -931,30 +931,32 @@ class ChainContext(Generic[StateModel]):
             metadata=metadata or {},
         )
 
+        # Acquire both locks to ensure coordination with sync set() calls
         async with self._lock:
-            if scope == ContextScope.STEP:
-                # Step-scoped data goes into per-step isolated storage
-                if current_step is None:
-                    logger.warning(
-                        f"Setting STEP-scoped key '{key}' outside of a step context. "
-                        "It will be stored in a temporary namespace."
-                    )
-                    step_key = "__no_step__"
+            with self._sync_lock:
+                if scope == ContextScope.STEP:
+                    # Step-scoped data goes into per-step isolated storage
+                    if current_step is None:
+                        logger.warning(
+                            f"Setting STEP-scoped key '{key}' outside of a step context. "
+                            "It will be stored in a temporary namespace."
+                        )
+                        step_key = "__no_step__"
+                    else:
+                        step_key = current_step
+
+                    if step_key not in self._step_stores:
+                        self._step_stores[step_key] = {}
+
+                    step_store = self._step_stores[step_key]
+                    if key in step_store:
+                        entry.created_at = step_store[key].created_at
+                    step_store[key] = entry
                 else:
-                    step_key = current_step
-
-                if step_key not in self._step_stores:
-                    self._step_stores[step_key] = {}
-
-                step_store = self._step_stores[step_key]
-                if key in step_store:
-                    entry.created_at = step_store[key].created_at
-                step_store[key] = entry
-            else:
-                # CHAIN and GLOBAL scoped data goes into shared store
-                if key in self._store:
-                    entry.created_at = self._store[key].created_at
-                self._store[key] = entry
+                    # CHAIN and GLOBAL scoped data goes into shared store
+                    if key in self._store:
+                        entry.created_at = self._store[key].created_at
+                    self._store[key] = entry
 
         logger.debug(
             f"Context async_set: {key} (scope={scope.value}, step={current_step}, tokens={token_count})"
@@ -1259,6 +1261,14 @@ class ChainContext(Generic[StateModel]):
                 del self._step_stores[step_name]
             else:
                 cleaned_count = 0
+
+            # Also clean up __no_step__ orphan entries to prevent memory leaks
+            if "__no_step__" in self._step_stores:
+                orphan_count = len(self._step_stores["__no_step__"])
+                if orphan_count > 0:
+                    logger.debug(f"Cleaning up {orphan_count} orphan __no_step__ entries")
+                    del self._step_stores["__no_step__"]
+                    cleaned_count += orphan_count
 
         # Reset the contextvar
         if token is not None:

@@ -503,9 +503,16 @@ class ResumableChainRunner:
         def on_step_complete(ctx: ChainContext, step_name: str, result_dict: dict):
             """Sync callback that schedules async checkpoint save."""
             # Create step checkpoint from result dict
+            # Handle three states: completed (success), skipped, or failed
+            if result_dict.get("success"):
+                step_status = "completed"
+            elif result_dict.get("skipped"):
+                step_status = "skipped"
+            else:
+                step_status = "failed"
             step_cp = StepCheckpoint(
                 step_name=step_name,
-                status="completed" if result_dict.get("success") else "failed",
+                status=step_status,
                 started_at=datetime.utcnow().isoformat(),
                 completed_at=datetime.utcnow().isoformat(),
                 output=result_dict.get("output"),
