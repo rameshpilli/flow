@@ -582,11 +582,11 @@ def depends_on(*step_names: str):
 
 def produces(*context_keys: str):
     """
-    Alternative way to declare what a step produces.
+    Declare what context keys a step produces (metadata only).
 
     Use this decorator in addition to @step when you want to
-    declare produces separately from the step definition.
-    Useful for cleaner code organization.
+    document what a step outputs. Useful for code organization
+    and introspection via CLI tools.
 
     Args:
         *context_keys (str): Context keys this step produces.
@@ -604,7 +604,7 @@ def produces(*context_keys: str):
         ...     ctx.set("metadata", metadata)
         ...     return {"context": context, "metadata": metadata}
         >>>
-        >>> # Combined with depends_on
+        >>> # Combined with depends_on for explicit dependency
         >>> @produces("summary")
         ... @depends_on("fetch_data")
         ... @step
@@ -615,13 +615,15 @@ def produces(*context_keys: str):
         ...     return {"summary": summary}
 
     Note:
-        The produces declaration is used for dependency tracking
-        and validation. Steps that depend on these keys will wait
-        for this step to complete.
+        This is metadata for documentation and introspection.
+        It does NOT automatically create dependencies. Use
+        @depends_on or deps=[] for actual dependency ordering.
+        The DAG executor uses explicit dependencies, not inferred
+        ones from produces declarations.
 
     See Also:
         step: Main step decorator with produces parameter.
-        depends_on: Declare step dependencies.
+        depends_on: Declare step dependencies (execution order).
     """
 
     def decorator(func: F) -> F:

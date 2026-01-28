@@ -297,13 +297,21 @@ class DAGBuilder:
                              (their dependencies are considered satisfied)
         """
         already_executed = already_executed or set()
+        node_names = set(nodes.keys())
 
         # Clone dependencies to avoid mutation, excluding already executed
         in_degree = {}
         for name, node in nodes.items():
             # Only count dependencies that are in this node set and not executed
             deps = node.dependencies - already_executed
-            deps = deps & set(nodes.keys())  # Only count deps within this set
+            # Warn about deps that reference steps not in this chain
+            missing_deps = deps - node_names - already_executed
+            if missing_deps:
+                logger.warning(
+                    f"Step '{name}' has dependencies {missing_deps} that are not in the chain. "
+                    f"These will be ignored. Use ao.check() to validate chain configuration."
+                )
+            deps = deps & node_names  # Only count deps within this set
             in_degree[name] = len(deps)
 
         dependents = {name: node.dependents.copy() for name, node in nodes.items()}
@@ -686,8 +694,10 @@ class DAGExecutor:
                     tracer=tracer,
                 )
 
-        if error_handling == "fail_fast":
+        if error_handling == "fail_fast" or error_handling == "retry":
             # TRUE fail-fast: cancel all tasks on first failure
+            # "retry" mode: steps retry internally, but after exhausting retries,
+            # failure should still stop the chain (fail-fast with retries)
             return await self._execute_group_fail_fast(
                 step_names, bounded_execute, nodes, ctx, chain_name
             )

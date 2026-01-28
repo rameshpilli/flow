@@ -36,24 +36,28 @@ Data can be stored with different lifetimes:
 | Scope | Lifetime | Use Case |
 |-------|----------|----------|
 | `STEP` | Single step | Temporary scratch data |
-| `CHAIN` | Entire chain | Share between steps |
-| `SESSION` | User session | Persist across chains |
+| `CHAIN` | Entire chain | Share between steps (default) |
 | `GLOBAL` | Application | Configuration, constants |
 
 ```python
-from agentorchestrator.core.context import Scope
+from agentorchestrator.core.context import ContextScope
 
 @ao.step(name="example")
 async def example(ctx):
     # Step-scoped (cleared after this step)
-    ctx.set("temp", "scratch", scope=Scope.STEP)
+    ctx.set("temp", "scratch", scope=ContextScope.STEP)
 
     # Chain-scoped (default - lives for chain duration)
     ctx.set("shared", "between steps")
 
-    # Session-scoped (persists across chains in session)
-    ctx.set("user_prefs", {"theme": "dark"}, scope=Scope.SESSION)
+    # Global-scoped (persists across chains - use sparingly)
+    ctx.set("config", {"debug": True}, scope=ContextScope.GLOBAL)
 ```
+
+!!! note "Session Persistence"
+    For session-scoped data that persists across chains, use `RedisChatStorage`
+    shared memory (see [Multi-Agent Systems](multi_agent.md)) or a dedicated
+    session store outside of ChainContext.
 
 ## Context Methods
 

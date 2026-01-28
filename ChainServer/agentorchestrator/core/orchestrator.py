@@ -687,16 +687,24 @@ class AgentOrchestrator:
         def decorator(func: F) -> F:
             step_name = name or func.__name__
 
+            # Merge deps from @depends_on decorator with explicit deps parameter
+            # @depends_on sets _ao_dependencies on the function
+            decorator_deps = getattr(func, "_ao_dependencies", [])
+            all_deps = list(effective_deps or []) + list(decorator_deps)
+
+            # Merge produces from @produces decorator with explicit produces parameter
+            decorator_produces = getattr(func, "_ao_produces", [])
+            all_produces = list(produces or []) + list(decorator_produces)
+
             # Resolve dependencies - can be functions or strings
             resolved_deps = []
-            if effective_deps:
-                for dep in effective_deps:
-                    if callable(dep) and hasattr(dep, "_fg_name"):
-                        resolved_deps.append(dep._fg_name)
-                    elif isinstance(dep, str):
-                        resolved_deps.append(dep)
-                    else:
-                        resolved_deps.append(str(dep))
+            for dep in all_deps:
+                if callable(dep) and hasattr(dep, "_fg_name"):
+                    resolved_deps.append(dep._fg_name)
+                elif isinstance(dep, str):
+                    resolved_deps.append(dep)
+                else:
+                    resolved_deps.append(str(dep))
 
             # Wrap handler to inject resources
             if resources:
@@ -729,7 +737,7 @@ class AgentOrchestrator:
                 name=step_name,
                 handler=handler,
                 dependencies=resolved_deps,
-                produces=produces,
+                produces=all_produces or None,  # Merged from decorator and param
                 resources=resources,  # Dedicated resources field
                 description=description,
                 group=group,
@@ -745,7 +753,7 @@ class AgentOrchestrator:
             func._fg_name = step_name
             func._fg_type = "step"
             func._fg_deps = resolved_deps
-            func._fg_produces = produces or []
+            func._fg_produces = all_produces or []
             func._fg_resources = resources or []
             func._fg_input_model = input_model
             func._fg_output_model = output_model
@@ -862,8 +870,11 @@ class AgentOrchestrator:
             # Extract error_handling from class if defined
             error_handling = getattr(cls, "error_handling", "fail_fast")
 
-            # Extract parallel_groups from class if defined
-            parallel_groups = getattr(cls, "parallel_groups", None)
+            # Extract parallel_groups from class attrs and @parallel decorator
+            # @parallel decorator sets _ao_parallel_groups, class may have parallel_groups
+            class_parallel = getattr(cls, "parallel_groups", None) or []
+            decorator_parallel = getattr(cls, "_ao_parallel_groups", [])
+            parallel_groups = list(class_parallel) + list(decorator_parallel) or None
 
             # Extract input/output models - decorator args take precedence over class attrs
             chain_input_model = input_model or getattr(cls, "input_model", None)
@@ -918,9 +929,15 @@ class AgentOrchestrator:
         Returns:
             str: Name of the created wrapper step.
         """
-        wrapper_step_name = f"__subchain__{subchain_name}"
+        # Include parent chain and config hash to avoid collisions when same
+        # subchain is used with different merge_map/merge_mode in different chains
+        import hashlib
+        config_hash = hashlib.md5(
+            f"{merge_map}:{merge_mode}".encode()
+        ).hexdigest()[:8]
+        wrapper_step_name = f"__subchain__{parent_chain_name}__{subchain_name}__{config_hash}"
 
-        # Check if wrapper already exists
+        # Check if wrapper already exists with same config
         if self._step_registry.has(wrapper_step_name):
             return wrapper_step_name
 
