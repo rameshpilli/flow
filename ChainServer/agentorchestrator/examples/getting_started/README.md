@@ -164,6 +164,53 @@ class ResearchChain:
     steps = ["fetch_company", "analyze"]
 ```
 
+### 9. Self-Critique / Reflection
+
+Agent self-critique with quality scoring and automatic revision.
+
+```bash
+python reflection_example.py
+python reflection_example.py --low-quality  # Trigger revision cycle
+```
+
+**What you'll learn:**
+- Using `ReflectionMiddleware` for automatic quality review
+- Using `@reflect` decorator on specific steps
+- Quality scoring and revision cycles
+- Accessing reflection trace results
+
+**Key patterns:**
+
+```python
+from agentorchestrator import AgentOrchestrator
+from agentorchestrator.middleware import (
+    ReflectionMiddleware,
+    ReflectionConfig,
+    reflect,
+)
+
+ao = AgentOrchestrator(name="reflection_example")
+
+# Option 1: Global middleware configuration
+ao.use(ReflectionMiddleware(
+    config=ReflectionConfig(
+        quality_threshold=0.8,  # Score needed to pass (0.0-1.0)
+        max_revisions=2,        # Max revision attempts
+    ),
+    llm_client=llm_client,
+))
+
+# Option 2: Per-step decorator
+@reflect(quality_threshold=0.85, max_revisions=1)
+@ao.step(name="generate_report")
+async def generate_report(ctx):
+    return {"report": "..."}
+
+# Access reflection trace after execution
+traces = result["context"]["data"].get("_reflection_trace", {})
+print(f"Quality Score: {traces['generate_report']['quality_score']}")
+```
+
 ## Next Steps
 
 After completing these examples:

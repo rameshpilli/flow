@@ -1258,7 +1258,7 @@ print(f"Revisions: {step_trace['revision_count']}")
 print(f"Passed Threshold: {step_trace['passed_threshold']}")
 ```
 
-> **Note**: The examples directory does not currently include a dedicated self-critique/reflection example. Use the middleware configuration shown above to add reflection to your pipelines.
+See: [examples/getting_started/reflection_example.py](examples/getting_started/reflection_example.py) for a complete working example.
 
 ---
 
