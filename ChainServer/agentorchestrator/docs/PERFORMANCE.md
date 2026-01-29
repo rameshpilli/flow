@@ -136,8 +136,14 @@ cache_middleware = CacheMiddleware(
 )
 ao.use(cache_middleware)
 
-# Or use cache_key on step
-@ao.step(cache_key=lambda ctx: f"search:{ctx.get('query')}")
+# Apply to a specific step
+ao.use(CacheMiddleware(
+    ttl_seconds=300,
+    cache_key_fn=lambda ctx, step: f"{step}:{ctx.get('query')}",
+    applies_to=["cached_search"],
+))
+
+@ao.step
 async def cached_search(ctx):
     # This result will be cached
     return await expensive_search(ctx.get("query"))

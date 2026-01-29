@@ -255,7 +255,7 @@ class AgentOrchestrator:
     def __init__(
         self,
         name: str = "agentorchestrator",
-        version: str = "1.0.0",
+        version: str = "0.1.0",
         max_parallel: int = 10,
         default_timeout_ms: int = 30000,
         *,
@@ -274,7 +274,7 @@ class AgentOrchestrator:
         Args:
             name (str): Name of this orchestrator instance. Used in logging
                 and identification. Default: "agentorchestrator".
-            version (str): Version string. Default: "1.0.0".
+            version (str): Version string. Default: "0.1.0".
             max_parallel (int): Maximum concurrent steps during execution.
                 Enforced via semaphore. Default: 10.
             default_timeout_ms (int): Default timeout for steps in milliseconds.
@@ -618,7 +618,10 @@ class AgentOrchestrator:
         description: str = "",
         group: str | None = None,
         timeout_ms: int = 30000,
+        timeout: float | int | None = None,  # Alias (seconds)
         retry: int = 0,
+        retry_delay_ms: int | None = None,
+        retry_delay: float | int | None = None,  # Alias (seconds)
         max_concurrency: int | None = None,
         input_model: type | None = None,
         output_model: type | None = None,
@@ -647,7 +650,12 @@ class AgentOrchestrator:
             description (str): Human-readable description.
             group (str | None): Step group for organization.
             timeout_ms (int): Execution timeout in milliseconds. Default: 30000.
+            timeout (float | int | None): Alias for timeout in seconds. If set,
+                overrides timeout_ms.
             retry (int): Number of retries on failure. Default: 0.
+            retry_delay_ms (int | None): Delay between retries in milliseconds.
+                Default: 1000ms if not set.
+            retry_delay (float | int | None): Alias for retry_delay in seconds.
             max_concurrency (int | None): Max parallel instances. None = unlimited.
             input_model (type | None): Pydantic model to validate input.
             output_model (type | None): Pydantic model to validate output.
@@ -747,6 +755,18 @@ class AgentOrchestrator:
             else:
                 handler = func
 
+            # Normalize timeout/retry delay aliases
+            effective_timeout_ms = (
+                int(float(timeout) * 1000)
+                if timeout is not None
+                else timeout_ms
+            )
+            effective_retry_delay_ms = (
+                int(float(retry_delay) * 1000)
+                if retry_delay is not None
+                else (retry_delay_ms if retry_delay_ms is not None else 1000)
+            )
+
             # Register step with dedicated fields (no more overloading retry_config)
             self._step_registry.register_step(
                 name=step_name,
@@ -757,8 +777,9 @@ class AgentOrchestrator:
                 resources=resources,  # Dedicated resources field
                 description=description,
                 group=group,
-                timeout_ms=timeout_ms,
+                timeout_ms=effective_timeout_ms,
                 retry_count=retry,  # Explicit retry count
+                retry_delay_ms=effective_retry_delay_ms,
                 max_concurrency=max_concurrency,  # Dedicated concurrency field
                 input_model=input_model,  # Input contract
                 output_model=output_model,  # Output contract
@@ -788,6 +809,7 @@ class AgentOrchestrator:
         name: str | None = None,
         description: str = "",
         group: str | None = None,
+        error_handling: str | None = None,
         dataflow: bool = False,
         input_model: type | None = None,
         output_model: type | None = None,
@@ -805,6 +827,8 @@ class AgentOrchestrator:
             name (str | None): Custom chain name. Default: class name.
             description (str): Human-readable description.
             group (str | None): Chain group for organization.
+            error_handling (str | None): Optional override for chain error handling.
+                If not provided, uses class attribute error_handling or fail_fast.
             dataflow (bool): Enable automatic dependency resolution via
                 produces/consumes declarations. When True, if step A has
                 produces=["foo"] and step B has consumes=["foo"], then B
@@ -890,7 +914,11 @@ class AgentOrchestrator:
                     resolved_steps.append(str(s))
 
             # Extract error_handling from class if defined
-            error_handling = getattr(cls, "error_handling", "fail_fast")
+            error_handling_value = error_handling or getattr(cls, "error_handling", None)
+            if error_handling_value is None and hasattr(cls, "fail_fast"):
+                error_handling_value = "fail_fast" if getattr(cls, "fail_fast") else "continue"
+            if error_handling_value is None:
+                error_handling_value = "fail_fast"
 
             # Extract parallel_groups from class attrs and @parallel decorator
             # @parallel decorator sets _ao_parallel_groups, class may have parallel_groups
@@ -911,7 +939,7 @@ class AgentOrchestrator:
                 steps=resolved_steps,
                 description=description,
                 group=group,
-                error_handling=error_handling,
+                error_handling=error_handling_value,
                 dataflow=chain_dataflow,
                 parallel_groups=parallel_groups,
                 input_model=chain_input_model,

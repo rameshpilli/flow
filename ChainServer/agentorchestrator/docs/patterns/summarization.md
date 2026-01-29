@@ -193,7 +193,7 @@ ao.use(SummarizerMiddleware(
 Limit items before summarizing:
 
 ```python
-from agentorchestrator.core.context import cap_items_with_metadata
+from agentorchestrator.middleware.offload import cap_items_with_metadata
 
 @ao.step(name="gather_news")
 async def gather_news(ctx):

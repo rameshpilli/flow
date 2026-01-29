@@ -75,14 +75,14 @@ class SkipStep(Exception):
     execution, or short-circuiting based on context.
 
     Attributes:
-        None
+        reason (str | None): Optional reason to record for skipped steps.
 
     Example:
         >>> class CacheMiddleware(Middleware):
         ...     async def before(self, ctx: ChainContext, step_name: str) -> None:
         ...         if self._is_cached(step_name, ctx):
         ...             ctx.set("result", self._get_cached(step_name, ctx))
-        ...             raise SkipStep()  # Step will not execute
+        ...             raise SkipStep("cache hit")  # Step will not execute
 
     Note:
         When SkipStep is raised, the step's main function is not called,
@@ -92,7 +92,10 @@ class SkipStep(Exception):
     See Also:
         Middleware.before(): Where SkipStep should be raised.
     """
-    pass
+
+    def __init__(self, reason: str | None = None):
+        super().__init__(reason or "skipped")
+        self.reason = reason
 
 
 class Middleware(ABC):

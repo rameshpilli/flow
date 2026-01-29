@@ -32,6 +32,7 @@ from agentorchestrator.core.registry import (
 from agentorchestrator.core.validation import (
     ContractValidationError,
     is_pydantic_model,
+    validate_input,
     validate_chain_input,
     validate_chain_output,
     validate_output,
@@ -991,10 +992,46 @@ class DAGExecutor:
             # This ensures step-scoped data is cleaned up even on exceptions
             async with ctx.step_scope(node.name):
                 with step_span_ctx as span:
+                    applied_middleware: list[Any] = []
                     try:
                         # Run before middleware with exception isolation
                         # Middleware failures should not crash the step
-                        await self._run_before_middleware(ctx, node.name)
+                        applied_middleware, skip_exc = await self._run_before_middleware(ctx, node.name)
+
+                        # Middleware can request skipping the step (e.g., cache hit)
+                        if skip_exc is not None:
+                            duration_ms = (time.perf_counter() - start_time) * 1000
+                            skip_reason = getattr(skip_exc, "reason", None) or str(skip_exc) or "skipped by middleware"
+                            step_result = StepResult(
+                                step_name=node.name,
+                                output=None,
+                                duration_ms=duration_ms,
+                                retry_count=attempt,
+                                skipped_reason=skip_reason,
+                            )
+
+                            # Run after middleware for cleanup (reverse order)
+                            await self._run_after_middleware(ctx, node.name, step_result, applied_middleware)
+
+                            await node.set_skipped(skip_reason)
+                            # Preserve timing info from this skip path
+                            node.result = step_result
+                            ctx.add_result(step_result)
+                            await self._emit_event(
+                                "StepSkipped",
+                                chain_name,
+                                node.name,
+                                ctx.request_id,
+                                payload={"reason": skip_reason},
+                            )
+
+                            if debug_callback is not None:
+                                self._invoke_debug_callback(
+                                    debug_callback, ctx, node.name, step_result
+                                )
+
+                            logger.info(f"Step {node.name} skipped by middleware: {skip_reason}")
+                            return step_result
 
                         # Short-circuit if a middleware (e.g., CacheMiddleware) marked a cache hit
                         if ctx.get(f"_cache_hit_{node.name}"):
@@ -1009,7 +1046,7 @@ class DAGExecutor:
                             step_result.metadata["cache_hit"] = True
 
                             # Run after middleware for consistency/cleanup
-                            await self._run_after_middleware(ctx, node.name, step_result)
+                            await self._run_after_middleware(ctx, node.name, step_result, applied_middleware)
 
                             await node.set_completed(step_result)
                             ctx.add_result(step_result)
@@ -1032,6 +1069,20 @@ class DAGExecutor:
 
                             logger.info(f"Step {node.name} completed from cache in {duration_ms:.2f}ms")
                             return step_result
+
+                        # ══════════════════════════════════════════════════════
+                        #              INPUT CONTRACT VALIDATION
+                        # ══════════════════════════════════════════════════════
+                        if node.spec.input_model and is_pydantic_model(node.spec.input_model):
+                            input_key = node.spec.input_key or "request"
+                            validated_input = validate_input(
+                                step_name=node.name,
+                                input_model=node.spec.input_model,
+                                value=ctx.get(input_key),
+                                input_key=input_key,
+                            )
+                            # Store validated input back into context for the step
+                            ctx.set(input_key, validated_input, scope=ContextScope.CHAIN)
 
                         # Execute the step handler
                         timeout_ms = node.spec.timeout_ms or self.default_timeout_ms
@@ -1085,7 +1136,7 @@ class DAGExecutor:
                         )
 
                         # Run after middleware with exception isolation
-                        await self._run_after_middleware(ctx, node.name, step_result)
+                        await self._run_after_middleware(ctx, node.name, step_result, applied_middleware)
 
                         # Thread-safe state transition to COMPLETED
                         await node.set_completed(step_result)
@@ -1132,6 +1183,9 @@ class DAGExecutor:
                             )
                             continue
 
+                        # Notify middleware about error
+                        await self._run_on_error_middleware(ctx, node.name, last_error)
+
                         # All retries exhausted or no retries allowed
                         step_result = StepResult(
                             step_name=node.name,
@@ -1144,7 +1198,7 @@ class DAGExecutor:
                         )
 
                         # Run after middleware for failed steps too (for metrics, logging)
-                        await self._run_after_middleware(ctx, node.name, step_result)
+                        await self._run_after_middleware(ctx, node.name, step_result, applied_middleware)
 
                         await node.set_failed(step_result)
                         ctx.add_result(step_result)
@@ -1194,6 +1248,9 @@ class DAGExecutor:
                                 f"Step {node.name} failed after {retry_config.count} retries"
                             )
 
+                        # Notify middleware about error
+                        await self._run_on_error_middleware(ctx, node.name, e)
+
                         step_result = StepResult(
                             step_name=node.name,
                             output=None,
@@ -1205,7 +1262,7 @@ class DAGExecutor:
                         )
 
                         # Run after middleware for failed steps too (for metrics, logging)
-                        await self._run_after_middleware(ctx, node.name, step_result)
+                        await self._run_after_middleware(ctx, node.name, step_result, applied_middleware)
 
                         await node.set_failed(step_result)
                         ctx.add_result(step_result)
@@ -1334,8 +1391,6 @@ class DAGExecutor:
             ...     ],
             ... }
         """
-        from agentorchestrator.core.registry import StepSpec
-        
         new_step_names = []
         for i, step_data in enumerate(dynamic_steps):
             if isinstance(step_data, dict) and "handler" in step_data:
@@ -1371,8 +1426,9 @@ class DAGExecutor:
                 },
             )
             
-            # Update chain spec if we have a chain name
-            if chain_name:
+            # Update chain spec only when a DAG rebuild is explicitly requested
+            # This avoids leaking dynamic steps into future runs by default.
+            if chain_name and ctx.get("__dag_needs_rebuild__"):
                 chain_spec = self.builder.chain_registry.get_spec(chain_name)
                 if chain_spec:
                     # Add new steps to chain if not already there
@@ -1427,7 +1483,9 @@ class DAGExecutor:
                         # Re-raise to propagate failure
                         raise
 
-    async def _run_before_middleware(self, ctx: ChainContext, step_name: str) -> None:
+    async def _run_before_middleware(
+        self, ctx: ChainContext, step_name: str
+    ) -> tuple[list[Any], Exception | None]:
         """
         Run before middleware with exception isolation.
 
@@ -1435,59 +1493,111 @@ class DAGExecutor:
         This ensures cross-cutting concerns (logging, metrics) don't break
         the core pipeline functionality.
         """
+        from agentorchestrator.middleware.base import SkipStep
+
+        applied: list[Any] = []
         for mw in self._middleware:
+            if not self._should_apply_middleware(mw, step_name, ctx=ctx, result=None):
+                continue
+            # Track middleware that applies (even if it has no before hook)
+            applied.append(mw)
             if hasattr(mw, "before"):
-                applies = getattr(mw, "_ao_applies_to", None)
-                # Safe check: handle non-iterable _ao_applies_to gracefully
                 try:
-                    should_apply = applies is None or step_name in applies
-                except TypeError:
-                    # _ao_applies_to is not iterable - log and skip this middleware
+                    await mw.before(ctx, step_name)
+                except SkipStep as e:
+                    # Skip step execution but keep track of applied middleware
+                    return applied, e
+                except Exception as e:
+                    # Log but don't crash - middleware shouldn't break steps
                     logger.warning(
-                        f"Middleware {mw.__class__.__name__} has invalid _ao_applies_to "
-                        f"(not iterable): {applies}. Skipping for step {step_name}."
+                        f"Before middleware {mw.__class__.__name__} failed for "
+                        f"step {step_name}: {e}. Continuing execution."
                     )
-                    continue
-                if should_apply:
-                    try:
-                        await mw.before(ctx, step_name)
-                    except Exception as e:
-                        # Log but don't crash - middleware shouldn't break steps
-                        logger.warning(
-                            f"Before middleware {mw.__class__.__name__} failed for "
-                            f"step {step_name}: {e}. Continuing execution."
-                        )
+
+        return applied, None
 
     async def _run_after_middleware(
-        self, ctx: ChainContext, step_name: str, result: StepResult
+        self,
+        ctx: ChainContext,
+        step_name: str,
+        result: StepResult,
+        middleware_list: list[Any] | None = None,
     ) -> None:
         """
         Run after middleware with exception isolation.
 
         Middleware failures are logged but don't crash the step execution.
         """
-        for mw in self._middleware:
+        middleware_list = middleware_list or self._middleware
+        # After hooks should run in reverse priority order
+        for mw in reversed(middleware_list):
             if hasattr(mw, "after"):
-                applies = getattr(mw, "_ao_applies_to", None)
-                # Safe check: handle non-iterable _ao_applies_to gracefully
-                try:
-                    should_apply = applies is None or step_name in applies
-                except TypeError:
-                    # _ao_applies_to is not iterable - log and skip this middleware
-                    logger.warning(
-                        f"Middleware {mw.__class__.__name__} has invalid _ao_applies_to "
-                        f"(not iterable): {applies}. Skipping for step {step_name}."
-                    )
+                if not self._should_apply_middleware(mw, step_name, ctx=ctx, result=result):
                     continue
-                if should_apply:
-                    try:
-                        await mw.after(ctx, step_name, result)
-                    except Exception as e:
-                        # Log but don't crash - middleware shouldn't break steps
-                        logger.warning(
-                            f"After middleware {mw.__class__.__name__} failed for "
-                            f"step {step_name}: {e}. Continuing execution."
-                        )
+                try:
+                    await mw.after(ctx, step_name, result)
+                except Exception as e:
+                    # Log but don't crash - middleware shouldn't break steps
+                    logger.warning(
+                        f"After middleware {mw.__class__.__name__} failed for "
+                        f"step {step_name}: {e}. Continuing execution."
+                    )
+
+    async def _run_on_error_middleware(
+        self,
+        ctx: ChainContext,
+        step_name: str,
+        error: Exception,
+    ) -> None:
+        """
+        Run on_error middleware with exception isolation.
+
+        Middleware failures are logged but don't crash the step execution.
+        """
+        for mw in self._middleware:
+            if hasattr(mw, "on_error"):
+                if not self._should_apply_middleware(mw, step_name, ctx=ctx, result=error):
+                    continue
+                try:
+                    await mw.on_error(ctx, step_name, error)
+                except Exception as e:
+                    logger.warning(
+                        f"on_error middleware {mw.__class__.__name__} failed for "
+                        f"step {step_name}: {e}. Continuing execution."
+                    )
+
+    def _should_apply_middleware(
+        self,
+        mw: Any,
+        step_name: str,
+        ctx: ChainContext | None = None,
+        result: Any = None,
+    ) -> bool:
+        """
+        Determine whether middleware should apply to a step.
+
+        Prefers Middleware.should_apply() if present; falls back to legacy
+        _ao_applies_to handling for compatibility.
+        """
+        if hasattr(mw, "should_apply"):
+            try:
+                return mw.should_apply(step_name, ctx, result)
+            except Exception as e:
+                logger.warning(
+                    f"Middleware {mw.__class__.__name__} should_apply failed for "
+                    f"step {step_name}: {e}. Defaulting to apply."
+                )
+                return True
+
+        applies = getattr(mw, "_ao_applies_to", None)
+        try:
+            return applies is None or step_name in applies
+        except TypeError:
+            logger.warning(
+                f"Middleware {mw.__class__.__name__} has invalid _ao_applies_to "
+                f"(not iterable): {applies}. Skipping for step {step_name}."
+            )
+            return False
 
     @property
     def chain_registry(self):

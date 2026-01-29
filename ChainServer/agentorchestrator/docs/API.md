@@ -198,7 +198,7 @@ ao = AgentOrchestrator(
 | `@ao.step(name, deps, produces)` | Register a processing step |
 | `@ao.chain(name, steps)` | Register a chain of steps |
 | `@ao.agent(name, capabilities)` | Register a data agent |
-| `@ao.middleware(name, priority)` | Register middleware |
+| *(Use `ao.use(...)`)* | Register middleware instances |
 
 #### Methods
 
@@ -228,23 +228,25 @@ The `launch()` method returns a dictionary with the following structure:
 
 ```python
 {
+    "request_id": "req_...",      # Unique request ID
+    "chain": "my_chain",          # Chain name
     "success": True,              # Whether all steps completed successfully
-    "results": [                  # List of per-step results in execution order
+    "results": [                  # Per-step results in completion order
         {
             "step": "step_name",
             "output": {...},      # What the step returned
             "duration_ms": 123.4,
-            "error": None,        # Error message if step failed
-            "error_type": None,   # Exception type if failed
+            "success": True,
         },
         # ... more steps
     ],
     "context": {                  # Final context state
         "data": {...},            # CHAIN-scoped data
-        "steps": {...},           # STEP-scoped data by step name
+        "results": [...],         # Lightweight step result summary
     },
     "duration_ms": 1234.5,        # Total execution time in milliseconds
-    "error": None,                # Error dict if chain failed: {"step": "...", "message": "...", "traceback": "..."}
+    "error": {...},               # Error dict if chain failed (optional)
+    "validated_output": ...,      # Present when output_model is set (optional)
 }
 ```
 
@@ -258,11 +260,14 @@ if result["success"]:
     # Access first step's output
     greeting = result["results"][0]["output"]["greeting"]
 
-    # Or access via context
-    greeting = result["context"]["data"]["greeting"]
+# Or access via context
+greeting = result["context"]["data"]["greeting"]
 else:
-    print(f"Failed at step {result['error']['step']}: {result['error']['message']}")
+    print(f"Failed: {result['error']['message']}")
 ```
+
+**Note**: `results` are ordered by completion time. For deterministic ordering in
+parallel DAGs, use `ao.check()`/`ao.graph()` for topology and step names.
 
 ---
 
@@ -337,6 +342,9 @@ async def process_data(ctx: ChainContext):
     return {"result": "done"}
 ```
 
+**Note**: `max_concurrency` applies at the **parallel group** level. If multiple
+steps in a group have limits, the minimum is used for the group.
+
 ### @ao.chain
 
 Register a chain of steps.
@@ -359,6 +367,8 @@ class MyPipeline:
         ["step_b", "step_c"],         # Group 2: runs in parallel
     ]
 ```
+
+You can also set `error_handling` as a class attribute instead of a decorator arg.
 
 #### Error Handling Modes
 
@@ -435,7 +445,7 @@ The executor emits these events during chain execution:
 
 | Event | When Emitted | Payload |
 |-------|--------------|---------|
-| `ChainStarted` | Before first step executes | `{step_count}` |
+| `ChainStarted` | Before first step executes | `{total_steps, groups}` |
 | `ChainCompleted` | After all steps complete successfully | `{completed, failed, skipped}` |
 | `ChainFailed` | When chain execution fails | `{error}` |
 

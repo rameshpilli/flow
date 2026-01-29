@@ -219,7 +219,10 @@ def step(
     description: str = "",
     group: str | None = None,
     timeout_ms: int = 30000,
+    timeout: float | int | None = None,
     retry: int = 0,
+    retry_delay_ms: int | None = None,
+    retry_delay: float | int | None = None,
     max_concurrency: int | None = None,
     # Input/Output Contracts
     input_model: type | None = None,
@@ -261,7 +264,11 @@ def step(
         description (str): Human-readable description.
         group (str | None): Step group for organization.
         timeout_ms (int): Execution timeout in milliseconds. Default: 30000.
+        timeout (float | int | None): Alias for timeout in seconds. If set,
+            overrides timeout_ms.
         retry (int): Number of retries on failure. Default: 0.
+        retry_delay_ms (int | None): Delay between retries in milliseconds.
+        retry_delay (float | int | None): Alias for retry_delay in seconds.
         max_concurrency (int | None): Max parallel instances of this step.
             None means unlimited. Use for rate-limited APIs.
         input_model (type | None): Pydantic model to validate input data.
@@ -350,7 +357,10 @@ def step(
             description=description,
             group=group,
             timeout_ms=timeout_ms,
+            timeout=timeout,
             retry=retry,
+            retry_delay_ms=retry_delay_ms,
+            retry_delay=retry_delay,
             max_concurrency=max_concurrency,
             input_model=input_model,
             output_model=output_model,
@@ -370,6 +380,7 @@ def chain(
     name: str | None = None,
     description: str = "",
     group: str | None = None,
+    error_handling: str | None = None,
     dataflow: bool = False,
     input_model: type | None = None,
     output_model: type | None = None,
@@ -395,6 +406,8 @@ def chain(
         name (str | None): Custom chain name. Default: class name.
         description (str): Human-readable description.
         group (str | None): Chain group for organization.
+        error_handling (str | None): Optional override for error handling.
+            If not provided, uses class attribute error_handling or fail_fast.
         dataflow (bool): Enable automatic dependency resolution via
             produces/consumes. When True, steps declaring consumes=["key"]
             will automatically depend on steps with produces=["key"].
@@ -469,6 +482,7 @@ def chain(
             name=name,
             description=description,
             group=group,
+            error_handling=error_handling,
             dataflow=dataflow,
             input_model=input_model,
             output_model=output_model,

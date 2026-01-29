@@ -24,9 +24,10 @@ async def fetch_data(ctx):
 |----------|-------------|
 | `name` | Unique identifier for the step |
 | `deps` | List of step names this depends on |
-| `timeout` | Maximum execution time (seconds) |
+| `timeout_ms` | Maximum execution time (milliseconds) |
+| `timeout` | Alias for timeout in seconds |
 | `retry` | Number of retry attempts |
-| `cache` | Enable/disable caching |
+| `retry_delay` | Delay between retries (seconds) |
 
 ```python
 @ao.step(
@@ -34,7 +35,7 @@ async def fetch_data(ctx):
     deps=["fetch_data"],
     timeout=30,
     retry=3,
-    cache=True,
+    retry_delay=1.0,
 )
 async def process(ctx):
     ...
@@ -46,7 +47,7 @@ Steps can return:
 
 - **Dict** - Merged into chain result
 - **None** - No contribution to result
-- **Exception** - Fails the step (with retry if configured)
+- **Raise an exception** - Fails the step (with retry if configured)
 
 ```python
 @ao.step(name="compute")
@@ -67,6 +68,10 @@ class DataPipeline:
 ### Dependency Resolution
 
 The framework automatically determines execution order:
+
+> Note: `steps = [...]` is not treated as an execution order unless you
+> declare dependencies. Use `deps`, `dataflow=True`, or `parallel_groups`
+> to enforce ordering.
 
 ```python
 @ao.step(name="a")
@@ -171,8 +176,10 @@ Apply middleware to specific steps:
 ```python
 from agentorchestrator.middleware import CacheMiddleware
 
+# Cache only this step
+ao.use(CacheMiddleware(ttl_seconds=3600, applies_to=["expensive_compute"]))
+
 @ao.step(name="expensive_compute")
-@CacheMiddleware(ttl_seconds=3600)  # Cache for 1 hour
 async def expensive_compute(ctx):
     ...
 ```
@@ -194,17 +201,13 @@ async def flaky_api(ctx):
 @ao.chain(name="resilient_chain")
 class ResilientChain:
     steps = ["a", "b", "c"]
-    fail_fast = False  # Continue on step failure
-
-    async def on_step_error(self, step_name, error, ctx):
-        ctx.set(f"{step_name}_error", str(error))
-        return None  # Return default value
+    error_handling = "continue"  # Continue on step failure
 ```
 
 ### Circuit Breaker
 
 ```python
-from agentorchestrator.agents import CircuitBreaker
+from agentorchestrator.utils import CircuitBreaker
 
 breaker = CircuitBreaker(failure_threshold=3, reset_timeout=60)
 

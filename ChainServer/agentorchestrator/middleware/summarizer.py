@@ -111,6 +111,7 @@ class LangChainSummarizer:
         chunk_size: int = 2000,
         chunk_overlap: int = 200,
         use_token_splitter: bool = False,  # Default to character splitter (no tiktoken dependency)
+        domain: str | None = None,  # Default content type for domain-specific prompts
         map_prompt: str | None = None,
         reduce_prompt: str | None = None,
         refine_prompt: str | None = None,
@@ -125,6 +126,7 @@ class LangChainSummarizer:
         self.chunk_overlap = chunk_overlap
         self.max_concurrent_chunks = max_concurrent_chunks
         self.tree_group_size = tree_group_size
+        self.domain = domain
 
         self.map_prompt = map_prompt or self.DEFAULT_MAP_PROMPT
         self.reduce_prompt = reduce_prompt or self.DEFAULT_REDUCE_PROMPT
@@ -241,6 +243,8 @@ class LangChainSummarizer:
             - TREE: 50K+ tokens, most efficient for large docs
         """
         strategy = strategy or self.strategy
+        if content_type is None and self.domain:
+            content_type = self.domain
 
         # Apply domain-specific prompts if content_type provided
         original_map = self.map_prompt
@@ -736,6 +740,8 @@ class SummarizerMiddleware(Middleware):
         summarizer: LangChainSummarizer | Callable | None = None,
         preserve_original: bool = True,
         step_thresholds: dict[str, int] | None = None,
+        step_max_tokens: dict[str, int] | None = None,  # Alias for step_thresholds
+        step_strategies: dict[str, SummarizationStrategy] | None = None,
         step_content_types: dict[str, str] | None = None,
         strategy: SummarizationStrategy = SummarizationStrategy.MAP_REDUCE,
     ):
@@ -747,6 +753,8 @@ class SummarizerMiddleware(Middleware):
             summarizer: LangChainSummarizer instance or legacy callable
             preserve_original: Store original output in context before summarizing
             step_thresholds: Per-step token thresholds
+            step_max_tokens: Alias for step_thresholds
+            step_strategies: Per-step summarization strategy overrides
             step_content_types: Map step names to content types for domain-aware prompts.
                                Register prompts using LangChainSummarizer.register_domain_prompts()
             strategy: Default summarization strategy
@@ -754,7 +762,13 @@ class SummarizerMiddleware(Middleware):
         super().__init__(priority=priority, applies_to=applies_to)
         self.max_tokens = max_tokens
         self.preserve_original = preserve_original
-        self.step_thresholds = step_thresholds or {}
+        combined_thresholds: dict[str, int] = {}
+        if step_thresholds:
+            combined_thresholds.update(step_thresholds)
+        if step_max_tokens:
+            combined_thresholds.update(step_max_tokens)
+        self.step_thresholds = combined_thresholds
+        self.step_strategies = step_strategies or {}
         self.step_content_types = step_content_types or {}
 
         # Set up summarizer
@@ -788,6 +802,7 @@ class SummarizerMiddleware(Middleware):
 
         max_tokens = self.step_thresholds.get(step_name, self.max_tokens)
         content_type = self.step_content_types.get(step_name)
+        strategy = self.step_strategies.get(step_name)
         output_str = self._to_string(result.output)
         token_count = count_tokens(output_str)
 
@@ -802,7 +817,10 @@ class SummarizerMiddleware(Middleware):
         # Summarize with domain-specific prompts if available
         if self.summarizer:
             summarized = await self.summarizer.summarize(
-                output_str, max_tokens, content_type=content_type
+                output_str,
+                max_tokens,
+                strategy=strategy,
+                content_type=content_type,
             )
         elif hasattr(self, "_legacy_summarizer"):
             summarized = await self._run_legacy_summarizer(output_str, max_tokens)
@@ -834,7 +852,7 @@ class SummarizerMiddleware(Middleware):
                 "original_tokens": token_count,
                 "summarized_tokens": summarized_tokens,
                 "summarization_strategy": (
-                    self.summarizer.strategy.value if self.summarizer else "legacy"
+                    (strategy or self.summarizer.strategy).value if self.summarizer else "legacy"
                 ),
                 "content_type": content_type,
             }
