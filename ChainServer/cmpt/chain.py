@@ -481,13 +481,25 @@ def _configure_middleware(
 
     # 4. Token Manager Middleware (priority 40 - manage LLM context budget)
     try:
-        from agentorchestrator.middleware import TokenManagerMiddleware
+        from agentorchestrator.middleware import TokenManagerMiddleware, TokenBudget
+
+        # Use TokenBudget for explicit token reservation (prevents context overflow)
+        budget = TokenBudget(
+            context_window=128000,      # GPT-4-turbo / Claude context window
+            reserved_output=8000,       # Reserve for model response
+            reserved_system=3000,       # Reserve for system prompt
+            reserved_history=10000,     # Reserve for conversation history
+            warning_threshold=0.8,      # Warn at 80% usage
+            critical_threshold=0.95,    # Force compression at 95%
+        )
+
         ao.use(TokenManagerMiddleware(
-            max_tokens=100000,  # 100K token budget for the chain
+            budget=budget,
             auto_summarize=enable_summarization,
+            target_ratio_after_compression=0.7,
             priority=40,
         ))
-        logger.debug("Added TokenManagerMiddleware for context management")
+        logger.debug("Added TokenManagerMiddleware with TokenBudget for context management")
     except ImportError:
         logger.debug("TokenManagerMiddleware not available, skipping")
 
@@ -527,6 +539,9 @@ def _configure_middleware(
                     )
                     register_summarizer_prompts(type(summarizer))
 
+                    # Use MAP_REDUCE for medium-sized responses (10K-50K tokens)
+                    # For larger responses (50K+ tokens), consider TREE strategy:
+                    # strategy=SummarizationStrategy.TREE
                     ao.use(SummarizerMiddleware(
                         summarizer=summarizer,
                         strategy=SummarizationStrategy.MAP_REDUCE,

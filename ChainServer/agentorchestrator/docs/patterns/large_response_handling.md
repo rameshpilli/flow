@@ -99,8 +99,40 @@ ao.use(SummarizerMiddleware(
 | Strategy | Speed | Quality | Use When |
 |----------|-------|---------|----------|
 | `STUFF` | Fast | Good | Single doc < 4K tokens |
-| `MAP_REDUCE` | Medium | Good | Large docs, parallelizable |
+| `MAP_REDUCE` | Medium | Good | Large docs (10K-50K), parallelizable |
 | `REFINE` | Slow | Best | Need coherent narrative |
+| `TREE` | Fast | Good | Massive docs (50K+), hierarchical |
+
+### 1b. RollingSummaryMiddleware
+
+**Purpose**: Incrementally summarize data as it accumulates, avoiding re-processing.
+
+**When to Use**:
+- Iterative data gathering (pagination, streaming)
+- Long conversations that need compression
+- Multi-source aggregation over time
+
+**Configuration**:
+
+```python
+from agentorchestrator.middleware import RollingSummaryMiddleware
+
+ao.use(RollingSummaryMiddleware(
+    max_tokens=4000,
+    summarizer=my_summarizer,
+    recent_buffer_tokens=1000,  # Keep last 1000 tokens uncompressed
+    applies_to=["gather_*"],     # Apply to all gather steps
+))
+```
+
+**How it works**:
+```
+Iteration 1: 15K tokens → summarize → 2K tokens
+Iteration 2: +10K NEW tokens → summarize NEW only → merge → 3K
+Iteration 3: +8K NEW tokens → summarize NEW only → merge → 3.5K
+
+Total processed: 33K tokens (vs re-summarizing everything each time)
+```
 
 ### 2. OffloadMiddleware
 
@@ -173,16 +205,28 @@ ao.use(middleware)
 **Configuration**:
 
 ```python
-from agentorchestrator.middleware import TokenManagerMiddleware
+from agentorchestrator.middleware import TokenManagerMiddleware, TokenBudget
+
+# Use TokenBudget for explicit reservation (recommended)
+budget = TokenBudget(
+    context_window=128000,      # Total LLM context window
+    reserved_output=8000,       # Reserved for model response
+    reserved_system=3000,       # Reserved for system prompt
+    reserved_history=15000,     # Reserved for conversation history
+    warning_threshold=0.8,      # Warn at 80%
+    critical_threshold=0.95,    # Force compression at 95%
+)
 
 ao.use(TokenManagerMiddleware(
-    max_total_tokens=100_000,      # Total budget
-    warning_threshold=0.8,         # Warn at 80%
+    budget=budget,
     auto_summarize=True,           # Auto-summarize when over limit
     auto_offload=True,             # Auto-offload large payloads
     summarize_oldest_first=True,   # Compress oldest steps first
+    target_ratio_after_compression=0.7,  # Compress to 70% when critical
 ))
 ```
+
+> **Note**: The `TokenBudget` approach with explicit reservations is preferred over `max_total_tokens` as it prevents silent output truncation.
 
 ---
 
@@ -207,9 +251,14 @@ ao.use(LoggerMiddleware(level="INFO"))
 
 # Layer 2: Token budget (priority 20)
 # Tracks all tokens, triggers auto-actions
+budget = TokenBudget(
+    context_window=128000,
+    reserved_output=8000,
+    reserved_system=3000,
+    reserved_history=15000,
+)
 ao.use(TokenManagerMiddleware(
-    max_total_tokens=100_000,
-    warning_threshold=0.8,
+    budget=budget,
     auto_summarize=True,
     auto_offload=True,
 ))
@@ -452,13 +501,22 @@ ao.use(OffloadMiddleware(
 1. Enable `auto_summarize` and `auto_offload`
 2. Add more aggressive per-step summarization
 3. Reduce the number of parallel agents
+4. Use `TokenBudget` with explicit reservations
 
 ```python
+budget = TokenBudget(
+    context_window=128000,
+    reserved_output=8000,
+    reserved_system=3000,
+    reserved_history=15000,
+    warning_threshold=0.7,      # Start warning earlier
+    critical_threshold=0.85,    # Force compression earlier
+)
 ao.use(TokenManagerMiddleware(
-    max_total_tokens=100_000,
+    budget=budget,
     auto_summarize=True,
     auto_offload=True,
-    aggressive_threshold=0.7,  # Start compressing at 70%
+    target_ratio_after_compression=0.6,  # Compress more aggressively
 ))
 ```
 
@@ -490,6 +548,7 @@ from agentorchestrator import AgentOrchestrator, produces, consumes
 from agentorchestrator.middleware import (
     LoggerMiddleware,
     TokenManagerMiddleware,
+    TokenBudget,
     SummarizerMiddleware,
     OffloadMiddleware,
     CircuitBreakerMiddleware,
@@ -510,9 +569,14 @@ ao.use(CircuitBreakerMiddleware(
     recovery_timeout=30.0,
 ))
 
+budget = TokenBudget(
+    context_window=150_000,
+    reserved_output=8000,
+    reserved_system=3000,
+    reserved_history=10000,
+)
 ao.use(TokenManagerMiddleware(
-    max_total_tokens=150_000,
-    warning_threshold=0.8,
+    budget=budget,
     auto_summarize=True,
 ))
 
@@ -580,6 +644,25 @@ class CMPTChain:
 4. **Test summary quality** - Verify downstream steps get what they need
 5. **Monitor metrics** - Use `ao.get_middleware_metrics()` to tune thresholds
 6. **Start conservative** - Begin with higher thresholds, reduce as needed
+7. **Use TokenBudget** - Explicit reservations prevent silent output truncation
+8. **Choose the right strategy** - TREE for 50K+, MAP_REDUCE for 10K-50K, STUFF for <4K
+
+### Monitoring Middleware Metrics
+
+```python
+# After chain execution
+result = await ao.launch("my_chain", data)
+
+# Get all middleware metrics
+metrics = ao.get_middleware_metrics()
+for mw_name, mw_metrics in metrics.items():
+    print(f"{mw_name}: {mw_metrics}")
+
+# Get specific middleware metrics
+token_metrics = ao.get_middleware_metrics("token_manager")
+print(f"Peak usage: {token_metrics['peak_usage']}")
+print(f"Total compressions: {token_metrics['total_compressions']}")
+```
 
 ---
 

@@ -41,7 +41,7 @@ AgentOrchestrator is a lightweight, decorator-driven framework for building data
 | **Shared Squad Memory** | Cross-agent shared context for collaborative multi-agent teams |
 | **Secret Management** | Standardized HashiCorp Vault integration with environment fallback |
 | **Middleware Stack** | Pluggable logging, caching, rate limiting, and circuit breakers |
-| **Summarization Strategies** | Three LLM strategies (STUFF, MAP_REDUCE, REFINE) with domain-specific prompts for large responses |
+| **Summarization Strategies** | Four LLM strategies (STUFF, MAP_REDUCE, REFINE, TREE) with domain-specific prompts for large responses |
 | **Self-Critique (Reflection)** | Agent self-critique with quality scoring, automatic revision, and `@reflect` decorator |
 | **Citation Tracking** | Automatic source attribution and citation reports for RAG pipelines |
 | **Memory Lifecycle** | Auto-promote important session data to long-term memory with importance scoring |
@@ -885,8 +885,10 @@ ao.use(ReflectionMiddleware(quality_threshold=0.8, max_revisions=2))
 # Citation tracking for RAG
 ao.use(CitationMiddleware())
 
-# Token budget management
-ao.use(TokenManagerMiddleware(max_tokens=8000))
+# Token budget management with explicit reservations
+from agentorchestrator.middleware import TokenBudget
+budget = TokenBudget(context_window=128000, reserved_output=8000)
+ao.use(TokenManagerMiddleware(budget=budget))
 
 # Metrics collection
 ao.use(MetricsMiddleware())
@@ -912,6 +914,7 @@ ao.use(IdempotencyMiddleware())
 | `OffloadMiddleware` | Auto-offload large payloads to Redis |
 | `UsageAnalyticsMiddleware` | Usage tracking and analytics |
 | `MemoryLifecycleMiddleware` | Auto-promote session data to long-term memory |
+| `RollingSummaryMiddleware` | Incremental summarization for iterative data gathering |
 
 ---
 
@@ -943,13 +946,14 @@ ao.use(SummarizerMiddleware(
 ))
 ```
 
-### Three Strategies
+### Four Strategies
 
 | Strategy | Best For | How It Works |
 |----------|----------|--------------|
-| **STUFF** | Small documents (<8K tokens) | Single LLM call with all text |
-| **MAP_REDUCE** | Large documents, parallel processing | Split → summarize chunks in parallel → combine |
+| **STUFF** | Small documents (<4K tokens) | Single LLM call with all text |
+| **MAP_REDUCE** | Medium documents (10K-50K tokens), parallel processing | Split → summarize chunks in parallel → combine |
 | **REFINE** | Maintaining coherence, sequential docs | Iteratively refine summary with each chunk |
+| **TREE** | Massive documents (50K+ tokens), hierarchical | Multi-level parallel summarization tree |
 
 ```
 MAP_REDUCE Strategy:
@@ -1059,9 +1063,15 @@ For comprehensive context management, layer multiple middleware:
 
 ```python
 # 1. Token budget management (triggers auto-compression)
-ao.use(TokenManagerMiddleware(
-    max_total_tokens=8000,
+budget = TokenBudget(
+    context_window=128000,
+    reserved_output=8000,
+    reserved_system=3000,
+    reserved_history=15000,
     warning_threshold=0.8,
+)
+ao.use(TokenManagerMiddleware(
+    budget=budget,
     auto_summarize=True,
 ))
 

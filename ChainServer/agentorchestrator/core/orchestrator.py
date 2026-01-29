@@ -2960,6 +2960,684 @@ class AgentOrchestrator:
                 self.graph(chain_name, "mermaid")
         return self.check(chain_name)
 
+    # ══════════════════════════════════════════════════════════════════
+    #                    DEVELOPER DISCOVERY (DX)
+    # ══════════════════════════════════════════════════════════════════
+
+    def help(self, topic: str | None = None) -> str:
+        """
+        Interactive help for developers - shows available methods and examples.
+
+        When called without arguments, displays a categorized list of all
+        available methods with brief descriptions. When called with a topic,
+        shows detailed help for that specific topic.
+
+        Args:
+            topic: Optional topic to get detailed help on. Options:
+                - None: Show all methods categorized
+                - "decorators": Show @ao.step, @ao.chain, @ao.agent usage
+                - "execution": Show launch(), run_step(), resume() usage
+                - "middleware": Show use(), list_middleware() usage
+                - "validation": Show check(), graph(), list_defs() usage
+                - "patterns": Show common patterns and examples
+                - "summarization": Show summarization strategies
+                - "multi-agent": Show multi-agent patterns
+
+        Returns:
+            str: Formatted help text (also printed to stdout).
+
+        Example:
+            >>> ao = AgentOrchestrator()
+            >>> ao.help()  # Show all methods
+            >>> ao.help("decorators")  # Show decorator usage
+            >>> ao.help("patterns")  # Show common patterns
+        """
+        if topic is None:
+            output = self._help_overview()
+        elif topic == "decorators":
+            output = self._help_decorators()
+        elif topic == "execution":
+            output = self._help_execution()
+        elif topic == "middleware":
+            output = self._help_middleware()
+        elif topic == "validation":
+            output = self._help_validation()
+        elif topic == "patterns":
+            output = self._help_patterns()
+        elif topic == "summarization":
+            output = self._help_summarization()
+        elif topic == "multi-agent":
+            output = self._help_multi_agent()
+        else:
+            output = f"Unknown topic: {topic}\n\nAvailable topics:\n"
+            output += "  decorators, execution, middleware, validation, patterns, summarization, multi-agent"
+
+        print(output)
+        return output
+
+    def _help_overview(self) -> str:
+        """Generate overview help text."""
+        return f"""
+╔══════════════════════════════════════════════════════════════════════╗
+║                    AgentOrchestrator Help                            ║
+║                    {self.name} v{self.version}                                     ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+Current State:
+  • Agents:     {len(self.list_agents())}
+  • Steps:      {len(self.list_steps())}
+  • Chains:     {len(self.list_chains())}
+  • Middleware: {len(self._middleware)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📌 DECORATORS (define components)
+  @ao.step(name, deps)     Define a processing step
+  @ao.chain(name)          Define a chain of steps
+  @ao.agent(name)          Define a data agent
+
+🚀 EXECUTION (run workflows)
+  ao.launch(chain, data)   Execute a chain async
+  ao.launch_sync(...)      Execute synchronously
+  ao.run_step(step, data)  Run single step in isolation
+  ao.resume(run_id)        Resume a failed run
+
+🔧 MIDDLEWARE (add behaviors)
+  ao.use(middleware)       Add middleware to pipeline
+  ao.list_middleware()     List registered middleware
+  ao.get_middleware_metrics()  Get middleware metrics
+
+✅ VALIDATION (inspect & debug)
+  ao.check()               Validate all definitions
+  ao.graph(chain)          ASCII DAG visualization
+  ao.list_defs()           List all definitions
+  ao.explain(chain)        Explain execution plan
+
+📖 MORE HELP
+  ao.help("decorators")    Decorator usage examples
+  ao.help("execution")     Execution patterns
+  ao.help("middleware")    Middleware configuration
+  ao.help("patterns")      Common AI workflow patterns
+  ao.help("summarization") Large response handling
+  ao.help("multi-agent")   Multi-agent patterns
+
+💡 QUICK START
+  from agentorchestrator import AgentOrchestrator
+
+  ao = AgentOrchestrator(name="my_app")
+
+  @ao.step(name="greet")
+  async def greet(ctx):
+      name = ctx.get("name", "World")
+      return {{"greeting": f"Hello, {{name}}!"}}
+
+  @ao.chain(name="hello_chain")
+  class HelloChain:
+      steps = ["greet"]
+
+  result = await ao.launch("hello_chain", {{"name": "Developer"}})
+"""
+
+    def _help_decorators(self) -> str:
+        """Generate decorator help text."""
+        return """
+📌 DECORATORS - Define Components
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@ao.step(name, deps, produces, consumes, retry, timeout_ms)
+─────────────────────────────────────────────────────────────
+Define a processing step in your chain.
+
+  @ao.step(name="fetch_data")
+  async def fetch_data(ctx):
+      query = ctx.get("query")
+      data = await api.fetch(query)
+      ctx.set("data", data)
+      return {"fetched": len(data)}
+
+  # With dependencies
+  @ao.step(name="process", deps=["fetch_data"])
+  async def process(ctx):
+      data = ctx.get("data")
+      return {"processed": transform(data)}
+
+  # With dataflow (auto-dependency resolution)
+  from agentorchestrator import produces, consumes
+
+  @produces("company_data")
+  @ao.step(name="fetch")
+  async def fetch(ctx): ...
+
+  @consumes("company_data")
+  @ao.step(name="analyze")
+  async def analyze(ctx): ...
+
+@ao.chain(name, dataflow, error_handling)
+─────────────────────────────────────────
+Define a chain that orchestrates steps.
+
+  @ao.chain(name="my_pipeline")
+  class MyPipeline:
+      steps = ["fetch_data", "process", "summarize"]
+
+  # With dataflow-based dependencies
+  @ao.chain(name="research", dataflow=True)
+  class ResearchPipeline:
+      steps = ["fetch", "analyze", "report"]
+
+  # With error handling
+  @ao.chain(name="robust", error_handling="continue")
+  class RobustPipeline:
+      steps = ["step1", "step2", "step3"]  # continues on failure
+
+@ao.agent(name, capabilities)
+─────────────────────────────
+Define a data fetching agent.
+
+  from agentorchestrator.agents import BaseAgent, AgentResult
+
+  @ao.agent(name="news_agent", capabilities=["search"])
+  class NewsAgent(BaseAgent):
+      async def fetch(self, query: str) -> AgentResult:
+          results = await news_api.search(query)
+          return AgentResult(data=results, source="news_api", query=query)
+"""
+
+    def _help_execution(self) -> str:
+        """Generate execution help text."""
+        return """
+🚀 EXECUTION - Run Workflows
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ao.launch(chain_name, initial_data) → dict
+──────────────────────────────────────────
+Execute a chain asynchronously.
+
+  result = await ao.launch("my_chain", {"query": "Apple Inc"})
+
+  if result["success"]:
+      output = result["results"][-1]["output"]
+      context = result["context"]
+  else:
+      print(f"Failed: {result['error']}")
+
+ao.launch_sync(chain_name, initial_data) → dict
+───────────────────────────────────────────────
+Execute synchronously (for scripts/notebooks).
+
+  result = ao.launch_sync("my_chain", {"query": "Apple"})
+
+ao.run_step(step_name, initial_data) → dict
+───────────────────────────────────────────
+Test a single step in isolation.
+
+  result = await ao.run_step("fetch_data", {"query": "test"})
+  print(result["output"])
+
+ao.launch_resumable(chain_name, initial_data) → dict
+────────────────────────────────────────────────────
+Execute with checkpointing for resume support.
+
+  result = await ao.launch_resumable("long_chain", data)
+  run_id = result["run_id"]  # Save this!
+
+ao.resume(run_id) → dict
+────────────────────────
+Resume a failed run from last checkpoint.
+
+  # If chain failed partway through:
+  result = await ao.resume(run_id)
+"""
+
+    def _help_middleware(self) -> str:
+        """Generate middleware help text."""
+        return """
+🔧 MIDDLEWARE - Add Behaviors
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ao.use(middleware)
+──────────────────
+Add middleware to the pipeline. Order matters (priority).
+
+  from agentorchestrator.middleware import (
+      LoggerMiddleware,
+      CacheMiddleware,
+      TokenManagerMiddleware,
+      TokenBudget,
+      SummarizerMiddleware,
+      SummarizationStrategy,
+      RollingSummaryMiddleware,
+  )
+
+  # Logging
+  ao.use(LoggerMiddleware(level="INFO"))
+
+  # Caching
+  ao.use(CacheMiddleware(ttl_seconds=300))
+
+  # Token budget management (RECOMMENDED)
+  budget = TokenBudget(
+      context_window=128000,
+      reserved_output=8000,
+      reserved_system=3000,
+      reserved_history=15000,
+  )
+  ao.use(TokenManagerMiddleware(budget=budget, auto_summarize=True))
+
+  # Summarization for specific steps
+  ao.use(SummarizerMiddleware(
+      summarizer=my_summarizer,
+      strategy=SummarizationStrategy.TREE,  # STUFF, MAP_REDUCE, REFINE, TREE
+      applies_to=["gather_*"],  # Glob patterns supported
+  ))
+
+  # Rolling summary for iterative data
+  ao.use(RollingSummaryMiddleware(
+      max_tokens=4000,
+      recent_buffer_tokens=1000,
+  ))
+
+ao.list_middleware() → list[dict]
+─────────────────────────────────
+List all registered middleware with info.
+
+  for mw in ao.list_middleware():
+      print(f"{mw['type']} (priority={mw['priority']})")
+
+ao.get_middleware_metrics(name=None) → dict
+───────────────────────────────────────────
+Get metrics from middleware for monitoring.
+
+  # All middleware metrics
+  metrics = ao.get_middleware_metrics()
+
+  # Specific middleware
+  token_metrics = ao.get_middleware_metrics("token_manager")
+  print(f"Peak usage: {token_metrics['peak_usage']}")
+"""
+
+    def _help_validation(self) -> str:
+        """Generate validation help text."""
+        return """
+✅ VALIDATION - Inspect & Debug
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ao.check(chain_name=None) → ValidationResult
+────────────────────────────────────────────
+Validate all definitions or a specific chain.
+
+  result = ao.check()
+  print(f"Valid: {result.valid}")
+  for warning in result.warnings:
+      print(f"⚠️  {warning}")
+
+ao.graph(chain_name, format="ascii") → str
+──────────────────────────────────────────
+Generate DAG visualization.
+
+  # ASCII (terminal)
+  print(ao.graph("my_chain"))
+
+  # Mermaid (for docs)
+  print(ao.graph("my_chain", format="mermaid"))
+
+ao.list_defs() → dict
+─────────────────────
+List all registered definitions.
+
+  defs = ao.list_defs()
+  print(f"Agents: {defs['agents']}")
+  print(f"Steps: {defs['steps']}")
+  print(f"Chains: {defs['chains']}")
+
+ao.explain(chain_name) → str
+────────────────────────────
+Explain execution plan for a chain.
+
+  explanation = ao.explain("my_chain")
+  print(explanation)
+"""
+
+    def _help_patterns(self) -> str:
+        """Generate patterns help text."""
+        return """
+📖 COMMON PATTERNS - AI Workflow Examples
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. PARALLEL DATA FETCHING
+─────────────────────────
+  @ao.step(name="plan")
+  async def plan(ctx): ...
+
+  @ao.step(name="fetch_news", deps=["plan"])
+  async def fetch_news(ctx): ...
+
+  @ao.step(name="fetch_sec", deps=["plan"])
+  async def fetch_sec(ctx): ...
+
+  @ao.step(name="synthesize", deps=["fetch_news", "fetch_sec"])
+  async def synthesize(ctx): ...
+
+  # fetch_news and fetch_sec run in parallel!
+
+2. DATAFLOW-BASED DEPENDENCIES
+──────────────────────────────
+  from agentorchestrator import produces, consumes
+
+  @produces("raw_data")
+  @ao.step(name="fetch")
+  async def fetch(ctx):
+      ctx.set("raw_data", data)
+
+  @consumes("raw_data")
+  @produces("analysis")
+  @ao.step(name="analyze")
+  async def analyze(ctx):
+      data = ctx.get("raw_data")
+      ctx.set("analysis", result)
+
+  @ao.chain(name="research", dataflow=True)
+  class ResearchChain:
+      steps = ["fetch", "analyze"]
+
+3. TYPE-SAFE STATE
+──────────────────
+  from pydantic import BaseModel
+
+  class MyState(BaseModel):
+      counter: int = 0
+      items: list[str] = []
+
+  @ao.step(name="process", state_model=MyState)
+  async def process(ctx):
+      async with ctx.edit_state() as state:
+          state.counter += 1
+          state.items.append("new")
+
+4. WITH MIDDLEWARE STACK
+────────────────────────
+  from agentorchestrator.middleware import *
+
+  budget = TokenBudget(context_window=128000, reserved_output=8000)
+  ao.use(TokenManagerMiddleware(budget=budget))
+  ao.use(SummarizerMiddleware(strategy=SummarizationStrategy.TREE))
+  ao.use(RollingSummaryMiddleware(max_tokens=4000))
+
+  # Now your chain handles large responses automatically!
+"""
+
+    def _help_summarization(self) -> str:
+        """Generate summarization help text."""
+        return """
+📚 SUMMARIZATION - Handle Large Responses
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+STRATEGY SELECTION GUIDE
+────────────────────────
+  | Strategy    | Best For           | Tokens   |
+  |-------------|--------------------| ---------|
+  | STUFF       | Small docs         | < 4K     |
+  | MAP_REDUCE  | Medium, parallel   | 10K-50K  |
+  | REFINE      | Quality-critical   | 10K-50K  |
+  | TREE        | Massive docs       | 50K+     |
+
+TOKEN BUDGET (Prevents Overflow)
+────────────────────────────────
+  from agentorchestrator.middleware import TokenBudget, TokenManagerMiddleware
+
+  budget = TokenBudget(
+      context_window=128000,    # Total LLM context
+      reserved_output=8000,     # For model response
+      reserved_system=3000,     # For system prompt
+      reserved_history=15000,   # For conversation
+      warning_threshold=0.8,    # Warn at 80%
+      critical_threshold=0.95,  # Force compress at 95%
+  )
+
+  ao.use(TokenManagerMiddleware(
+      budget=budget,
+      auto_summarize=True,
+      target_ratio_after_compression=0.7,
+  ))
+
+TREE SUMMARIZATION (For 50K+ tokens)
+────────────────────────────────────
+  ao.use(SummarizerMiddleware(
+      summarizer=my_summarizer,
+      strategy=SummarizationStrategy.TREE,
+      max_tokens=4000,
+      applies_to=["gather_sec", "gather_research"],
+  ))
+
+ROLLING SUMMARY (Iterative data)
+────────────────────────────────
+  ao.use(RollingSummaryMiddleware(
+      max_tokens=4000,
+      summarizer=my_summarizer,
+      recent_buffer_tokens=1000,  # Keep recent uncompressed
+      applies_to=["gather_*"],
+  ))
+
+QUERY-AWARE COMPRESSION
+───────────────────────
+  summary = await summarizer.summarize_with_query(
+      text=large_doc,
+      query="What are the key risks?",
+      max_tokens=2000,
+      relevance_threshold=0.3,
+  )
+"""
+
+    def _help_multi_agent(self) -> str:
+        """Generate multi-agent help text."""
+        return """
+🤖 MULTI-AGENT PATTERNS
+━━━━━━━━━━━━━━━━━━━━━━━
+
+SQUAD PATTERN (Recommended)
+───────────────────────────
+  from agentorchestrator.squad import Squad, SquadOptions
+
+  squad = Squad(
+      supervisor=lead_agent,
+      agents=[research, analyst, writer],
+      options=SquadOptions(trace=True),
+  )
+
+  result = await squad.run("Research AI trends and write a report")
+
+CONTEXT ISOLATION (Prevent pollution)
+─────────────────────────────────────
+  from agentorchestrator.squad.context import (
+      ContextIsolationManager,
+      IsolationLevel,
+  )
+
+  isolation = ContextIsolationManager(coordinator_context=ctx)
+
+  # Each agent gets isolated namespace
+  ns_research = isolation.create_namespace("research", IsolationLevel.FULL)
+  ns_analyst = isolation.create_namespace("analyst", IsolationLevel.FULL)
+
+  # Share only what's needed
+  isolation.share_with_all("query")
+  isolation.share_between("research", "findings", ["analyst"])
+
+NAMESPACE-AWARE BUDGETS (Multi-agent token management)
+─────────────────────────────────────────────────────
+  from agentorchestrator.middleware import (
+      NamespaceBudgetManager,
+      BudgetAllocationStrategy,
+  )
+
+  manager = NamespaceBudgetManager(
+      global_budget=budget,
+      strategy=BudgetAllocationStrategy.PRIORITY,
+  )
+
+  manager.register_namespace("research", priority=3)  # More tokens
+  manager.register_namespace("summary", priority=1)   # Fewer tokens
+  manager.allocate()
+
+RESULT AGGREGATION
+──────────────────
+  from agentorchestrator.squad.context import (
+      ResultAggregator,
+      AggregationStrategy,
+  )
+
+  aggregator = ResultAggregator(
+      strategy=AggregationStrategy.SYNTHESIZE,
+      summarizer=my_summarizer,
+      pre_summarize_threshold_tokens=10000,
+  )
+
+  aggregator.add_from_namespace("research", ns_research)
+  aggregator.add_from_namespace("analyst", ns_analyst)
+
+  result = await aggregator.aggregate(llm=llm_client)
+"""
+
+    def explain(self, chain_name: str) -> str:
+        """
+        Explain the execution plan for a chain.
+
+        Provides a human-readable explanation of how a chain will execute,
+        including step order, dependencies, and parallel execution groups.
+
+        Args:
+            chain_name: Name of the chain to explain.
+
+        Returns:
+            str: Human-readable execution explanation.
+
+        Example:
+            >>> ao.explain("my_chain")
+            Execution Plan for 'my_chain':
+            1. [PARALLEL] fetch_news, fetch_sec
+            2. [SEQUENTIAL] synthesize (depends on: fetch_news, fetch_sec)
+        """
+        chain_def = self._chain_registry.get(chain_name)
+        if not chain_def:
+            return f"Chain '{chain_name}' not found."
+
+        steps = getattr(chain_def, "steps", [])
+        if not steps:
+            return f"Chain '{chain_name}' has no steps defined."
+
+        output = f"\n📋 Execution Plan for '{chain_name}'\n"
+        output += "━" * 50 + "\n\n"
+
+        # Build dependency graph
+        step_deps: dict[str, list[str]] = {}
+        for step_name in steps:
+            step_def = self._step_registry.get(step_name)
+            if step_def:
+                deps = getattr(step_def, "_ao_deps", [])
+                step_deps[step_name] = deps
+            else:
+                step_deps[step_name] = []
+
+        # Group into execution levels
+        executed: set[str] = set()
+        level = 1
+        remaining = set(steps)
+
+        while remaining:
+            # Find steps whose dependencies are all executed
+            ready = [s for s in remaining if all(d in executed for d in step_deps.get(s, []))]
+
+            if not ready:
+                output += f"⚠️  Circular dependency detected in: {remaining}\n"
+                break
+
+            if len(ready) > 1:
+                output += f"  {level}. [PARALLEL] {', '.join(ready)}\n"
+            else:
+                deps = step_deps.get(ready[0], [])
+                if deps:
+                    output += f"  {level}. {ready[0]} (after: {', '.join(deps)})\n"
+                else:
+                    output += f"  {level}. {ready[0]}\n"
+
+            executed.update(ready)
+            remaining -= set(ready)
+            level += 1
+
+        output += "\n"
+        output += f"Total steps: {len(steps)}\n"
+        output += f"Middleware: {len(self._middleware)}\n"
+
+        print(output)
+        return output
+
+    def discover(self, category: str | None = None) -> dict[str, Any]:
+        """
+        Discover available features and their current state.
+
+        Returns a dictionary of available features organized by category,
+        including what's registered and what middleware is active.
+
+        Args:
+            category: Optional category to filter. Options:
+                - None: Return all categories
+                - "agents": List registered agents
+                - "steps": List registered steps
+                - "chains": List registered chains
+                - "middleware": List active middleware
+                - "resources": List registered resources
+
+        Returns:
+            dict: Discovery results with category details.
+
+        Example:
+            >>> ao.discover()  # All categories
+            >>> ao.discover("middleware")  # Just middleware
+        """
+        result: dict[str, Any] = {}
+
+        if category is None or category == "agents":
+            agents = self.list_agents()
+            result["agents"] = {
+                "count": len(agents),
+                "names": agents,
+                "help": "Use @ao.agent() to register agents",
+            }
+
+        if category is None or category == "steps":
+            steps = self.list_steps()
+            result["steps"] = {
+                "count": len(steps),
+                "names": steps,
+                "help": "Use @ao.step() to register steps",
+            }
+
+        if category is None or category == "chains":
+            chains = self.list_chains()
+            result["chains"] = {
+                "count": len(chains),
+                "names": chains,
+                "help": "Use @ao.chain() to register chains",
+            }
+
+        if category is None or category == "middleware":
+            mw_list = self.list_middleware()
+            result["middleware"] = {
+                "count": len(mw_list),
+                "active": [m["type"] for m in mw_list],
+                "help": "Use ao.use() to add middleware",
+            }
+
+        if category is None or category == "resources":
+            resources = self.list_resources()
+            result["resources"] = {
+                "count": len(resources),
+                "names": resources,
+                "help": "Use ao.register_resource() or @ao.resource()",
+            }
+
+        return result
+
     def __repr__(self) -> str:
         """Return string representation of the orchestrator."""
         return (

@@ -225,11 +225,16 @@ from agentorchestrator.core.context_store import RedisContextStore
 
 ao = AgentOrchestrator(name="research_pipeline")
 
-# Layer 1: Token budget management
-ao.use(TokenManagerMiddleware(
-    max_total_tokens=100_000,
+# Layer 1: Token budget management with explicit reservations
+from agentorchestrator.middleware import TokenBudget
+budget = TokenBudget(
+    context_window=128000,
+    reserved_output=8000,
+    reserved_system=3000,
+    reserved_history=15000,
     warning_threshold=0.8,
-))
+)
+ao.use(TokenManagerMiddleware(budget=budget))
 
 # Layer 2: Summarization with domain prompts
 LangChainSummarizer.register_domain_prompts(

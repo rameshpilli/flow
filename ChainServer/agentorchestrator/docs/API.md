@@ -501,8 +501,10 @@ from agentorchestrator import create_openai_summarizer
 summarizer = create_openai_summarizer(api_key="sk-...")
 ao.use(SummarizerMiddleware(summarizer=summarizer, max_tokens=4000))
 
-# Token management
-ao.use(TokenManagerMiddleware(max_total_tokens=100000))
+# Token management (use TokenBudget for explicit reservations)
+from agentorchestrator.middleware import TokenBudget
+budget = TokenBudget(context_window=128000, reserved_output=8000)
+ao.use(TokenManagerMiddleware(budget=budget))
 
 # Rate limiting
 ao.use(RateLimiterMiddleware({
