@@ -15,11 +15,15 @@ When you have multiple agents working together, you face several challenges:
 
 | Pattern | Problem Solved | When to Use |
 |---------|---------------|-------------|
+| [**Pattern Decision Guide**](PATTERN_DECISION_GUIDE.md) | Which pattern to use? | Start here for decision flowcharts |
 | [Context Isolation](context_isolation.md) | Pollution & explosion | 3+ agents working in parallel |
 | [Summarization](summarization.md) | Large responses | Single agent returns huge data |
 | [Large Response Handling](large_response_handling.md) | Per-step middleware | Configure summarize/offload per agent |
 | [Routing](routing.md) | Task distribution | Dynamic agent selection |
 | [Aggregation](aggregation.md) | Result synthesis | Combining specialist outputs |
+
+!!! tip "New to patterns?"
+    Start with the [Pattern Decision Guide](PATTERN_DECISION_GUIDE.md) for decision flowcharts and Input→Process→Output examples for each strategy.
 
 ## Decision Tree
 
@@ -138,17 +142,33 @@ final = await aggregator.aggregate(llm=llm)
 | Context Isolation | :material-check: | Partial | Partial | :material-check: |
 | Map-Reduce Summarization | :material-check: | :material-check: | :material-check: | :material-check: |
 | Refine Summarization | :material-check: | :material-check: | :material-check: | - |
+| **TREE Summarization** | :material-check: | - | :material-check: | - |
 | Auto-Compaction | :material-check: | - | - | :material-check: |
-| Token Budget | :material-check: | - | - | :material-check: |
+| **Token Budget Reservation** | :material-check: | - | Partial | :material-check: |
+| **Namespace-Aware Budgets** | :material-check: | - | - | - |
 | Redis Offloading | :material-check: | - | - | - |
 | Result Aggregation | :material-check: | Partial | Partial | - |
+| **Pre-Aggregation Summarization** | :material-check: | - | - | - |
+| **Middleware Metrics** | :material-check: | Callbacks | - | - |
+| **Rolling Summary** | :material-check: | - | Partial | - |
+| **Query-Aware Compression** | :material-check: | - | Partial | - |
 
 ## Next Steps
 
 Choose the pattern that matches your need:
 
+- **Not sure which pattern?** → [Pattern Decision Guide](PATTERN_DECISION_GUIDE.md) (start here!)
 - **Agents interfering?** → [Context Isolation](context_isolation.md)
 - **Responses too large?** → [Summarization](summarization.md)
 - **Need per-step control?** → [Large Response Handling](large_response_handling.md)
 - **Need dynamic routing?** → [Routing](routing.md)
 - **Combining outputs?** → [Aggregation](aggregation.md)
+
+## API Reference
+
+For implementation details:
+
+- **Token Management**: `TokenBudget`, `NamespaceBudgetManager`, `TokenManagerMiddleware`
+- **Summarization**: `SummarizerMiddleware`, `RollingSummaryMiddleware`, `SummarizationStrategy`
+- **Aggregation**: `ResultAggregator`, `AggregationStrategy`
+- **Monitoring**: `ao.get_middleware_metrics()`, `ao.list_middleware()`

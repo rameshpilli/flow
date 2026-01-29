@@ -76,7 +76,10 @@ from agentorchestrator.middleware.memory_lifecycle import (
     create_memory_lifecycle_middleware,
 )
 from agentorchestrator.middleware.token_manager import (
+    BudgetAllocationStrategy,
     BudgetStatus,
+    NamespaceBudget,
+    NamespaceBudgetManager,
     TokenBudget,
     TokenManagerMiddleware,
 )
@@ -155,6 +158,9 @@ __all__ = [
     "TokenManagerMiddleware",
     "TokenBudget",
     "BudgetStatus",
+    "BudgetAllocationStrategy",
+    "NamespaceBudget",
+    "NamespaceBudgetManager",
     # Rolling Summary (Incremental Summarization)
     "RollingSummaryMiddleware",
     "RollingSummaryState",

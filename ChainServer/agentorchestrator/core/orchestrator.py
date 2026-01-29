@@ -1668,6 +1668,113 @@ class AgentOrchestrator:
         self._executor.add_middleware(middleware)
         return self
 
+    def get_middleware_metrics(self, middleware_name: str | None = None) -> dict[str, Any]:
+        """
+        Get metrics from middleware for monitoring and tuning.
+
+        Retrieves metrics from all middleware or a specific one by name/type.
+        Useful for monitoring token usage, compression stats, cache hits, etc.
+
+        Args:
+            middleware_name (str | None): Name or type of middleware to query.
+                If None, returns metrics from all middleware that support it.
+                Examples: "token_manager", "summarizer", "TokenManagerMiddleware"
+
+        Returns:
+            dict[str, Any]: Metrics keyed by middleware name/type.
+                Each middleware may include different metrics:
+                - TokenManagerMiddleware: token usage, budget status, compressions
+                - SummarizerMiddleware: compression ratios, tokens saved
+                - RollingSummaryMiddleware: summary stats, versions
+                - ResultAggregator: aggregation stats
+
+        Example:
+            >>> # Get all middleware metrics
+            >>> metrics = ao.get_middleware_metrics()
+            >>> for name, data in metrics.items():
+            ...     print(f"{name}: {data}")
+            >>>
+            >>> # Get specific middleware metrics
+            >>> token_metrics = ao.get_middleware_metrics("token_manager")
+            >>> print(f"Peak usage: {token_metrics.get('peak_usage', 0)}")
+            >>>
+            >>> # After a chain run
+            >>> result = await ao.launch("my_chain", input_data)
+            >>> metrics = ao.get_middleware_metrics()
+            >>> print(f"Tokens saved: {metrics['token_manager']['tokens_saved']}")
+
+        See Also:
+            use(): Add middleware to the pipeline.
+            TokenManagerMiddleware: Token budget management.
+            SummarizerMiddleware: Content compression.
+        """
+        metrics: dict[str, Any] = {}
+
+        for mw in self._middleware:
+            mw_type = type(mw).__name__
+            mw_key = mw_type.lower().replace("middleware", "").strip("_") or mw_type
+
+            # Check if this middleware matches the filter
+            if middleware_name is not None:
+                filter_lower = middleware_name.lower()
+                if filter_lower not in mw_type.lower() and filter_lower != mw_key:
+                    continue
+
+            # Try to get metrics from the middleware
+            if hasattr(mw, "get_metrics"):
+                try:
+                    mw_metrics = mw.get_metrics()
+                    if middleware_name is not None:
+                        # Return directly if specific middleware requested
+                        return mw_metrics
+                    metrics[mw_key] = mw_metrics
+                except Exception as e:
+                    metrics[mw_key] = {"error": str(e)}
+            elif hasattr(mw, "get_usage"):
+                # TokenManagerMiddleware compatibility
+                try:
+                    metrics[mw_key] = mw.get_usage()
+                except Exception as e:
+                    metrics[mw_key] = {"error": str(e)}
+            elif hasattr(mw, "get_budget_report"):
+                # Alternative accessor
+                try:
+                    metrics[mw_key] = mw.get_budget_report()
+                except Exception as e:
+                    metrics[mw_key] = {"error": str(e)}
+
+        if middleware_name is not None and not metrics:
+            return {"error": f"No middleware found matching '{middleware_name}'"}
+
+        return metrics
+
+    def list_middleware(self) -> list[dict[str, Any]]:
+        """
+        List all registered middleware with their configuration.
+
+        Returns:
+            list[dict]: List of middleware info including:
+                - type: Class name of the middleware
+                - priority: Execution priority
+                - applies_to: Step patterns it applies to
+                - has_metrics: Whether it supports get_metrics()
+
+        Example:
+            >>> for mw in ao.list_middleware():
+            ...     print(f"{mw['type']} (priority={mw['priority']})")
+        """
+        result = []
+        for mw in self._middleware:
+            info = {
+                "type": type(mw).__name__,
+                "priority": getattr(mw, "priority", 0),
+                "applies_to": getattr(mw, "_ao_applies_to", None),
+                "excludes": getattr(mw, "_ao_excludes", None),
+                "has_metrics": hasattr(mw, "get_metrics") or hasattr(mw, "get_usage"),
+            }
+            result.append(info)
+        return result
+
     # ══════════════════════════════════════════════════════════════════
     #                    DAGSTER-STYLE CLI COMMANDS
     # ══════════════════════════════════════════════════════════════════

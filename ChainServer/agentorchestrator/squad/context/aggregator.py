@@ -69,6 +69,7 @@ from typing import Any, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from agentorchestrator.services.llm_gateway import LLMGatewayClient
+    from agentorchestrator.middleware.summarizer import LangChainSummarizer
 
 logger = logging.getLogger(__name__)
 
@@ -407,6 +408,9 @@ class ResultAggregator:
         self,
         strategy: AggregationStrategy = AggregationStrategy.SYNTHESIZE,
         conflict_resolver: Callable[[ConflictInfo], Any] | None = None,
+        summarizer: "LangChainSummarizer | None" = None,
+        pre_summarize_threshold_tokens: int = 10000,
+        pre_summarize_target_tokens: int = 2000,
     ):
         """
         Initialize the aggregator with a strategy.
@@ -417,17 +421,43 @@ class ResultAggregator:
             conflict_resolver (Callable[[ConflictInfo], Any] | None): Custom
                 function to resolve conflicts during MERGE. Receives a
                 ConflictInfo and returns the resolved value.
+            summarizer (LangChainSummarizer | None): Optional summarizer for
+                pre-compressing large results before aggregation.
+            pre_summarize_threshold_tokens (int): If a result exceeds this
+                token count, it will be summarized before aggregation.
+            pre_summarize_target_tokens (int): Target size for summarized results.
 
         Example:
             >>> aggregator = ResultAggregator(
             ...     strategy=AggregationStrategy.VOTE,
             ... )
+
+        Example with pre-summarization:
+            >>> from agentorchestrator.middleware.summarizer import LangChainSummarizer
+            >>> summarizer = LangChainSummarizer(strategy=SummarizationStrategy.MAP_REDUCE)
+            >>> aggregator = ResultAggregator(
+            ...     strategy=AggregationStrategy.SYNTHESIZE,
+            ...     summarizer=summarizer,
+            ...     pre_summarize_threshold_tokens=5000,
+            ... )
         """
         self.strategy = strategy
         self.conflict_resolver = conflict_resolver
 
+        # Pre-summarization config
+        self.summarizer = summarizer
+        self.pre_summarize_threshold_tokens = pre_summarize_threshold_tokens
+        self.pre_summarize_target_tokens = pre_summarize_target_tokens
+
         self._results: dict[str, ContextAgentResult] = {}
         self._conflicts: list[ConflictInfo] = []
+
+        # Metrics
+        self._metrics: dict[str, Any] = {
+            "results_summarized": 0,
+            "tokens_before_summary": 0,
+            "tokens_after_summary": 0,
+        }
 
     def add_result(
         self,
@@ -516,6 +546,7 @@ class ResultAggregator:
         self,
         llm: "LLMGatewayClient | None" = None,
         prompt_template: str | None = None,
+        pre_summarize: bool = True,
     ) -> AggregatedResult:
         """
         Aggregate all results using the configured strategy.
@@ -528,6 +559,9 @@ class ResultAggregator:
                 Required for SYNTHESIZE, optional for others.
             prompt_template (str | None): Custom prompt template for synthesis.
                 Should contain {context} placeholder for agent outputs.
+            pre_summarize (bool): If True and summarizer is configured,
+                large results will be pre-summarized before aggregation.
+                Default: True.
 
         Returns:
             AggregatedResult: Combined result with:
@@ -546,6 +580,15 @@ class ResultAggregator:
             ...     print(f"Result: {result.data}")
             ...     print(f"Confidence: {result.confidence:.0%}")
 
+        Example with pre-summarization:
+            >>> aggregator = ResultAggregator(
+            ...     strategy=AggregationStrategy.SYNTHESIZE,
+            ...     summarizer=summarizer,
+            ...     pre_summarize_threshold_tokens=5000,
+            ... )
+            >>> # Large results will be auto-summarized before synthesis
+            >>> result = await aggregator.aggregate(llm=llm_client)
+
         Strategy Behaviors:
             - SYNTHESIZE: Uses LLM to create narrative (requires llm parameter)
             - MERGE: Deep merges dicts, concatenates lists
@@ -558,6 +601,12 @@ class ResultAggregator:
             AggregatedResult: The return type.
             AggregationStrategy: Available strategies.
         """
+        # Pre-summarize large results if configured
+        if pre_summarize and self.summarizer:
+            summarized_count = await self.pre_summarize_large_results()
+            if summarized_count > 0:
+                logger.info(f"Pre-summarized {summarized_count} large results before aggregation")
+
         valid_results = {
             aid: r for aid, r in self._results.items() if r.is_valid()
         }
@@ -973,6 +1022,105 @@ SYNTHESIZED RESPONSE:"""
         """
         self._results.clear()
         self._conflicts.clear()
+
+    async def pre_summarize_large_results(self) -> int:
+        """
+        Pre-summarize any results that exceed the threshold.
+
+        Large results are summarized before aggregation to prevent
+        token overflow during synthesis or other strategies.
+
+        Returns:
+            int: Number of results that were summarized.
+
+        Example:
+            >>> summarized_count = await aggregator.pre_summarize_large_results()
+            >>> print(f"Summarized {summarized_count} large results")
+        """
+        if not self.summarizer:
+            return 0
+
+        summarized_count = 0
+
+        for agent_id, result in self._results.items():
+            if not result.is_valid():
+                continue
+
+            # Estimate tokens (4 chars per token)
+            data_str = (
+                json.dumps(result.data, default=str)
+                if isinstance(result.data, (dict, list))
+                else str(result.data)
+            )
+            estimated_tokens = len(data_str) // 4
+
+            if estimated_tokens > self.pre_summarize_threshold_tokens:
+                logger.info(
+                    f"Pre-summarizing result from {agent_id}: "
+                    f"{estimated_tokens} tokens > {self.pre_summarize_threshold_tokens} threshold"
+                )
+
+                try:
+                    # Summarize the result
+                    summarized = await self.summarizer.summarize(
+                        data_str,
+                        max_tokens=self.pre_summarize_target_tokens,
+                    )
+
+                    # Store original in metadata
+                    result.metadata["original_data"] = result.data
+                    result.metadata["original_tokens"] = estimated_tokens
+                    result.metadata["was_summarized"] = True
+
+                    # Replace with summarized version
+                    result.data = summarized
+
+                    # Track metrics
+                    new_tokens = len(summarized) // 4
+                    self._metrics["results_summarized"] += 1
+                    self._metrics["tokens_before_summary"] += estimated_tokens
+                    self._metrics["tokens_after_summary"] += new_tokens
+
+                    summarized_count += 1
+
+                    logger.info(
+                        f"Summarized {agent_id}: {estimated_tokens} -> {new_tokens} tokens "
+                        f"({100 - (new_tokens / estimated_tokens * 100):.1f}% reduction)"
+                    )
+
+                except Exception as e:
+                    logger.error(f"Failed to summarize result from {agent_id}: {e}")
+
+        return summarized_count
+
+    def get_metrics(self) -> dict[str, Any]:
+        """
+        Get aggregator metrics for monitoring.
+
+        Returns:
+            dict: Metrics including summarization stats and result counts.
+
+        Example:
+            >>> metrics = aggregator.get_metrics()
+            >>> print(f"Summarized {metrics['results_summarized']} results")
+        """
+        tokens_saved = (
+            self._metrics["tokens_before_summary"] - self._metrics["tokens_after_summary"]
+        )
+        compression_ratio = (
+            self._metrics["tokens_after_summary"] / self._metrics["tokens_before_summary"]
+            if self._metrics["tokens_before_summary"] > 0
+            else 1.0
+        )
+
+        return {
+            **self._metrics,
+            "tokens_saved": tokens_saved,
+            "compression_ratio": round(compression_ratio, 3),
+            "total_results": len(self._results),
+            "valid_results": sum(1 for r in self._results.values() if r.is_valid()),
+            "conflicts_detected": len(self._conflicts),
+        }
 
     def __repr__(self) -> str:
         """Return string representation of the aggregator."""

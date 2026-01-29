@@ -33,13 +33,33 @@ Event-driven and workflow patterns:
 | [supervisor_chain](supervisor_chain.py) | Supervisor pattern with coordinator and specialists |
 | [usage_examples](usage_examples.py) | Various usage patterns and best practices |
 
-### Agents
+### Agents & Research
 
 Multi-agent patterns and coordination:
 
 | Example | Description |
 |---------|-------------|
+| [deep_research](deep_research_agent.py) | Multi-stage research with decomposition and parallel search |
 | [financial_research](financial_research_agent.py) | Deep research agent with multiple data sources |
+| [supervisor_in_chain](supervisor_in_chain.py) | Supervisor pattern integrated with chain execution |
+
+### Large Response Handling
+
+Patterns for managing context window limits:
+
+| Example | Description |
+|---------|-------------|
+| [advanced_middleware](advanced_middleware.py) | Complete guide to all middleware patterns |
+
+**Key patterns covered:**
+- **Glob Pattern Matching** - Apply middleware to steps using `gather_*` patterns
+- **Token Budget Reservation** - Explicit allocation prevents truncation
+- **TREE Summarization** - Hierarchical compression for 50K+ token documents
+- **Rolling Summary** - Incremental summarization for iterative data
+- **Query-Aware Compression** - Focus on query-relevant content
+- **Namespace-Aware Budgets** - Per-agent token allocation for multi-agent
+- **ResultAggregator with Pre-Summarization** - Auto-compress before synthesis
+- **Middleware Metrics** - Monitor token usage via `ao.get_middleware_metrics()`
 
 ### Memory
 

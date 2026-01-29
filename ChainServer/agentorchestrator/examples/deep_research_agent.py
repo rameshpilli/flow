@@ -8,6 +8,14 @@ This example demonstrates a multi-stage research agent that:
 3. Synthesizes findings into a comprehensive report
 4. Uses reflection to improve report quality
 
+**Large Response Handling**:
+This agent uses the following patterns to handle large data:
+
+1. **TokenBudget**: Explicit token reservation prevents context overflow
+2. **SummarizerMiddleware**: Compresses large research findings using TREE strategy
+3. **RollingSummaryMiddleware**: Incrementally summarizes as data accumulates
+4. **get_middleware_metrics()**: Monitor token usage and compression stats
+
 This pattern is commonly used for:
 - Market research and competitive analysis
 - Technical due diligence
@@ -29,14 +37,14 @@ Architecture:
     ┌────────▼────────┐
     │  Parallel       │  Search each sub-question
     │  Research       │  across multiple sources
-    │  ┌───┬───┬───┐  │
+    │  ┌───┬───┬───┐  │  (SummarizerMiddleware compresses)
     │  │Q1 │Q2 │Q3 │  │
     │  └───┴───┴───┘  │
     └────────┬────────┘
              │
     ┌────────▼────────┐
     │   Synthesize    │  Combine findings
-    └────────┬────────┘
+    └────────┬────────┘  (RollingSummaryMiddleware)
              │
     ┌────────▼────────┐
     │   Reflect &     │  Quality check & improve
@@ -55,7 +63,15 @@ from typing import Any
 
 from agentorchestrator import AgentOrchestrator
 from agentorchestrator.core.context import ChainContext, ContextScope
-from agentorchestrator.middleware import ReflectionMiddleware, ReflectionConfig
+from agentorchestrator.middleware import (
+    ReflectionMiddleware,
+    ReflectionConfig,
+    TokenManagerMiddleware,
+    TokenBudget,
+    SummarizerMiddleware,
+    SummarizationStrategy,
+    RollingSummaryMiddleware,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -64,8 +80,48 @@ logger = logging.getLogger(__name__)
 # Create orchestrator
 ao = AgentOrchestrator(name="deep_research")
 
-# Add reflection middleware for quality improvement
-ao.add_middleware(ReflectionMiddleware(
+# ═══════════════════════════════════════════════════════════════════════════════
+#                         MIDDLEWARE CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# 1. Token Budget with explicit reservations (prevents context overflow)
+budget = TokenBudget(
+    context_window=128000,      # GPT-4-turbo / Claude context window
+    reserved_output=8000,       # Reserve for model response
+    reserved_system=3000,       # Reserve for system prompt
+    reserved_history=10000,     # Reserve for conversation history
+    warning_threshold=0.8,      # Warn at 80% usage
+    critical_threshold=0.95,    # Force compression at 95%
+)
+
+# 2. Token Manager - tracks usage and auto-triggers compression
+ao.use(TokenManagerMiddleware(
+    priority=10,
+    budget=budget,
+    auto_summarize=True,
+    target_ratio_after_compression=0.7,
+))
+
+# 3. Summarizer for parallel research step (handles large multi-source data)
+# Uses TREE strategy for efficient hierarchical summarization
+ao.use(SummarizerMiddleware(
+    priority=20,
+    max_tokens=5000,
+    strategy=SummarizationStrategy.TREE,  # Best for 50K+ token results
+    applies_to=["parallel_research"],  # Only on research step
+))
+
+# 4. Rolling summary for synthesize step (accumulates findings incrementally)
+ao.use(RollingSummaryMiddleware(
+    priority=25,
+    max_tokens=4000,
+    recent_buffer_tokens=1000,  # Keep last 1K tokens uncompressed
+    applies_to=["synthesize_report"],
+))
+
+# 5. Reflection middleware for quality improvement
+ao.use(ReflectionMiddleware(
+    priority=30,
     config=ReflectionConfig(
         quality_threshold=0.8,
         max_revisions=2,
@@ -314,25 +370,31 @@ def _format_report(report: dict) -> str:
 async def main():
     """Run the deep research agent."""
     import sys
-    
+
     # Get question from command line or use default
     question = (
         " ".join(sys.argv[1:]) if len(sys.argv) > 1
         else "What are the key trends in AI infrastructure for 2025?"
     )
-    
+
     print(f"\n{'='*60}")
     print(f"Deep Research Agent")
     print(f"{'='*60}")
     print(f"Question: {question}\n")
-    
+
+    # Show middleware configuration
+    print("Middleware Stack:")
+    for mw in ao.list_middleware():
+        print(f"  - {mw['type']} (priority={mw['priority']}, has_metrics={mw['has_metrics']})")
+    print()
+
     # Configure research
     config = ResearchConfig(
         max_sub_questions=4,
         sources=["web", "academic", "news"],
         search_depth=3,
     )
-    
+
     # Run the research pipeline
     result = await ao.launch(
         "deep_research",
@@ -341,10 +403,10 @@ async def main():
             "config": config,
         },
     )
-    
+
     if result["success"]:
         print("\n" + result["context"]["data"].get("formatted_report", "No report generated"))
-        
+
         # Show reflection trace if available
         reflection_trace = result["context"]["data"].get("_reflection_trace", {})
         if reflection_trace:
@@ -356,9 +418,25 @@ async def main():
                 print(f"  Quality Score: {trace['quality_score']:.2%}")
                 print(f"  Revisions: {trace['revision_count']}")
                 print(f"  Passed Threshold: {trace['passed_threshold']}")
+
+        # Show middleware metrics (NEW: monitoring token usage and compression)
+        print(f"\n{'='*60}")
+        print("Middleware Metrics")
+        print(f"{'='*60}")
+        metrics = ao.get_middleware_metrics()
+        for mw_name, mw_metrics in metrics.items():
+            print(f"\n{mw_name}:")
+            if isinstance(mw_metrics, dict):
+                for key, value in mw_metrics.items():
+                    if isinstance(value, float):
+                        print(f"  {key}: {value:.2f}")
+                    else:
+                        print(f"  {key}: {value}")
+            else:
+                print(f"  {mw_metrics}")
     else:
         print(f"Research failed: {result.get('error', 'Unknown error')}")
-    
+
     print(f"\nTotal duration: {result['duration_ms']:.0f}ms")
 
 

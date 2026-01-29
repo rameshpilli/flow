@@ -44,6 +44,15 @@ class BudgetStatus(Enum):
     OVERFLOW = "overflow"    # Exceeded available budget
 
 
+class BudgetAllocationStrategy(Enum):
+    """Strategy for allocating budget across namespaces."""
+
+    EQUAL = "equal"          # Split budget equally among namespaces
+    PROPORTIONAL = "proportional"  # Allocate based on historical usage
+    PRIORITY = "priority"    # Allocate based on namespace priority
+    FIXED = "fixed"          # Use fixed allocations per namespace
+
+
 @dataclass
 class TokenBudget:
     """
@@ -205,6 +214,303 @@ class TokenBudget:
         )
 
 
+@dataclass
+class NamespaceBudget:
+    """
+    Token budget for a specific agent namespace in multi-agent systems.
+
+    Enables per-agent token management when using context isolation.
+    Each namespace gets its own budget allocation within the global budget.
+
+    Attributes:
+        namespace_id: Unique identifier for the namespace/agent.
+        allocated_tokens: Tokens allocated to this namespace.
+        priority: Priority for budget reallocation (higher = more tokens).
+        current_usage: Current token usage in this namespace.
+        reserved_for_output: Tokens reserved for agent response.
+
+    Example:
+        >>> ns_budget = NamespaceBudget(
+        ...     namespace_id="research_agent",
+        ...     allocated_tokens=25000,
+        ...     priority=2,
+        ... )
+        >>> ns_budget.remaining
+        25000
+    """
+
+    namespace_id: str
+    allocated_tokens: int
+    priority: int = 1
+    current_usage: int = 0
+    reserved_for_output: int = 2000
+
+    @property
+    def remaining(self) -> int:
+        """Tokens remaining in this namespace."""
+        return max(0, self.allocated_tokens - self.current_usage - self.reserved_for_output)
+
+    @property
+    def usage_ratio(self) -> float:
+        """Current usage as ratio of allocated tokens."""
+        if self.allocated_tokens <= 0:
+            return 1.0
+        return self.current_usage / self.allocated_tokens
+
+    def get_status(self, warning_threshold: float = 0.8, critical_threshold: float = 0.95) -> BudgetStatus:
+        """Get budget status for this namespace."""
+        ratio = self.usage_ratio
+        if ratio > 1.0:
+            return BudgetStatus.OVERFLOW
+        elif ratio > critical_threshold:
+            return BudgetStatus.CRITICAL
+        elif ratio > warning_threshold:
+            return BudgetStatus.WARNING
+        return BudgetStatus.OK
+
+
+class NamespaceBudgetManager:
+    """
+    Manages token budgets across multiple agent namespaces.
+
+    In multi-agent systems, different agents may need different token
+    allocations based on their role, data volume, or priority. This
+    manager partitions the global budget across namespaces.
+
+    Supports multiple allocation strategies:
+    - EQUAL: Split budget equally among all namespaces
+    - PROPORTIONAL: Allocate based on historical usage patterns
+    - PRIORITY: Allocate more to higher-priority namespaces
+    - FIXED: Use predefined allocations per namespace
+
+    Usage:
+        # Create manager with global budget
+        manager = NamespaceBudgetManager(
+            global_budget=TokenBudget(context_window=128000),
+            strategy=BudgetAllocationStrategy.PRIORITY,
+        )
+
+        # Register namespaces with priorities
+        manager.register_namespace("research_agent", priority=3)
+        manager.register_namespace("news_agent", priority=2)
+        manager.register_namespace("summary_agent", priority=1)
+
+        # Allocate budgets
+        manager.allocate()
+
+        # Get budget for specific namespace
+        budget = manager.get_namespace_budget("research_agent")
+
+    Example:
+        >>> manager = NamespaceBudgetManager(
+        ...     global_budget=TokenBudget(context_window=100000),
+        ...     strategy=BudgetAllocationStrategy.EQUAL,
+        ... )
+        >>> manager.register_namespace("agent_1")
+        >>> manager.register_namespace("agent_2")
+        >>> manager.allocate()
+        >>> manager.get_namespace_budget("agent_1").allocated_tokens
+        39500  # (100000 - reservations) / 2
+    """
+
+    def __init__(
+        self,
+        global_budget: TokenBudget,
+        strategy: BudgetAllocationStrategy = BudgetAllocationStrategy.EQUAL,
+        fixed_allocations: dict[str, int] | None = None,
+        min_namespace_tokens: int = 5000,
+    ):
+        """
+        Initialize the namespace budget manager.
+
+        Args:
+            global_budget: The global token budget to partition.
+            strategy: How to allocate tokens across namespaces.
+            fixed_allocations: For FIXED strategy, tokens per namespace.
+            min_namespace_tokens: Minimum tokens for any namespace.
+        """
+        self.global_budget = global_budget
+        self.strategy = strategy
+        self.fixed_allocations = fixed_allocations or {}
+        self.min_namespace_tokens = min_namespace_tokens
+
+        self._namespaces: dict[str, NamespaceBudget] = {}
+        self._usage_history: dict[str, list[int]] = {}
+
+    def register_namespace(
+        self,
+        namespace_id: str,
+        priority: int = 1,
+        reserved_for_output: int = 2000,
+    ) -> NamespaceBudget:
+        """
+        Register a new namespace for budget allocation.
+
+        Args:
+            namespace_id: Unique identifier for the namespace.
+            priority: Priority for allocation (higher = more tokens).
+            reserved_for_output: Tokens to reserve for agent response.
+
+        Returns:
+            NamespaceBudget: The created namespace budget.
+        """
+        ns_budget = NamespaceBudget(
+            namespace_id=namespace_id,
+            allocated_tokens=0,  # Will be set by allocate()
+            priority=priority,
+            reserved_for_output=reserved_for_output,
+        )
+        self._namespaces[namespace_id] = ns_budget
+        self._usage_history[namespace_id] = []
+        return ns_budget
+
+    def allocate(self) -> dict[str, NamespaceBudget]:
+        """
+        Allocate tokens to all registered namespaces.
+
+        Uses the configured strategy to divide the global budget's
+        available_for_content among all namespaces.
+
+        Returns:
+            dict[str, NamespaceBudget]: Map of namespace_id to budget.
+        """
+        if not self._namespaces:
+            return {}
+
+        total_available = self.global_budget.available_for_content
+        namespace_ids = list(self._namespaces.keys())
+
+        if self.strategy == BudgetAllocationStrategy.EQUAL:
+            allocations = self._allocate_equal(total_available, namespace_ids)
+        elif self.strategy == BudgetAllocationStrategy.PROPORTIONAL:
+            allocations = self._allocate_proportional(total_available, namespace_ids)
+        elif self.strategy == BudgetAllocationStrategy.PRIORITY:
+            allocations = self._allocate_priority(total_available, namespace_ids)
+        elif self.strategy == BudgetAllocationStrategy.FIXED:
+            allocations = self._allocate_fixed(total_available, namespace_ids)
+        else:
+            allocations = self._allocate_equal(total_available, namespace_ids)
+
+        # Apply allocations
+        for ns_id, tokens in allocations.items():
+            self._namespaces[ns_id].allocated_tokens = max(tokens, self.min_namespace_tokens)
+
+        logger.info(
+            f"NamespaceBudgetManager: Allocated {total_available} tokens "
+            f"across {len(self._namespaces)} namespaces using {self.strategy.value} strategy"
+        )
+
+        return self._namespaces.copy()
+
+    def _allocate_equal(self, total: int, namespace_ids: list[str]) -> dict[str, int]:
+        """Split budget equally among namespaces."""
+        per_namespace = total // len(namespace_ids)
+        return {ns_id: per_namespace for ns_id in namespace_ids}
+
+    def _allocate_proportional(self, total: int, namespace_ids: list[str]) -> dict[str, int]:
+        """Allocate based on historical usage patterns."""
+        # Calculate average usage per namespace
+        avg_usage = {}
+        for ns_id in namespace_ids:
+            history = self._usage_history.get(ns_id, [])
+            avg_usage[ns_id] = sum(history) / len(history) if history else 1000
+
+        total_avg = sum(avg_usage.values()) or 1
+        return {
+            ns_id: int(total * (usage / total_avg))
+            for ns_id, usage in avg_usage.items()
+        }
+
+    def _allocate_priority(self, total: int, namespace_ids: list[str]) -> dict[str, int]:
+        """Allocate more tokens to higher-priority namespaces."""
+        total_priority = sum(
+            self._namespaces[ns_id].priority for ns_id in namespace_ids
+        ) or 1
+        return {
+            ns_id: int(total * (self._namespaces[ns_id].priority / total_priority))
+            for ns_id in namespace_ids
+        }
+
+    def _allocate_fixed(self, total: int, namespace_ids: list[str]) -> dict[str, int]:
+        """Use fixed allocations, fall back to equal for unspecified."""
+        allocations = {}
+        remaining = total
+        unspecified = []
+
+        for ns_id in namespace_ids:
+            if ns_id in self.fixed_allocations:
+                alloc = min(self.fixed_allocations[ns_id], remaining)
+                allocations[ns_id] = alloc
+                remaining -= alloc
+            else:
+                unspecified.append(ns_id)
+
+        # Divide remaining among unspecified
+        if unspecified and remaining > 0:
+            per_unspecified = remaining // len(unspecified)
+            for ns_id in unspecified:
+                allocations[ns_id] = per_unspecified
+
+        return allocations
+
+    def get_namespace_budget(self, namespace_id: str) -> NamespaceBudget | None:
+        """Get the budget for a specific namespace."""
+        return self._namespaces.get(namespace_id)
+
+    def update_usage(self, namespace_id: str, tokens_used: int) -> BudgetStatus:
+        """
+        Update token usage for a namespace.
+
+        Args:
+            namespace_id: The namespace to update.
+            tokens_used: Number of tokens used.
+
+        Returns:
+            BudgetStatus: Current status after update.
+        """
+        if namespace_id not in self._namespaces:
+            logger.warning(f"Unknown namespace: {namespace_id}")
+            return BudgetStatus.OK
+
+        ns_budget = self._namespaces[namespace_id]
+        ns_budget.current_usage += tokens_used
+
+        # Track history for proportional allocation
+        self._usage_history[namespace_id].append(tokens_used)
+        if len(self._usage_history[namespace_id]) > 100:
+            self._usage_history[namespace_id] = self._usage_history[namespace_id][-50:]
+
+        return ns_budget.get_status()
+
+    def get_report(self) -> dict[str, Any]:
+        """Get comprehensive report of all namespace budgets."""
+        total_allocated = sum(ns.allocated_tokens for ns in self._namespaces.values())
+        total_used = sum(ns.current_usage for ns in self._namespaces.values())
+
+        return {
+            "strategy": self.strategy.value,
+            "global_available": self.global_budget.available_for_content,
+            "total_allocated": total_allocated,
+            "total_used": total_used,
+            "namespaces": {
+                ns_id: {
+                    "allocated": ns.allocated_tokens,
+                    "used": ns.current_usage,
+                    "remaining": ns.remaining,
+                    "priority": ns.priority,
+                    "status": ns.get_status().value,
+                    "usage_ratio": round(ns.usage_ratio, 3),
+                }
+                for ns_id, ns in self._namespaces.items()
+            },
+        }
+
+    def reset(self) -> None:
+        """Reset all namespace usage tracking."""
+        for ns in self._namespaces.values():
+            ns.current_usage = 0
+
+
 class TokenManagerMiddleware(Middleware):
     """
     Middleware that manages token budget across chain execution.
@@ -277,6 +583,9 @@ class TokenManagerMiddleware(Middleware):
         auto_offload: bool = False,
         context_store: "ContextStore | None" = None,
         offload_threshold_bytes: int = 50000,
+        # Namespace-aware budget management (for multi-agent)
+        namespace_budget_manager: "NamespaceBudgetManager | None" = None,
+        enable_namespace_tracking: bool = False,
     ):
         super().__init__(priority=priority, applies_to=applies_to, excludes=excludes)
 
@@ -310,9 +619,23 @@ class TokenManagerMiddleware(Middleware):
         self.context_store = context_store
         self.offload_threshold_bytes = offload_threshold_bytes
 
+        # Namespace-aware budget management
+        self.namespace_budget_manager = namespace_budget_manager
+        self.enable_namespace_tracking = enable_namespace_tracking or (namespace_budget_manager is not None)
+        self._namespace_usage: dict[str, int] = {}  # namespace_id -> tokens
+
         self._token_usage: dict[str, int] = {}
         self._step_order: list[str] = []  # Track step execution order
         self._last_status: BudgetStatus = BudgetStatus.OK
+
+        # Metrics tracking
+        self._metrics: dict[str, Any] = {
+            "total_compressions": 0,
+            "total_offloads": 0,
+            "tokens_saved": 0,
+            "peak_usage": 0,
+            "status_changes": [],
+        }
 
     def _default_counter(self, value: Any) -> int:
         """Estimate tokens (4 chars per token)"""
@@ -351,10 +674,20 @@ class TokenManagerMiddleware(Middleware):
         ctx.metadata["token_budget_status"] = status.value
         ctx.metadata["token_budget_report"] = report
 
+        # Update peak usage metric
+        if total_tokens > self._metrics["peak_usage"]:
+            self._metrics["peak_usage"] = total_tokens
+
         # Check if status changed
         if status != self._last_status:
             if self.on_status_change:
                 self.on_status_change(ctx, status, report)
+            self._metrics["status_changes"].append({
+                "from": self._last_status.value,
+                "to": status.value,
+                "step": step_name,
+                "tokens": total_tokens,
+            })
             self._last_status = status
 
         # Handle based on status
@@ -586,8 +919,66 @@ class TokenManagerMiddleware(Middleware):
         total = sum(self._token_usage.values())
         return self.budget.get_report(total)
 
+    def get_metrics(self) -> dict[str, Any]:
+        """
+        Get middleware metrics for monitoring and tuning.
+
+        Returns:
+            dict: Metrics including compression count, tokens saved, peak usage.
+
+        Example:
+            >>> metrics = token_manager.get_metrics()
+            >>> print(f"Tokens saved: {metrics['tokens_saved']}")
+        """
+        return {
+            **self._metrics,
+            "current_usage": sum(self._token_usage.values()),
+            "budget_status": self.budget.get_status(sum(self._token_usage.values())).value,
+            "namespace_count": len(self._namespace_usage) if self.enable_namespace_tracking else 0,
+        }
+
+    def track_namespace_usage(self, namespace_id: str, tokens: int) -> BudgetStatus:
+        """
+        Track token usage for a specific namespace (multi-agent support).
+
+        Args:
+            namespace_id: The agent namespace identifier.
+            tokens: Number of tokens used.
+
+        Returns:
+            BudgetStatus: Current status for this namespace.
+        """
+        if not self.enable_namespace_tracking:
+            return BudgetStatus.OK
+
+        self._namespace_usage[namespace_id] = self._namespace_usage.get(namespace_id, 0) + tokens
+
+        if self.namespace_budget_manager:
+            return self.namespace_budget_manager.update_usage(namespace_id, tokens)
+
+        return BudgetStatus.OK
+
+    def get_namespace_report(self) -> dict[str, Any]:
+        """
+        Get token usage report by namespace.
+
+        Returns:
+            dict: Namespace usage breakdown.
+        """
+        if self.namespace_budget_manager:
+            return self.namespace_budget_manager.get_report()
+
+        return {
+            "enabled": self.enable_namespace_tracking,
+            "namespaces": self._namespace_usage.copy(),
+            "total": sum(self._namespace_usage.values()),
+        }
+
     def reset(self) -> None:
         """Reset token tracking"""
         self._token_usage.clear()
         self._step_order.clear()
+        self._namespace_usage.clear()
         self._last_status = BudgetStatus.OK
+        if self.namespace_budget_manager:
+            self.namespace_budget_manager.reset()

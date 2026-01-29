@@ -740,6 +740,144 @@ summary = await summarizer.summarize_with_query(
 # Result: Focused summary on risks, ignoring irrelevant sections
 ```
 
+### Namespace-Aware Token Budgets (Multi-Agent)
+
+For multi-agent systems, partition the global token budget across agent namespaces:
+
+```python
+from agentorchestrator.middleware import (
+    TokenManagerMiddleware,
+    TokenBudget,
+    NamespaceBudgetManager,
+    BudgetAllocationStrategy,
+)
+
+# Create global budget
+global_budget = TokenBudget(context_window=128000)
+
+# Create namespace manager with priority-based allocation
+manager = NamespaceBudgetManager(
+    global_budget=global_budget,
+    strategy=BudgetAllocationStrategy.PRIORITY,
+    min_namespace_tokens=5000,
+)
+
+# Register namespaces with priorities
+manager.register_namespace("research_agent", priority=3)  # Gets more tokens
+manager.register_namespace("news_agent", priority=2)
+manager.register_namespace("summary_agent", priority=1)  # Gets fewer tokens
+
+# Allocate budgets
+manager.allocate()
+
+# Use with middleware
+ao.use(TokenManagerMiddleware(
+    budget=global_budget,
+    namespace_budget_manager=manager,
+    enable_namespace_tracking=True,
+))
+
+# Get namespace report
+report = manager.get_report()
+# {
+#     "strategy": "priority",
+#     "global_available": 102000,
+#     "namespaces": {
+#         "research_agent": {"allocated": 51000, "used": 0, "priority": 3},
+#         "news_agent": {"allocated": 34000, "used": 0, "priority": 2},
+#         "summary_agent": {"allocated": 17000, "used": 0, "priority": 1},
+#     },
+# }
+```
+
+#### Allocation Strategies
+
+| Strategy | Description |
+|----------|-------------|
+| `EQUAL` | Split budget equally among all namespaces |
+| `PROPORTIONAL` | Allocate based on historical usage patterns |
+| `PRIORITY` | Allocate more tokens to higher-priority namespaces |
+| `FIXED` | Use predefined allocations per namespace |
+
+### ResultAggregator with Pre-Summarization
+
+Automatically summarize large agent results before aggregation:
+
+```python
+from agentorchestrator.squad.context import ResultAggregator, AggregationStrategy
+from agentorchestrator.middleware.summarizer import LangChainSummarizer, SummarizationStrategy
+
+# Create summarizer
+summarizer = LangChainSummarizer(strategy=SummarizationStrategy.MAP_REDUCE)
+
+# Create aggregator with pre-summarization
+aggregator = ResultAggregator(
+    strategy=AggregationStrategy.SYNTHESIZE,
+    summarizer=summarizer,
+    pre_summarize_threshold_tokens=10000,  # Summarize results > 10K tokens
+    pre_summarize_target_tokens=2000,      # Target size after summarization
+)
+
+# Add large results
+aggregator.add_result("research_agent", data=huge_research_data, confidence=0.9)
+aggregator.add_result("news_agent", data=large_news_data, confidence=0.85)
+aggregator.add_result("sec_agent", data=massive_sec_data, confidence=0.8)
+
+# Aggregate - large results auto-summarized before synthesis
+result = await aggregator.aggregate(llm=llm_client)
+
+# Check metrics
+metrics = aggregator.get_metrics()
+# {
+#     "results_summarized": 2,
+#     "tokens_before_summary": 85000,
+#     "tokens_after_summary": 4000,
+#     "tokens_saved": 81000,
+#     "compression_ratio": 0.047,
+# }
+```
+
+### Middleware Metrics
+
+Get metrics from middleware for monitoring and tuning:
+
+```python
+# After chain execution
+result = await ao.launch("research_chain", input_data)
+
+# Get all middleware metrics
+metrics = ao.get_middleware_metrics()
+# {
+#     "tokenmanager": {
+#         "current_usage": 45000,
+#         "peak_usage": 78000,
+#         "budget_status": "ok",
+#         "total_compressions": 3,
+#         ...
+#     },
+#     "summarizer": {
+#         "total_summarizations": 5,
+#         "tokens_saved": 120000,
+#         ...
+#     },
+# }
+
+# Get specific middleware metrics
+token_metrics = ao.get_middleware_metrics("token_manager")
+# {
+#     "current_usage": 45000,
+#     "peak_usage": 78000,
+#     "budget_status": "ok",
+#     "total_compressions": 3,
+#     "namespace_count": 3,
+#     ...
+# }
+
+# List all middleware
+for mw in ao.list_middleware():
+    print(f"{mw['type']} (priority={mw['priority']}, has_metrics={mw['has_metrics']})")
+```
+
 ---
 
 ## Agents
