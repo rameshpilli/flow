@@ -1,3 +1,4 @@
+
 # AgentOrchestrator - Presentation Guide
 
 > A conversational guide for presenting the AgentOrchestrator framework.
@@ -400,7 +401,155 @@ You can combine this with Squad - route factual questions to RAG, general questi
 
 ---
 
-## Section 10: Developer Experience (2 min)
+## Section 10: Built-in Services & Connectors (4 min)
+
+### Enterprise-Ready Integrations
+
+"One thing I want to emphasize - we didn't just build an orchestration framework. We built **production-ready service connectors** that work out of the box in enterprise environments.
+
+Here's what's included:"
+
+### The Services Layer
+
+```
+agentorchestrator/services/
+├── llm_gateway.py      # LLM Gateway with OAuth/API key auth
+├── redis.py            # Redis for distributed state & caching
+├── vector_store.py     # Vector DB abstraction (Chroma, Pinecone, Qdrant)
+├── mem0.py             # Semantic long-term memory
+├── secrets.py          # HashiCorp Vault integration
+├── observability.py    # OpenTelemetry tracing
+└── cohere_compass.py   # Cohere integration
+```
+
+"Each of these is **pre-built and customized** for enterprise use. You don't write boilerplate - you just configure."
+
+### How It Works - Just Pass Your Credentials
+
+"Let me show you how simple this is. Take our LLM Gateway client:"
+
+```python
+from agentorchestrator.services import LLMGatewayClient
+
+# Option 1: Environment variables (recommended for production)
+# Set: LLM_SERVER_URL, LLM_OAUTH_ENDPOINT, LLM_CLIENT_ID, LLM_CLIENT_SECRET
+client = LLMGatewayClient.from_env()
+
+# Option 2: Direct configuration
+client = LLMGatewayClient(
+    server_url="https://llm-gateway.yourcompany.com/v1/chat/completions",
+    oauth_endpoint="https://auth.yourcompany.com/oauth/token",
+    client_id="your-app-id",
+    client_secret="your-secret",
+)
+
+# That's it - now use it
+response = await client.generate_async("Summarize this document...")
+```
+
+"Notice what you **didn't** have to do:
+- Write OAuth token refresh logic (we handle expiration)
+- Implement retry with exponential backoff (built-in)
+- Handle rate limiting (built-in)
+- Set up connection pooling (automatic)
+
+All you provide is your subscription credentials."
+
+### Available Service Connectors
+
+| Service | Class | What It Handles |
+|---------|-------|-----------------|
+| **LLM Gateway** | `LLMGatewayClient` | OAuth/API auth, token refresh, retries, structured output |
+| **Redis** | `RedisService` | Connection pooling, pub/sub, distributed locks |
+| **Vector Store** | `VectorStoreService` | Chroma, Pinecone, Qdrant - unified API |
+| **Semantic Memory** | `Mem0Memory` | Long-term memory with embeddings |
+| **Secrets** | `VaultSecretProvider` | HashiCorp Vault, env fallback |
+| **Observability** | `TracingService` | OpenTelemetry spans, metrics |
+
+### Configuration via Environment Variables
+
+"For production, everything is driven by environment variables:"
+
+```bash
+# LLM Gateway
+LLM_SERVER_URL=https://llm-gateway.yourcompany.com/v1/chat/completions
+LLM_OAUTH_ENDPOINT=https://auth.yourcompany.com/oauth/token
+LLM_CLIENT_ID=my-app
+LLM_CLIENT_SECRET=secret
+
+# Redis (for distributed context)
+CONTEXT_STORE_BACKEND=redis
+CONTEXT_STORE_REDIS_HOST=redis.internal
+CONTEXT_STORE_REDIS_PORT=6379
+CONTEXT_STORE_REDIS_PASSWORD=secure-password
+
+# Semantic Memory
+MEM0_API_KEY=your-key
+MEM0_AGENT_ID=my-agent
+
+# Vector Store
+VECTOR_STORE_PROVIDER=pinecone
+PINECONE_API_KEY=your-key
+```
+
+"Set these in your deployment, and the framework auto-configures everything."
+
+### MCP Connectors (Model Context Protocol)
+
+"We also support MCP - the Model Context Protocol - for external tool servers:"
+
+```python
+from agentorchestrator.connectors import MCPConnector
+
+# Connect to an MCP tool server
+connector = MCPConnector(
+    base_url="http://tools.internal:8000",
+    transport="http",  # or "stdio", "sse"
+)
+
+# List available tools
+tools = await connector.list_tools()
+
+# Call a tool
+result = await connector.call_tool("search_documents", {"query": "quarterly report"})
+```
+
+"MCP lets you integrate any external tool server without writing custom code."
+
+### What If Something Is Missing?
+
+"Now, an important point about extensibility.
+
+We've built connectors for the most common enterprise services. But if you need something we don't have:
+
+1. **Check what's available** - Import from `agentorchestrator.services`:
+   ```python
+   from agentorchestrator.services import (
+       LLMGatewayClient,
+       RedisService,
+       VectorStoreService,
+       Mem0Memory,
+       VaultSecretProvider,
+   )
+   ```
+
+2. **If it's not there** - Work with our team. We'll prioritize it for the next release.
+
+3. **Custom connectors** - You can extend `BaseConnector` for proprietary systems:
+   ```python
+   from agentorchestrator.connectors.base import BaseConnector
+
+   class MyCustomConnector(BaseConnector):
+       async def connect(self):
+           # Your connection logic
+           pass
+   ```
+
+We're actively developing this framework, so feature requests go into our roadmap for upcoming versions."
+
+---
+
+## Section 11: Developer Experience (2 min)
 
 ### CLI Tools
 
