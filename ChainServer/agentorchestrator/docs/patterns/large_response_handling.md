@@ -669,6 +669,6 @@ print(f"Total compressions: {token_metrics['total_compressions']}")
 ## Related Documentation
 
 - [Context Management Guide](../CONTEXT_MANAGEMENT.md) - Full context management patterns
-- [Summarization Pattern](summarization.md) - Deep dive on summarization strategies
+- [Context Isolation](context_isolation.md) - Isolate agent contexts
 - [Middleware API](../API.md#middleware) - Middleware class reference
 - [Troubleshooting](../TROUBLESHOOTING.md) - General troubleshooting guide

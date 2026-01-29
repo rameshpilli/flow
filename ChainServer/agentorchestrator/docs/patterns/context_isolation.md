@@ -262,7 +262,7 @@ print(f"Agent {snapshot.agent_id} has {snapshot.result_count} results")
 
 ## Related Patterns
 
-- [Summarization](summarization.md) - Compress large results before sharing
+- [Large Response Handling](large_response_handling.md) - Compress large results before sharing
 - [Aggregation](aggregation.md) - Combine isolated results
 - [Routing](routing.md) - Decide which agent to use
 

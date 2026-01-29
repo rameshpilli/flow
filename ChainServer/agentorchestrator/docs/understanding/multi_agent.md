@@ -326,5 +326,5 @@ print(final.data)  # Unified narrative
 ## Next Steps
 
 - [Context Isolation Pattern](../patterns/context_isolation.md) - Deep dive into isolation
-- [Summarization Pattern](../patterns/summarization.md) - Manage large outputs
+- [Large Response Handling](../patterns/large_response_handling.md) - Manage large outputs
 - [Routing Pattern](../patterns/routing.md) - Dynamic agent selection

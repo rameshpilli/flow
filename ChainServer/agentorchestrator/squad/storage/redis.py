@@ -8,7 +8,7 @@ for persistent conversation storage across sessions.
 import json
 import logging
 from datetime import datetime
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 from agentorchestrator.squad.storage.base import ChatStorage
 from agentorchestrator.squad.types import (

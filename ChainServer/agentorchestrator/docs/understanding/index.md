@@ -30,6 +30,18 @@ This section covers the core concepts you need to understand how AgentOrchestrat
 
     Coordinate multiple agents with supervisors, squads, and routing strategies.
 
+-   :material-database-search:{ .lg .middle } **[RAG Agent](rag_agent.md)**
+
+    ---
+
+    Retrieval-Augmented Generation agent combining vector search with LLM generation.
+
+-   :material-graph:{ .lg .middle } **[Dynamic DAG](DYNAMIC_DAG.md)**
+
+    ---
+
+    Adaptive workflows that modify their execution graph at runtime based on conditions.
+
 </div>
 
 ## How It All Fits Together

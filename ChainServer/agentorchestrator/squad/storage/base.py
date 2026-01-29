@@ -62,7 +62,7 @@ See Also:
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 from agentorchestrator.squad.types import ConversationMessage, TimestampedMessage
 

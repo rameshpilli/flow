@@ -1089,7 +1089,7 @@ ao.use(OffloadMiddleware(
 ))
 ```
 
-See: [Summarization Pattern Guide](docs/patterns/summarization.md) for complete reference with decision trees and advanced examples.
+See: [Large Response Handling Guide](docs/patterns/large_response_handling.md) for complete reference with decision trees and advanced examples.
 
 ---
 
@@ -1352,7 +1352,10 @@ See [CLI Reference](docs/cli/index.md) for complete documentation.
 |---------|-------------|
 | [Quick Start](docs/QUICKSTART.md) | Get started in 5 minutes |
 | [Understanding](docs/understanding/) | Core concepts: Context, Steps, Agents, Multi-Agent |
+| [RAG Agent](docs/understanding/rag_agent.md) | Retrieval-Augmented Generation agent |
+| [Dynamic DAG](docs/understanding/DYNAMIC_DAG.md) | Adaptive workflows that modify at runtime |
 | [Patterns](docs/patterns/) | Production patterns: Isolation, Summarization, Routing |
+| [Middleware Guide](docs/patterns/middleware_selection.md) | Choose the right middleware |
 | [API Reference](docs/API.md) | Full API documentation |
 | [Architecture](docs/ARCHITECTURE.md) | System design & diagrams |
 | [MCP Connectors](docs/MCP_CONNECTORS.md) | Model Context Protocol integration guide |

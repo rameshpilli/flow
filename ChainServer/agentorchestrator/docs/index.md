@@ -257,7 +257,7 @@ agentorchestrator/
 
     ---
 
-    Production patterns: [Context Isolation](patterns/context_isolation.md), [Summarization](patterns/summarization.md), [Aggregation](patterns/aggregation.md), [Routing](patterns/routing.md)
+    Production patterns: [Context Isolation](patterns/context_isolation.md), [Large Response Handling](patterns/large_response_handling.md), [Routing](patterns/routing.md)
 
 </div>
 
@@ -266,13 +266,8 @@ agentorchestrator/
 | Section | Description |
 |---------|-------------|
 | [Quick Start](QUICKSTART.md) | Get started in 5 minutes |
-| [Architecture](ARCHITECTURE.md) | System design & diagrams |
 | [API Reference](API.md) | Full API documentation |
-| [Context Management](CONTEXT_MANAGEMENT.md) | Deep dive into context patterns |
-| [Memory Architecture](MEMORY_ARCHITECTURE.md) | Three-layer memory guide (Session/Agentic/RAG) |
-| [Summarization Patterns](patterns/summarization.md) | STUFF, MAP_REDUCE, REFINE strategies for large responses |
-| [MCP Connectors](MCP_CONNECTORS.md) | Model Context Protocol integration guide |
-| [Feature Examples](FEATURE_EXAMPLES.md) | Code examples for all features |
+| [Patterns Guide](patterns/index.md) | Multi-agent patterns & middleware |
 | [Troubleshooting](TROUBLESHOOTING.md) | Common issues & solutions |
 
 ---

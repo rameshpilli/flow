@@ -608,8 +608,7 @@ History: [Summary of T1] + [T2] + [T3] + [T4]
 
 ## Related Documentation
 
-- [Large Response Handling](large_response_handling.md) - Complete guide
-- [Summarization Pattern](summarization.md) - Deep dive on strategies
+- [Large Response Handling](large_response_handling.md) - Complete guide on token management and summarization
 - [Context Isolation](context_isolation.md) - Multi-agent isolation
 - [Aggregation Pattern](aggregation.md) - Result combining
 

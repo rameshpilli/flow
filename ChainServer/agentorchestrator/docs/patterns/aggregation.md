@@ -339,7 +339,7 @@ for conflict in final.conflicts:
 ## Related Patterns
 
 - [Context Isolation](context_isolation.md) - Isolate before aggregating
-- [Summarization](summarization.md) - Compress large results first
+- [Large Response Handling](large_response_handling.md) - Compress large results first
 
 ## API Reference
 

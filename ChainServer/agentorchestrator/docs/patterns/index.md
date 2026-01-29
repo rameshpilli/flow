@@ -16,9 +16,10 @@ When you have multiple agents working together, you face several challenges:
 | Pattern | Problem Solved | When to Use |
 |---------|---------------|-------------|
 | [**Pattern Decision Guide**](PATTERN_DECISION_GUIDE.md) | Which pattern to use? | Start here for decision flowcharts |
+| [**Middleware Selection**](middleware_selection.md) | Which middleware? | Quick reference for middleware choice |
+| [Large Response Handling](large_response_handling.md) | Token management & summarization | Managing large agent outputs |
 | [Context Isolation](context_isolation.md) | Pollution & explosion | 3+ agents working in parallel |
-| [Summarization](summarization.md) | Large responses | Single agent returns huge data |
-| [Large Response Handling](large_response_handling.md) | Per-step middleware | Configure summarize/offload per agent |
+| [Idempotency](idempotency.md) | Duplicate execution | Prevent duplicate API calls/payments |
 | [Routing](routing.md) | Task distribution | Dynamic agent selection |
 | [Aggregation](aggregation.md) | Result synthesis | Combining specialist outputs |
 
@@ -88,7 +89,7 @@ ao.use(SummarizerMiddleware(
 ))
 ```
 
-[:material-arrow-right: Full Guide](summarization.md)
+[:material-arrow-right: Full Guide](large_response_handling.md)
 
 ### Routing
 
@@ -159,8 +160,7 @@ Choose the pattern that matches your need:
 
 - **Not sure which pattern?** → [Pattern Decision Guide](PATTERN_DECISION_GUIDE.md) (start here!)
 - **Agents interfering?** → [Context Isolation](context_isolation.md)
-- **Responses too large?** → [Summarization](summarization.md)
-- **Need per-step control?** → [Large Response Handling](large_response_handling.md)
+- **Responses too large?** → [Large Response Handling](large_response_handling.md)
 - **Need dynamic routing?** → [Routing](routing.md)
 - **Combining outputs?** → [Aggregation](aggregation.md)
 
