@@ -2,7 +2,7 @@
 # AgentOrchestrator - Presentation Guide
 
 > A conversational guide for presenting the AgentOrchestrator framework.
-> Estimated time: 20-30 minutes
+> Estimated time: 35-45 minutes
 
 ---
 
@@ -18,6 +18,7 @@ When you're building AI applications with LLMs, you quickly run into challenges:
 2. **Context explosion** - LLMs have token limits, but real data is huge
 3. **Reliability** - API calls fail, retries cause duplicates
 4. **Multi-agent chaos** - Multiple agents stepping on each other's data
+5. **Quality assurance** - How do you ensure LLM outputs are actually good?
 
 We built AgentOrchestrator to solve all of these."
 
@@ -162,7 +163,82 @@ This prevents memory leaks - step-scoped data is automatically cleaned up."
 
 ---
 
-## Section 5: Multi-Agent Systems (5 min)
+## Section 5: Type-Safe State with Pydantic (3 min)
+
+### IDE Autocomplete for Your Pipeline State
+
+"One thing that sets us apart - type-safe state management with Pydantic.
+
+Instead of `ctx.get()` and `ctx.set()` with strings everywhere, you get full IDE autocomplete:"
+
+```python
+from pydantic import BaseModel, Field
+from agentorchestrator.core.context import Context
+
+class PipelineState(BaseModel):
+    """Strongly-typed state for the pipeline."""
+    counter: int = 0
+    items: list[str] = Field(default_factory=list)
+    company: str | None = None
+    analysis_complete: bool = False
+
+@ao.step(name="process", state_model=PipelineState)
+async def process(ctx: Context[PipelineState]):
+    # Type-safe access with IDE autocomplete!
+    async with ctx.edit_state() as state:
+        state.counter += 1
+        state.items.append("new_item")
+
+    # Read-only access
+    print(ctx.state.counter)  # IDE knows this is an int!
+    return {"count": ctx.state.counter}
+```
+
+"Why this matters:
+- **Catch bugs at development time** - typos like `ctx.get('conuter')` become compile errors
+- **IDE autocomplete** - your editor knows what fields exist
+- **Self-documenting** - the state model IS the documentation
+- **Validation** - Pydantic validates data types automatically"
+
+---
+
+## Section 6: Dataflow-Based Dependencies (2 min)
+
+### Automatic Dependency Resolution
+
+"There's an alternative to explicit `deps=[]` - dataflow-based dependencies.
+
+Instead of saying 'this step runs after that step', you declare what data each step produces and consumes:"
+
+```python
+from agentorchestrator.core.decorators import produces, consumes
+
+@produces("company_data")
+@ao.step(name="fetch_company")
+async def fetch_company(ctx):
+    data = await api.get_company("AAPL")
+    ctx.set("company_data", data)
+    return data
+
+# This step will AUTOMATICALLY depend on fetch_company
+@consumes("company_data")
+@produces("analysis")
+@ao.step(name="analyze")
+async def analyze(ctx):
+    data = ctx.get("company_data")
+    return {"analysis": analyze_data(data)}
+
+# Enable dataflow resolution
+@ao.chain(name="pipeline", dataflow=True)
+class Pipeline:
+    steps = ["fetch_company", "analyze"]
+```
+
+"The orchestrator sees that `analyze` consumes `company_data` and `fetch_company` produces it - so it automatically creates the dependency. This makes refactoring easier - you don't have to update deps everywhere."
+
+---
+
+## Section 7: Multi-Agent Systems (5 min)
 
 ### The Squad Pattern
 
@@ -171,30 +247,46 @@ This prevents memory leaks - step-scoped data is automatically cleaned up."
 We built the **Squad** pattern for this:"
 
 ```python
-from agentorchestrator.squad import Squad, LLMGatewayAgent
+from agentorchestrator.squad import (
+    Squad,
+    SquadOptions,
+    LLMGatewayAgent,
+    LLMGatewayAgentOptions,
+)
 
 # Create specialist agents
-tech_agent = LLMGatewayAgent(
+tech_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
     name="TechExpert",
-    description="Handles technical questions about software"
-)
+    description="Handles technical questions about software",
+    system_prompt="You are a helpful technical assistant specializing in software development.",
+))
 
-finance_agent = LLMGatewayAgent(
+finance_agent = LLMGatewayAgent(LLMGatewayAgentOptions(
     name="FinanceExpert",
-    description="Handles questions about money and investments"
-)
+    description="Handles questions about money and investments",
+    system_prompt="You are a financial analyst assistant.",
+))
 
-# Create a squad with automatic routing
+# Create the supervisor (team lead) - REQUIRED
+supervisor = LLMGatewayAgent(LLMGatewayAgentOptions(
+    name="TeamLead",
+    description="Coordinates the team and delegates tasks",
+    system_prompt="You coordinate a team of specialists. Analyze requests and delegate to the right expert.",
+))
+
+# Create a squad - supervisor coordinates the team
 squad = Squad(
-    name="support_team",
+    supervisor=supervisor,  # Required: the lead agent
     agents=[tech_agent, finance_agent],
+    options=SquadOptions(
+        name="support_team",
+        max_concurrent_agents=5,
+    ),
 )
 
-# The squad automatically routes to the right agent
-response = await squad.process_request(
-    input_text="How do I optimize my React app?",  # → TechExpert
-    user_id="user-123",
-)
+# The squad runs - supervisor analyzes and delegates
+result = await squad.run("How do I optimize my React app?")
+print(result.content)  # Response from TechExpert, synthesized by supervisor
 ```
 
 ### Agent Handoffs
@@ -207,11 +299,12 @@ We handle this with the MultiAgentOrchestrator:"
 
 ```python
 from agentorchestrator.squad import MultiAgentOrchestrator
+from agentorchestrator.squad.classifiers import LLMGatewayClassifier
 
 orchestrator = MultiAgentOrchestrator(
     agents=[tech_agent, finance_agent, general_agent],
     classifier=LLMGatewayClassifier(),  # Uses LLM to pick the right agent
-    default_agent="general_agent",       # Fallback
+    default_agent=general_agent,        # Fallback
 )
 
 # Process with automatic classification and handoff
@@ -225,7 +318,7 @@ response = await orchestrator.route_request(
 
 ---
 
-## Section 6: Context Isolation (3 min)
+## Section 8: Context Isolation (3 min)
 
 ### The Pollution Problem
 
@@ -269,7 +362,7 @@ This is how you run 10 agents in parallel without them corrupting each other's d
 
 ---
 
-## Section 7: Handling Large Responses (4 min)
+## Section 9: Handling Large Responses (4 min)
 
 ### The Token Problem
 
@@ -287,6 +380,7 @@ from agentorchestrator.middleware import (
     TokenManagerMiddleware,
     SummarizerMiddleware,
     OffloadMiddleware,
+    RollingSummaryMiddleware,
 )
 
 # Layer 1: Track token budget
@@ -321,9 +415,151 @@ ao.use(OffloadMiddleware(
 
 All this happens automatically. Your step just does `ctx.set('data', huge_result)` and the middleware handles the rest."
 
+### Rolling Summary - Incremental Compression
+
+"For iterative data gathering (pagination, streaming), we have RollingSummaryMiddleware:"
+
+```python
+ao.use(RollingSummaryMiddleware(
+    max_tokens=4000,
+    recent_buffer_tokens=1000,  # Keep last 1000 tokens uncompressed
+    summarizer=langchain_summarizer,
+    applies_to=["gather_*"],  # Only for gather steps
+))
+```
+
+"Instead of re-summarizing everything on each update:
+- Iteration 1: 15K tokens → summarize → 2K tokens
+- Iteration 2: +10K tokens → summarize NEW only → merge → 3K tokens
+- Iteration 3: +8K tokens → summarize NEW only → merge → 3.5K tokens
+
+Much more efficient than starting over each time."
+
 ---
 
-## Section 8: Reliability Features (3 min)
+## Section 10: Agent Self-Critique with Reflection (3 min)
+
+### The "Think Twice" Pattern
+
+"Here's a powerful feature: agents can critique and revise their own outputs.
+
+This implements the common AI pattern of 'think twice' - generate, evaluate, improve:"
+
+```python
+from agentorchestrator.middleware.reflection import (
+    ReflectionMiddleware,
+    ReflectionConfig,
+    reflect,
+)
+
+# Option 1: Apply middleware globally
+ao.use(ReflectionMiddleware(
+    config=ReflectionConfig(
+        quality_threshold=0.8,   # Accept if quality >= 80%
+        max_revisions=2,         # Max 2 revision attempts
+    ),
+))
+
+# Option 2: Use @reflect decorator on specific steps
+@ao.step(name="draft_report")
+@reflect(
+    critique_prompt="Review this report for accuracy, completeness, and clarity. Score 0-1.",
+    quality_threshold=0.85,
+    max_revisions=2,
+)
+async def draft_report(ctx):
+    return {"report": generate_report(ctx.get("data"))}
+```
+
+"What happens:
+1. Step generates initial output
+2. LLM critiques the output, assigns quality score
+3. If score < threshold, step revises based on critique
+4. Repeat until quality meets threshold or max revisions reached
+5. Return final output with full reflection trace
+
+This dramatically improves output quality, especially for complex generation tasks."
+
+---
+
+## Section 11: Citation Tracking (2 min)
+
+### Source Attribution for RAG
+
+"When building RAG pipelines, you need to track where information came from. We built citation middleware for this:"
+
+```python
+from agentorchestrator.middleware.citation import (
+    CitationMiddleware,
+    cite,
+    get_citation_report,
+)
+
+ao.use(CitationMiddleware(
+    require_citations=True,
+    validate_against_sources=True,
+    min_coverage=0.8,  # 80% of claims must be cited
+))
+
+@ao.step(name="extract_revenue")
+async def extract_revenue(ctx):
+    # Use cite() helper for automatic tracking
+    return cite(
+        value=394.3,
+        source_name="sec_filing_agent",
+        content="Total net sales were $394,328 million",
+        reasoning="Direct revenue figure from 10-K filing",
+    )
+
+# After execution, get citation report
+result = await ao.launch("research_chain", {})
+report = get_citation_report(ctx)
+print(f"Citation coverage: {report['coverage_rate']:.1%}")
+```
+
+"This is essential for enterprise RAG - you can prove where every number came from."
+
+---
+
+## Section 12: Memory Lifecycle (2 min)
+
+### Automatic Session → Long-Term Memory Promotion
+
+"For conversational AI, you want to remember important things from sessions.
+
+MemoryLifecycleMiddleware automatically promotes important session data to long-term memory:"
+
+```python
+from agentorchestrator.middleware.memory_lifecycle import (
+    MemoryLifecycleMiddleware,
+    MemoryLifecycleConfig,
+    LLMImportanceEvaluator,
+)
+
+middleware = MemoryLifecycleMiddleware(
+    session_storage=redis_storage,
+    longterm_memory=mem0_memory,
+    evaluator=LLMImportanceEvaluator(llm_client),  # LLM scores importance
+    config=MemoryLifecycleConfig(
+        importance_threshold=0.7,      # Promote if importance >= 70%
+        auto_promote_patterns=True,    # Detect user preferences
+        batch_size=10,                 # Batch promotions for efficiency
+    ),
+)
+
+ao.use(middleware)
+```
+
+"Now when a step discovers 'user prefers technical explanations', the middleware:
+1. Scores importance using LLM
+2. If important enough, promotes to Mem0 long-term memory
+3. Future sessions can retrieve this preference
+
+No manual memory management required."
+
+---
+
+## Section 13: Reliability Features (3 min)
 
 ### Idempotency - No Duplicate Charges
 
@@ -350,6 +586,31 @@ async def process_payment(ctx):
 
 For production, we store in Redis so it works across multiple server instances."
 
+### Rate Limiting & Circuit Breaker
+
+"For external API calls, we provide resilience patterns:"
+
+```python
+from agentorchestrator.middleware import RateLimiterMiddleware
+from agentorchestrator.utils.circuit_breaker import CircuitBreaker
+
+# Rate limiting
+ao.use(RateLimiterMiddleware(
+    requests_per_second=10,
+    burst_size=20,
+))
+
+# Circuit breaker for external APIs
+@ao.step(name="call_external_api")
+async def call_external_api(ctx):
+    breaker = CircuitBreaker(
+        failure_threshold=5,    # Open after 5 failures
+        recovery_timeout=30,    # Try again after 30s
+    )
+    async with breaker:
+        return await external_api.call(...)
+```
+
 ### Resumable Chains
 
 "Long-running chains can fail in the middle. You don't want to re-run completed steps:"
@@ -367,7 +628,7 @@ result = await ao.resume("run-123")
 
 ---
 
-## Section 9: The RAG Agent (2 min)
+## Section 14: The RAG Agent (2 min)
 
 ### Grounded Answers
 
@@ -375,21 +636,26 @@ result = await ao.resume("run-123")
 
 ```python
 from agentorchestrator.squad.agents.rag_agent import RAGAgent, RAGAgentOptions
+from agentorchestrator.services.vector_store import VectorStoreConfig
 
 agent = RAGAgent(RAGAgentOptions(
     name="knowledge_agent",
     description="Answers using company docs",
     vector_store_config=VectorStoreConfig(
-        provider="chroma",
+        provider="chroma",           # or "pinecone", "qdrant"
         collection_name="company_docs",
     ),
     top_k=5,  # Retrieve top 5 relevant docs
+    include_sources=True,  # Return source documents
 ))
 
 response = await agent.process_request(
     input_text="What's our refund policy?",
     user_id="user-123",
 )
+
+print(response.content)
+print(response.sources)  # List of source documents used
 ```
 
 "Instead of hallucinating, it:
@@ -401,7 +667,42 @@ You can combine this with Squad - route factual questions to RAG, general questi
 
 ---
 
-## Section 10: Built-in Services & Connectors (4 min)
+## Section 15: Event-Driven Workflows (2 min)
+
+### Reactive Pipelines
+
+"For complex workflows, we support event-driven patterns:"
+
+```python
+from agentorchestrator.core.event_bus import get_event_bus, Event
+
+# Get event bus (Redis-backed in production, in-memory for dev)
+bus = get_event_bus(prefer_redis=True)
+
+# Publish events from steps
+@ao.step(name="process_order")
+async def process_order(ctx):
+    result = await process(ctx.get("order"))
+
+    # Publish event for downstream systems
+    await bus.publish(Event(
+        type="order_processed",
+        payload={"order_id": result["id"], "status": "complete"},
+    ))
+    return result
+
+# Subscribe to events
+@bus.subscribe("order_processed")
+async def on_order_processed(event: Event):
+    await notify_customer(event.payload["order_id"])
+    await update_inventory(event.payload)
+```
+
+"This enables loose coupling between chains - one chain can trigger another without direct dependencies."
+
+---
+
+## Section 16: Built-in Services & Connectors (4 min)
 
 ### Enterprise-Ready Integrations
 
@@ -419,7 +720,7 @@ agentorchestrator/services/
 ├── mem0.py             # Semantic long-term memory
 ├── secrets.py          # HashiCorp Vault integration
 ├── observability.py    # OpenTelemetry tracing
-└── cohere_compass.py   # Cohere integration
+└── cohere_compass.py   # Cohere Compass integration
 ```
 
 "Each of these is **pre-built and customized** for enterprise use. You don't write boilerplate - you just configure."
@@ -445,6 +746,20 @@ client = LLMGatewayClient(
 
 # That's it - now use it
 response = await client.generate_async("Summarize this document...")
+
+# Structured output with Pydantic
+from pydantic import BaseModel
+
+class Analysis(BaseModel):
+    sentiment: str
+    confidence: float
+    key_points: list[str]
+
+result = await client.generate_structured_async(
+    prompt="Analyze this earnings call...",
+    response_model=Analysis,
+)
+print(result.sentiment)  # Type-safe access!
 ```
 
 "Notice what you **didn't** have to do:
@@ -464,7 +779,8 @@ All you provide is your subscription credentials."
 | **Vector Store** | `VectorStoreService` | Chroma, Pinecone, Qdrant - unified API |
 | **Semantic Memory** | `Mem0Memory` | Long-term memory with embeddings |
 | **Secrets** | `VaultSecretProvider` | HashiCorp Vault, env fallback |
-| **Observability** | `TracingService` | OpenTelemetry spans, metrics |
+| **Observability** | `ObservabilityService` | OpenTelemetry spans, metrics |
+| **Cohere Compass** | `CohereCompassService` | Enterprise RAG retrieval |
 
 ### Configuration via Environment Variables
 
@@ -549,7 +865,7 @@ We're actively developing this framework, so feature requests go into our roadma
 
 ---
 
-## Section 11: Developer Experience (2 min)
+## Section 17: Developer Experience (3 min)
 
 ### CLI Tools
 
@@ -575,9 +891,50 @@ ao health --detailed
 
 # Debug mode with context snapshots
 ao debug my_chain --data '{}'
+
+# Development mode with hot reload
+ao dev --watch
+
+# Diagnose common issues
+ao doctor
+
+# Scaffold new components
+ao new agent MyAgent
+ao new chain MyChain
+ao new step my_step
 ```
 
 "No more print statements. You can see exactly what's in context at each step."
+
+---
+
+## Section 18: Complete Middleware Reference (2 min)
+
+### Available Middleware
+
+"Here's the full middleware stack available:
+
+| Middleware | Purpose | Priority |
+|------------|---------|----------|
+| `LoggerMiddleware` | Structured logging | 50 |
+| `MetricsMiddleware` | Performance metrics | 50 |
+| `TokenManagerMiddleware` | Token budget tracking | 25 |
+| `SummarizerMiddleware` | Compress large outputs | 30 |
+| `RollingSummaryMiddleware` | Incremental summarization | 30 |
+| `OffloadMiddleware` | Store huge data in Redis | 35 |
+| `IdempotencyMiddleware` | Prevent duplicate execution | 20 |
+| `CacheMiddleware` | Response caching | 25 |
+| `RateLimiterMiddleware` | Rate limiting | 15 |
+| `ReflectionMiddleware` | Agent self-critique | 75 |
+| `CitationMiddleware` | Source attribution | 70 |
+| `MemoryLifecycleMiddleware` | Session → long-term promotion | 80 |
+| `AnalyticsMiddleware` | Usage analytics | 90 |
+
+Lower priority = runs earlier. You can customize:"
+
+```python
+ao.use(MyMiddleware(), priority=42)
+```
 
 ---
 
@@ -591,12 +948,17 @@ ao debug my_chain --data '{}'
 |---------|--------------|
 | Coordinating steps | DAG-based execution with automatic parallelization |
 | Data sharing | Scoped context with automatic cleanup |
+| Type safety | Pydantic state models with IDE autocomplete |
 | Multi-agent chaos | Squad pattern with context isolation |
-| Token limits | TokenManager + Summarizer + Offload middleware |
+| Token limits | TokenManager + Summarizer + RollingSummary + Offload |
+| Quality assurance | Reflection middleware for self-critique |
+| Source tracking | Citation middleware for RAG pipelines |
+| Memory management | Automatic session → long-term promotion |
 | Duplicate operations | IdempotencyMiddleware |
 | Long-running failures | Resumable chains with checkpoints |
+| Rate limits / failures | Rate limiter + Circuit breaker |
 | Need grounded answers | Built-in RAG agent |
-| Debugging | CLI with visualization and snapshots |
+| Debugging | CLI with visualization, diagnostics, and scaffolding |
 
 ### One Complete Example
 
@@ -604,13 +966,22 @@ Here's everything working together:"
 
 ```python
 from agentorchestrator import AgentOrchestrator
-from agentorchestrator.squad import Squad, LLMGatewayAgent
+from agentorchestrator.squad import Squad, SquadOptions, LLMGatewayAgent, LLMGatewayAgentOptions
 from agentorchestrator.middleware import (
     TokenManagerMiddleware,
     SummarizerMiddleware,
     IdempotencyMiddleware,
     LoggerMiddleware,
+    ReflectionMiddleware,
+    CitationMiddleware,
 )
+from pydantic import BaseModel
+
+# Define typed state
+class ResearchState(BaseModel):
+    company: str = ""
+    research_complete: bool = False
+    citations: list[str] = []
 
 # Create orchestrator
 ao = AgentOrchestrator(name="research_app")
@@ -620,19 +991,29 @@ ao.use(LoggerMiddleware())
 ao.use(IdempotencyMiddleware())
 ao.use(TokenManagerMiddleware(budget=TokenBudget(context_window=128000)))
 ao.use(SummarizerMiddleware(max_tokens=4000))
+ao.use(ReflectionMiddleware(config=ReflectionConfig(quality_threshold=0.8)))
+ao.use(CitationMiddleware(require_citations=True))
 
-# Define steps
-@ao.step(name="gather_data")
+# Define steps with typed state
+@ao.step(name="gather_data", state_model=ResearchState)
 async def gather_data(ctx):
-    company = ctx.get("company")
+    async with ctx.edit_state() as state:
+        state.company = ctx.get("company")
     # Fetch SEC filings, news, earnings...
     ctx.set("research", huge_data)
     return {"gathered": True}
 
-@ao.step(name="analyze", deps=["gather_data"])
+@ao.step(name="analyze", deps=["gather_data"], state_model=ResearchState)
+@reflect(critique_prompt="Is this analysis thorough and accurate?")
 async def analyze(ctx):
     research = ctx.get("research")  # Auto-summarized!
-    return {"analysis": "..."}
+    async with ctx.edit_state() as state:
+        state.research_complete = True
+    return cite(
+        value={"analysis": "..."},
+        source_name="research",
+        content="Based on gathered data...",
+    )
 
 # Create chain
 @ao.chain(name="research_chain")
@@ -654,9 +1035,13 @@ result = await ao.launch("research_chain", {"company": "AAPL"})
 | Core orchestrator | `core/orchestrator.py` |
 | Context management | `core/context.py` |
 | DAG execution | `core/dag.py` |
-| Squad multi-agent | `squad/orchestrator.py` |
+| Decorators | `core/decorators.py` |
+| Squad multi-agent | `squad/squad.py` |
+| Multi-agent orchestrator | `squad/orchestrator.py` |
 | Context isolation | `squad/context/isolation.py` |
-| Middleware | `middleware/` |
+| All middleware | `middleware/` |
+| Services | `services/` |
+| Connectors | `connectors/` |
 | CLI | `cli.py` |
 | Documentation | `docs/` |
 
@@ -665,13 +1050,25 @@ result = await ao.launch("research_chain", {"company": "AAPL"})
 ## Q&A Preparation
 
 **Q: How does this compare to LangChain?**
-"LangChain is great for chaining LLM calls. We focus on orchestration - running steps in parallel, managing context size, coordinating multiple agents. They're complementary - we integrate with LangChain for summarization."
+"LangChain is great for chaining LLM calls. We focus on orchestration - running steps in parallel, managing context size, coordinating multiple agents, type-safe state. They're complementary - we integrate with LangChain for summarization."
 
 **Q: What about LangGraph?**
-"Similar space, different approach. LangGraph uses a state machine model. We use DAGs with declarative dependencies. Both work; we find decorators more intuitive for most developers."
+"Similar space, different approach. LangGraph uses a state machine model. We use DAGs with declarative dependencies. Both work; we find decorators more intuitive for most developers. We also have dataflow-based dependency resolution which LangGraph doesn't."
 
 **Q: Production ready?**
-"We're using it internally. Key production features: Redis-backed context for scale, idempotency for reliability, observability with OpenTelemetry."
+"We're using it internally. Key production features: Redis-backed context for scale, idempotency for reliability, observability with OpenTelemetry, reflection for quality, memory lifecycle for conversational AI."
 
 **Q: Performance?**
 "The orchestrator overhead is minimal - microseconds. The real time is in LLM calls. Parallel execution typically saves 40-60% time vs sequential."
+
+**Q: What about observability?**
+"Full OpenTelemetry integration. Every step creates spans with timing, token counts, and custom attributes. Integrates with Jaeger, Datadog, New Relic - whatever you use."
+
+**Q: How do you handle secrets?**
+"VaultSecretProvider for HashiCorp Vault with automatic fallback to environment variables. Never hardcode secrets."
+
+**Q: Can I use this with my existing agents?**
+"Yes. Extend BaseAgent or wrap any async function. We don't force you into our agent model."
+
+**Q: What's the learning curve?**
+"If you know async Python and decorators, you can be productive in an hour. Start with `@ao.step` and `@ao.chain`, add middleware as you need it."
