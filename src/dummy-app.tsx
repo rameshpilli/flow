@@ -1,5 +1,5 @@
 import { useApp } from "@modelcontextprotocol/ext-apps/react";
-import { StrictMode, useCallback, useState } from "react";
+import { StrictMode, useCallback, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 const IMPLEMENTATION = {
@@ -16,25 +16,57 @@ function DummyDashboard() {
   const [statusMessage, setStatusMessage] = useState(
     "Click button to fetch status"
   );
+  const [prompt, setPrompt] = useState("");
+  const [llmStatus, setLlmStatus] = useState("Ready to chat.");
+  const [llmResponse, setLlmResponse] = useState("");
+
+  const extractText = useMemo(
+    () =>
+      (result: { content?: Array<{ type: string; text?: string }> }) => {
+        if (!result?.content) return "No response content.";
+        return result.content
+          .filter((item) => item.type === "text")
+          .map((item) => item.text || "")
+          .filter(Boolean)
+          .join("\n");
+      },
+    []
+  );
 
   const handleGetStatus = useCallback(async () => {
     if (!app) return;
     try {
       setStatusMessage("Loading status...");
-      await app.sendMessage({
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: "Can you get the system status?",
-          },
-        ],
+      const result = await app.callServerTool({
+        name: "get-status",
+        arguments: {},
       });
+      setStatusMessage(extractText(result));
     } catch (e) {
       console.error("Failed to send message:", e);
       setStatusMessage("Error fetching status");
     }
-  }, [app]);
+  }, [app, extractText]);
+
+  const handleChat = useCallback(async () => {
+    if (!app) return;
+    if (!prompt.trim()) {
+      setLlmStatus("Please enter a prompt.");
+      return;
+    }
+    try {
+      setLlmStatus("Sending to LLM gateway...");
+      const result = await app.callServerTool({
+        name: "llm-chat",
+        arguments: { prompt: prompt.trim() },
+      });
+      setLlmResponse(extractText(result));
+      setLlmStatus("Response received.");
+    } catch (e) {
+      console.error("Failed to call LLM gateway:", e);
+      setLlmStatus("Error calling LLM gateway.");
+    }
+  }, [app, extractText, prompt]);
 
   if (error) {
     return (
@@ -102,6 +134,67 @@ function DummyDashboard() {
       >
         Get System Status
       </button>
+
+      <div
+        style={{
+          backgroundColor: "white",
+          padding: "16px",
+          borderRadius: "6px",
+          marginTop: "20px",
+          border: "1px solid #ddd",
+        }}
+      >
+        <h2 style={{ fontSize: "16px", marginBottom: "12px", color: "#666" }}>
+          LLM Gateway Chat
+        </h2>
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="Ask your internal model..."
+          rows={4}
+          style={{
+            width: "100%",
+            borderRadius: "6px",
+            border: "1px solid #ddd",
+            padding: "10px",
+            fontSize: "14px",
+            marginBottom: "10px",
+          }}
+        />
+        <button
+          onClick={handleChat}
+          style={{
+            padding: "10px 18px",
+            fontSize: "14px",
+            backgroundColor: "#0f766e",
+            color: "white",
+            border: "none",
+            borderRadius: "6px",
+            cursor: "pointer",
+            fontWeight: "600",
+          }}
+        >
+          Send to LLM Gateway
+        </button>
+        <p style={{ fontSize: "12px", color: "#777", marginTop: "10px" }}>
+          {llmStatus}
+        </p>
+        {llmResponse ? (
+          <pre
+            style={{
+              whiteSpace: "pre-wrap",
+              backgroundColor: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              borderRadius: "6px",
+              padding: "12px",
+              fontSize: "13px",
+              color: "#111827",
+            }}
+          >
+            {llmResponse}
+          </pre>
+        ) : null}
+      </div>
 
       <p
         style={{
