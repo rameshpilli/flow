@@ -31,7 +31,7 @@ Then add the server in MCPJam and test the tools!
 
 ## Project Structure
 ```
-mcpjam-dummy-server/
+.
 ├── server.ts              # MCP Server implementation
 ├── dummy-app.html         # HTML entry point
 ├── src/
