@@ -228,6 +228,43 @@ class RunStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class ComplianceState(str, Enum):
+    """
+    Compliance states for MCP servers in regulated environments.
+
+    Used by the compliance middleware to track and enforce governance
+    policy on MCP server connections and tool calls.
+
+    Attributes:
+        PENDING_REVIEW: Awaiting governance team review.
+        APPROVED: Fully approved for production use.
+        REJECTED: Rejected — tool calls will be blocked.
+        SUSPENDED: Temporarily suspended (vulnerability, policy violation).
+        CONDITIONALLY_APPROVED: Approved with conditions attached.
+    """
+
+    PENDING_REVIEW = "pending_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    SUSPENDED = "suspended"
+    CONDITIONALLY_APPROVED = "conditionally_approved"
+
+
+class ComplianceEnforcement(str, Enum):
+    """
+    Compliance enforcement modes.
+
+    Attributes:
+        MONITOR: Log violations but allow all calls.
+        SOFT_ENFORCE: Block rejected/suspended, allow pending.
+        ENFORCE: Only allow approved/conditionally_approved.
+    """
+
+    MONITOR = "monitor"
+    SOFT_ENFORCE = "soft_enforce"
+    ENFORCE = "enforce"
+
+
 class AgentCapability(str, Enum):
     """
     Standard agent capabilities for capability-based routing.
@@ -270,6 +307,8 @@ StorageBackendLiteral = Literal["memory", "redis", "mem0"]
 ResourceScopeLiteral = Literal["singleton", "request", "step"]
 ContextScopeLiteral = Literal["step", "chain", "global"]
 RunStatusLiteral = Literal["pending", "running", "completed", "partial", "failed", "cancelled"]
+ComplianceStateLiteral = Literal["pending_review", "approved", "rejected", "suspended", "conditionally_approved"]
+ComplianceEnforcementLiteral = Literal["monitor", "soft_enforce", "enforce"]
 
 
 __all__ = [
@@ -281,6 +320,8 @@ __all__ = [
     "ContextScope",
     "RunStatus",
     "AgentCapability",
+    "ComplianceState",
+    "ComplianceEnforcement",
     # Type aliases
     "ErrorHandlingLiteral",
     "MergeModeLiteral",
@@ -288,4 +329,6 @@ __all__ = [
     "ResourceScopeLiteral",
     "ContextScopeLiteral",
     "RunStatusLiteral",
+    "ComplianceStateLiteral",
+    "ComplianceEnforcementLiteral",
 ]

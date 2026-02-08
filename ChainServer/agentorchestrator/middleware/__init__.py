@@ -87,6 +87,10 @@ from agentorchestrator.middleware.rolling_summary import (
     RollingSummaryMiddleware,
     RollingSummaryState,
 )
+from agentorchestrator.compliance.middleware import (
+    ComplianceMiddleware,
+    ComplianceBlockedError,
+)
 
 __all__ = [
     # Base
@@ -167,4 +171,7 @@ __all__ = [
     # Other middleware
     "CacheMiddleware",
     "LoggerMiddleware",
+    # Compliance (MCP Server Governance)
+    "ComplianceMiddleware",
+    "ComplianceBlockedError",
 ]
