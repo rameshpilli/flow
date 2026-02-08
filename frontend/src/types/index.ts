@@ -600,6 +600,11 @@ export interface ComplianceRecord {
   metadata?: Record<string, any>;
   createdAt: string;
   updatedAt: string;
+  // Enriched fields from /compliance/servers-with-tools
+  tools?: Tool[];
+  prompts?: Prompt[];
+  connectionStatus?: string;
+  toolCount?: number;
 }
 
 export interface ComplianceDashboard {

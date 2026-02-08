@@ -9,8 +9,13 @@ import {
   XCircle,
   Eye,
   Plus,
+  ChevronDown,
+  ChevronRight,
+  Wrench,
+  Plug,
+  PlugZap,
 } from 'lucide-react';
-import { ComplianceRecord, ComplianceDashboard, ComplianceStatus } from '@/types';
+import { ComplianceRecord, ComplianceDashboard, ComplianceStatus, Tool } from '@/types';
 import { getApiUrl } from '@/utils/runtime';
 
 interface ReviewModalData {
@@ -18,6 +23,64 @@ interface ReviewModalData {
   serverName: string;
   action: 'approve' | 'reject' | 'suspend';
 }
+
+/**
+ * Read-only tool card for compliance reviewers.
+ * Shows tool name, description, and input schema — but no toggle or execute.
+ */
+const ComplianceToolCard: React.FC<{ tool: Tool; serverName: string }> = ({ tool, serverName }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // Strip the server name prefix from tool name for cleaner display
+  const displayName = tool.name.includes('-')
+    ? tool.name.replace(new RegExp(`^${serverName}-`), '')
+    : tool.name;
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg">
+      <div
+        className="flex justify-between items-center cursor-pointer px-3 py-2"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <div className="flex items-center space-x-2 flex-1 min-w-0">
+          <Wrench className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+          <span className="text-sm font-medium text-gray-900 truncate">{displayName}</span>
+          {tool.description && (
+            <span className="text-xs text-gray-500 truncate hidden sm:inline">
+              — {tool.description}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center space-x-2 flex-shrink-0">
+          {tool.enabled === false ? (
+            <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-500 rounded">disabled</span>
+          ) : (
+            <span className="text-xs px-2 py-0.5 bg-green-50 text-green-600 rounded">enabled</span>
+          )}
+          <button className="text-gray-400 hover:text-gray-600">
+            {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          </button>
+        </div>
+      </div>
+
+      {isExpanded && (
+        <div className="px-3 pb-3 border-t border-gray-100">
+          {tool.description && (
+            <p className="text-xs text-gray-600 mt-2 mb-2">{tool.description}</p>
+          )}
+          {tool.inputSchema && Object.keys(tool.inputSchema).length > 0 && (
+            <div className="bg-gray-50 rounded p-2 border border-gray-200">
+              <h5 className="text-xs font-medium text-gray-700 mb-1">Input Schema</h5>
+              <pre className="text-xs text-gray-600 overflow-auto max-h-48">
+                {JSON.stringify(tool.inputSchema, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const CompliancePage: React.FC = () => {
   const { t } = useTranslation();
@@ -30,20 +93,34 @@ const CompliancePage: React.FC = () => {
   const [reviewerName, setReviewerName] = useState('');
   const [reviewNotes, setReviewNotes] = useState('');
   const [showNewServerForm, setShowNewServerForm] = useState(false);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [newServerData, setNewServerData] = useState({
     serverId: '',
     serverName: '',
     mcpUrl: '',
   });
 
-  // Fetch dashboard stats and records
+  // Toggle row expansion for tool visibility
+  const toggleRowExpansion = (serverId: string) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(serverId)) {
+        next.delete(serverId);
+      } else {
+        next.add(serverId);
+      }
+      return next;
+    });
+  };
+
+  // Fetch dashboard stats and records (with tools enrichment)
   const fetchData = async () => {
     setIsLoading(true);
     setError(null);
     try {
       const [dashboardRes, recordsRes] = await Promise.all([
         fetch(getApiUrl('/compliance/dashboard')),
-        fetch(getApiUrl('/compliance/servers')),
+        fetch(getApiUrl('/compliance/servers-with-tools')),
       ]);
 
       if (!dashboardRes.ok || !recordsRes.ok) {
@@ -107,6 +184,40 @@ const CompliancePage: React.FC = () => {
     }
   };
 
+  // Get connection status badge
+  const getConnectionBadge = (status?: string) => {
+    switch (status) {
+      case 'connected':
+        return (
+          <span className="inline-flex items-center space-x-1 text-xs text-green-600">
+            <PlugZap className="w-3 h-3" />
+            <span>Connected</span>
+          </span>
+        );
+      case 'connecting':
+        return (
+          <span className="inline-flex items-center space-x-1 text-xs text-yellow-600">
+            <Plug className="w-3 h-3" />
+            <span>Connecting</span>
+          </span>
+        );
+      case 'disconnected':
+        return (
+          <span className="inline-flex items-center space-x-1 text-xs text-gray-400">
+            <Plug className="w-3 h-3" />
+            <span>Disconnected</span>
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center space-x-1 text-xs text-gray-400">
+            <Plug className="w-3 h-3" />
+            <span>Not registered</span>
+          </span>
+        );
+    }
+  };
+
   // Handle compliance action
   const handleComplianceAction = async (
     serverId: string,
@@ -125,8 +236,9 @@ const CompliancePage: React.FC = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          reviewedBy: reviewer,
-          reviewNotes: notes,
+          reviewer: reviewer,
+          notes: notes,
+          reason: notes, // suspend endpoint expects 'reason'
         }),
       });
 
@@ -357,108 +469,209 @@ const CompliancePage: React.FC = () => {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-8">
+                    {/* Expand toggle */}
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                     Server Name
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    URL
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                    Connection
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                    Tools
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                     Score
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                     Reviewed By
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Reviewed At
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {filteredRecords.map((record) => (
-                  <tr key={record.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {record.serverName}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {record.mcpUrl || '-'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span
-                        className={`inline-flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(
-                          record.status
-                        )}`}
+                {filteredRecords.map((record) => {
+                  const isExpanded = expandedRows.has(record.serverId);
+                  const toolCount = record.toolCount || record.tools?.length || 0;
+                  const hasTools = toolCount > 0;
+
+                  return (
+                    <React.Fragment key={record.id}>
+                      {/* Main row */}
+                      <tr
+                        className={`hover:bg-gray-50 cursor-pointer ${isExpanded ? 'bg-blue-50/30' : ''}`}
+                        onClick={() => hasTools && toggleRowExpansion(record.serverId)}
                       >
-                        {getStatusIcon(record.status)}
-                        <span>{record.status.replace(/_/g, ' ')}</span>
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {record.complianceScore !== undefined
-                        ? `${record.complianceScore}%`
-                        : '-'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {record.reviewedBy || '-'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {record.reviewedAt
-                        ? new Date(record.reviewedAt).toLocaleDateString()
-                        : '-'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm space-x-2">
-                      {record.status === 'pending_review' && (
-                        <>
-                          <button
-                            onClick={() =>
-                              setReviewModal({
-                                serverId: record.serverId,
-                                serverName: record.serverName,
-                                action: 'approve',
-                              })
-                            }
-                            className="inline-block px-3 py-1 bg-green-100 text-green-800 rounded hover:bg-green-200 transition-colors text-xs font-medium"
+                        {/* Expand chevron */}
+                        <td className="px-4 py-4 w-8">
+                          {hasTools ? (
+                            <button
+                              className="text-gray-400 hover:text-gray-600"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleRowExpansion(record.serverId);
+                              }}
+                            >
+                              {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                            </button>
+                          ) : (
+                            <span className="text-gray-200">
+                              <ChevronRight size={16} />
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Server Name + URL */}
+                        <td className="px-4 py-4">
+                          <div className="text-sm font-medium text-gray-900">
+                            {record.serverName}
+                          </div>
+                          {record.mcpUrl && (
+                            <div className="text-xs text-gray-500 truncate max-w-xs" title={record.mcpUrl}>
+                              {record.mcpUrl}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* Connection Status */}
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          {getConnectionBadge(record.connectionStatus)}
+                        </td>
+
+                        {/* Tool Count */}
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          {hasTools ? (
+                            <span className="inline-flex items-center space-x-1 text-xs font-medium text-blue-700 bg-blue-50 px-2 py-1 rounded-full border border-blue-200">
+                              <Wrench className="w-3 h-3" />
+                              <span>{toolCount} tool{toolCount !== 1 ? 's' : ''}</span>
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-400">—</span>
+                          )}
+                        </td>
+
+                        {/* Compliance Status */}
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(
+                              record.status
+                            )}`}
                           >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() =>
-                              setReviewModal({
-                                serverId: record.serverId,
-                                serverName: record.serverName,
-                                action: 'reject',
-                              })
-                            }
-                            className="inline-block px-3 py-1 bg-red-100 text-red-800 rounded hover:bg-red-200 transition-colors text-xs font-medium"
-                          >
-                            Reject
-                          </button>
-                          <button
-                            onClick={() =>
-                              setReviewModal({
-                                serverId: record.serverId,
-                                serverName: record.serverName,
-                                action: 'suspend',
-                              })
-                            }
-                            className="inline-block px-3 py-1 bg-orange-100 text-orange-800 rounded hover:bg-orange-200 transition-colors text-xs font-medium"
-                          >
-                            Suspend
-                          </button>
-                        </>
+                            {getStatusIcon(record.status)}
+                            <span>{record.status.replace(/_/g, ' ')}</span>
+                          </span>
+                        </td>
+
+                        {/* Score */}
+                        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-600">
+                          {record.complianceScore !== undefined && record.complianceScore !== null
+                            ? `${record.complianceScore}%`
+                            : '-'}
+                        </td>
+
+                        {/* Reviewed By */}
+                        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-600">
+                          {record.reviewedBy || '-'}
+                        </td>
+
+                        {/* Actions */}
+                        <td className="px-4 py-4 whitespace-nowrap text-sm space-x-2" onClick={(e) => e.stopPropagation()}>
+                          {record.status === 'pending_review' && (
+                            <>
+                              <button
+                                onClick={() =>
+                                  setReviewModal({
+                                    serverId: record.serverId,
+                                    serverName: record.serverName,
+                                    action: 'approve',
+                                  })
+                                }
+                                className="inline-block px-3 py-1 bg-green-100 text-green-800 rounded hover:bg-green-200 transition-colors text-xs font-medium"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() =>
+                                  setReviewModal({
+                                    serverId: record.serverId,
+                                    serverName: record.serverName,
+                                    action: 'reject',
+                                  })
+                                }
+                                className="inline-block px-3 py-1 bg-red-100 text-red-800 rounded hover:bg-red-200 transition-colors text-xs font-medium"
+                              >
+                                Reject
+                              </button>
+                              <button
+                                onClick={() =>
+                                  setReviewModal({
+                                    serverId: record.serverId,
+                                    serverName: record.serverName,
+                                    action: 'suspend',
+                                  })
+                                }
+                                className="inline-block px-3 py-1 bg-orange-100 text-orange-800 rounded hover:bg-orange-200 transition-colors text-xs font-medium"
+                              >
+                                Suspend
+                              </button>
+                            </>
+                          )}
+                          {record.status === 'approved' && (
+                            <button
+                              onClick={() =>
+                                setReviewModal({
+                                  serverId: record.serverId,
+                                  serverName: record.serverName,
+                                  action: 'suspend',
+                                })
+                              }
+                              className="inline-block px-3 py-1 bg-orange-100 text-orange-800 rounded hover:bg-orange-200 transition-colors text-xs font-medium"
+                            >
+                              Suspend
+                            </button>
+                          )}
+                          {(record.status === 'rejected' || record.status === 'suspended') && (
+                            <span className="text-gray-400 text-xs">—</span>
+                          )}
+                        </td>
+                      </tr>
+
+                      {/* Expanded tools row */}
+                      {isExpanded && record.tools && record.tools.length > 0 && (
+                        <tr>
+                          <td colSpan={8} className="px-0 py-0">
+                            <div className="bg-gray-50 border-t border-b border-gray-200 px-8 py-4">
+                              <div className="flex items-center space-x-2 mb-3">
+                                <Wrench className="w-4 h-4 text-gray-500" />
+                                <h4 className="text-sm font-semibold text-gray-700">
+                                  Tools exposed by {record.serverName}
+                                </h4>
+                                <span className="text-xs text-gray-500">
+                                  ({record.tools.length} tool{record.tools.length !== 1 ? 's' : ''})
+                                </span>
+                              </div>
+                              <div className="space-y-2 max-h-96 overflow-y-auto">
+                                {record.tools.map((tool, index) => (
+                                  <ComplianceToolCard
+                                    key={tool.name || index}
+                                    tool={tool}
+                                    serverName={record.serverId}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
                       )}
-                      {record.status !== 'pending_review' && (
-                        <span className="text-gray-500 text-xs">No actions</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -507,14 +720,18 @@ const CompliancePage: React.FC = () => {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Review Notes
+                  {reviewModal.action === 'suspend' ? 'Reason for Suspension' : 'Review Notes'}
                 </label>
                 <textarea
                   value={reviewNotes}
                   onChange={(e) => setReviewNotes(e.target.value)}
                   rows={4}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="Enter your review notes..."
+                  placeholder={
+                    reviewModal.action === 'suspend'
+                      ? 'Enter reason for suspension...'
+                      : 'Enter your review notes...'
+                  }
                 />
               </div>
 

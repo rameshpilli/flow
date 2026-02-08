@@ -124,6 +124,7 @@ import {
 import {
   getComplianceStatus,
   getAllComplianceRecords,
+  getComplianceRecordsWithTools,
   checkCompliance,
   approveServer,
   rejectServer,
@@ -246,6 +247,7 @@ export const initRoutes = async (app: express.Application): Promise<void> => {
 
   // Compliance routes
   router.get('/compliance/servers', getAllComplianceRecords);
+  router.get('/compliance/servers-with-tools', getComplianceRecordsWithTools);
   router.get('/compliance/dashboard', getComplianceDashboard);
   router.get('/compliance/status/:serverId', getComplianceStatus);
   router.post('/compliance/check', checkCompliance);

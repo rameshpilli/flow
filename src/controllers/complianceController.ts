@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { ComplianceRecord } from '../db/entities/ComplianceRecord.js';
 import { ComplianceAuditLog } from '../db/entities/ComplianceAuditLog.js';
 import { getComplianceDataSource } from '../db/complianceDataSource.js';
+import { getServersInfo } from '../services/mcpService.js';
 
 /**
  * Helper function to create an audit log entry
@@ -104,6 +105,66 @@ export const getAllComplianceRecords = async (req: Request, res: Response): Prom
     res.status(500).json({
       success: false,
       message: 'Failed to get compliance records',
+    });
+  }
+};
+
+/**
+ * GET /compliance/servers-with-tools - List compliance records enriched with tool data
+ * Merges compliance records with runtime server info (tools, status, prompts)
+ * from the MCPHub server registry so the compliance page can display tools.
+ */
+export const getComplianceRecordsWithTools = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const status = req.query.status as string | undefined;
+
+    const dataSource = getComplianceDataSource();
+    const complianceRepo = dataSource.getRepository(ComplianceRecord);
+
+    let query = complianceRepo.createQueryBuilder('cr');
+    if (status) {
+      query = query.where('cr.status = :status', { status });
+    }
+
+    const records = await query.orderBy('cr.createdAt', 'DESC').getMany();
+
+    // Fetch runtime server info (includes tools) from mcpService
+    let serverToolsMap: Record<string, { tools: any[]; prompts: any[]; connectionStatus: string }> = {};
+    try {
+      const serversInfo = await getServersInfo();
+      for (const server of serversInfo) {
+        serverToolsMap[server.name] = {
+          tools: server.tools || [],
+          prompts: server.prompts || [],
+          connectionStatus: server.status || 'disconnected',
+        };
+      }
+    } catch (err) {
+      // If mcpService isn't available (e.g., no servers connected), continue without tools
+      console.warn('[Compliance] Could not fetch server tools from mcpService:', err);
+    }
+
+    // Enrich compliance records with tool data
+    const enrichedRecords = records.map((record) => {
+      const serverInfo = serverToolsMap[record.serverId] || null;
+      return {
+        ...record,
+        tools: serverInfo?.tools || [],
+        prompts: serverInfo?.prompts || [],
+        connectionStatus: serverInfo?.connectionStatus || 'unknown',
+        toolCount: serverInfo?.tools?.length || 0,
+      };
+    });
+
+    res.json({
+      success: true,
+      data: enrichedRecords,
+    });
+  } catch (error) {
+    console.error('Failed to get compliance records with tools:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get compliance records with tools',
     });
   }
 };
