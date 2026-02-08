@@ -28,3 +28,7 @@ coverage/
 
 data/
 temp-test-config/
+
+# Compliance local dev
+compliance.sqlite
+_tmp_*
