@@ -43,6 +43,9 @@
     }
   ],
   "systemConfig": {
+    "routing": {
+      "skipAuth": true
+    },
     "oauthServer": {
       "enabled": true,
       "accessTokenLifetime": 3600,

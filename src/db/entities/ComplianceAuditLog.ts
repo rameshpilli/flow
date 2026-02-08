@@ -2,6 +2,7 @@ import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 
 
 /**
  * Compliance Audit Log entity for tracking compliance-related events and status changes
+ * Compatible with both PostgreSQL and SQLite (for local dev/testing)
  */
 @Entity({ name: 'compliance_audit_logs' })
 @Index(['serverId'])
@@ -32,7 +33,7 @@ export class ComplianceAuditLog {
   @Column({ type: 'simple-json', nullable: true })
   metadata?: Record<string, any>;
 
-  @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
+  @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }
 

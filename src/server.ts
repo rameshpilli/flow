@@ -15,6 +15,7 @@ import {
 } from './services/sseService.js';
 import { initializeDefaultUser } from './models/User.js';
 import { sseUserContextMiddleware } from './middlewares/userContext.js';
+import { initializeComplianceDb } from './db/complianceDataSource.js';
 import { findPackageRoot } from './utils/path.js';
 import { getCurrentModuleDir } from './utils/moduleDir.js';
 import { initOAuthProvider, getOAuthRouter } from './services/oauthService.js';
@@ -79,6 +80,15 @@ export class AppServer {
 
       // Initialize OAuth authorization server (for MCPHub's own OAuth)
       await initOAuthServer();
+
+      // Initialize compliance database (uses SQLite if no DB_URL set)
+      try {
+        await initializeComplianceDb();
+        console.log('Compliance database initialized successfully');
+      } catch (complianceErr) {
+        console.warn('Compliance database initialization failed:', complianceErr);
+        console.warn('Compliance features may not be available');
+      }
 
       initMiddlewares(this.app);
       await initRoutes(this.app);

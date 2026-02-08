@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
-import { getAppDataSource } from '../db/connection.js';
 import { ComplianceRecord } from '../db/entities/ComplianceRecord.js';
 import { ComplianceAuditLog } from '../db/entities/ComplianceAuditLog.js';
+import { getComplianceDataSource } from '../db/complianceDataSource.js';
 
 /**
  * Helper function to create an audit log entry
@@ -16,7 +16,7 @@ const createAuditLog = async (
   actor?: string,
 ): Promise<void> => {
   try {
-    const dataSource = getAppDataSource();
+    const dataSource = getComplianceDataSource();
     const auditRepo = dataSource.getRepository(ComplianceAuditLog);
 
     await auditRepo.save({
@@ -49,7 +49,7 @@ export const getComplianceStatus = async (req: Request, res: Response): Promise<
       return;
     }
 
-    const dataSource = getAppDataSource();
+    const dataSource = getComplianceDataSource();
     const complianceRepo = dataSource.getRepository(ComplianceRecord);
 
     const record = await complianceRepo.findOne({
@@ -84,7 +84,7 @@ export const getAllComplianceRecords = async (req: Request, res: Response): Prom
   try {
     const status = req.query.status as string | undefined;
 
-    const dataSource = getAppDataSource();
+    const dataSource = getComplianceDataSource();
     const complianceRepo = dataSource.getRepository(ComplianceRecord);
 
     let query = complianceRepo.createQueryBuilder('cr');
@@ -123,7 +123,7 @@ export const checkCompliance = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    const dataSource = getAppDataSource();
+    const dataSource = getComplianceDataSource();
     const complianceRepo = dataSource.getRepository(ComplianceRecord);
 
     // Check if record already exists
@@ -206,7 +206,7 @@ export const approveServer = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const dataSource = getAppDataSource();
+    const dataSource = getComplianceDataSource();
     const complianceRepo = dataSource.getRepository(ComplianceRecord);
 
     const record = await complianceRepo.findOne({
@@ -284,7 +284,7 @@ export const rejectServer = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    const dataSource = getAppDataSource();
+    const dataSource = getComplianceDataSource();
     const complianceRepo = dataSource.getRepository(ComplianceRecord);
 
     const record = await complianceRepo.findOne({
@@ -357,7 +357,7 @@ export const suspendServer = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const dataSource = getAppDataSource();
+    const dataSource = getComplianceDataSource();
     const complianceRepo = dataSource.getRepository(ComplianceRecord);
 
     const record = await complianceRepo.findOne({
@@ -427,7 +427,7 @@ export const getAuditLog = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
-    const dataSource = getAppDataSource();
+    const dataSource = getComplianceDataSource();
     const auditRepo = dataSource.getRepository(ComplianceAuditLog);
 
     const logs = await auditRepo
@@ -455,7 +455,7 @@ export const getAuditLog = async (req: Request, res: Response): Promise<void> =>
  */
 export const getComplianceDashboard = async (req: Request, res: Response): Promise<void> => {
   try {
-    const dataSource = getAppDataSource();
+    const dataSource = getComplianceDataSource();
     const complianceRepo = dataSource.getRepository(ComplianceRecord);
 
     const totalServers = await complianceRepo.count();

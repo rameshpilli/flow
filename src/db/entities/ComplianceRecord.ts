@@ -9,6 +9,7 @@ import {
 
 /**
  * Compliance Record entity for tracking server compliance status and reviews
+ * Compatible with both PostgreSQL and SQLite (for local dev/testing)
  */
 @Entity({ name: 'compliance_records' })
 @Index(['serverId'])
@@ -38,7 +39,7 @@ export class ComplianceRecord {
   @Column({ type: 'int', nullable: true })
   complianceScore?: number; // 0-100
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'datetime', nullable: true })
   reviewedAt?: Date;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
@@ -50,7 +51,7 @@ export class ComplianceRecord {
   @Column({ type: 'text', nullable: true })
   conditions?: string; // conditions for conditional approval
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'datetime', nullable: true })
   expiresAt?: Date; // when approval expires
 
   @Column({ type: 'simple-json', nullable: true })
@@ -59,10 +60,10 @@ export class ComplianceRecord {
   @Column({ type: 'simple-json', nullable: true })
   metadata?: Record<string, any>; // extra data
 
-  @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
+  @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: 'updated_at', type: 'timestamp' })
+  @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 }
 

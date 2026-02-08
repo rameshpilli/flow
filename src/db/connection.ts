@@ -53,8 +53,14 @@ const getDatabaseUrl = async (): Promise<string> => {
   return (await getSmartRoutingConfig()).dbUrl;
 };
 
+// Check if SQLite mode is requested
+export const isSqliteMode = (): boolean => {
+  return process.env.DB_TYPE === 'sqlite' || process.env.DB_TYPE === 'better-sqlite3' || process.env.DB_TYPE === 'sqljs';
+};
+
 // Default database configuration with connection pooling
 const getDefaultConfig = async (): Promise<DataSourceOptions> => {
+
   return {
     type: 'postgres',
     url: await getDatabaseUrl(),
@@ -175,8 +181,15 @@ const performDatabaseInitialization = async (): Promise<DataSource> => {
 
     if (!appDataSource.isInitialized) {
       console.log('Initializing database connection...');
-      // Register the vector type with TypeORM
       await appDataSource.initialize();
+
+      // Skip PostgreSQL-specific setup for SQLite
+      if (isSqliteMode()) {
+        console.log('Database connection established successfully (SQLite mode).');
+        return appDataSource;
+      }
+
+      // Register the vector type with TypeORM
       registerPostgresVectorType(appDataSource);
 
       // Create required PostgreSQL extensions
