@@ -581,3 +581,43 @@ export interface ActivityFilterOptions {
   groups: string[];
   keyNames: string[];
 }
+
+export type ComplianceStatus = 'approved' | 'pending_review' | 'rejected' | 'suspended' | 'conditionally_approved';
+
+export interface ComplianceRecord {
+  id: string;
+  serverId: string;
+  serverName: string;
+  mcpUrl?: string;
+  status: ComplianceStatus;
+  complianceScore?: number;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  reviewNotes?: string;
+  conditions?: string;
+  expiresAt?: string;
+  ruleResults?: Record<string, any>;
+  metadata?: Record<string, any>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ComplianceDashboard {
+  total: number;
+  approved: number;
+  pendingReview: number;
+  rejected: number;
+  suspended: number;
+  conditionallyApproved: number;
+}
+
+export interface ComplianceAuditEntry {
+  id: string;
+  serverId: string;
+  eventType: string;
+  actor?: string;
+  details?: string;
+  previousStatus?: string;
+  newStatus?: string;
+  createdAt: string;
+}

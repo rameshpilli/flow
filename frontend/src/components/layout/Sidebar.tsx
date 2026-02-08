@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink } from 'react-router-dom';
+import { ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissionCheck } from '../PermissionChecker';
 import UserProfileMenu from '@/components/ui/UserProfileMenu';
@@ -151,6 +152,11 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
           />
         </svg>
       ),
+    },
+    {
+      path: '/compliance',
+      label: 'Compliance',
+      icon: <ShieldCheck className="h-5 w-5" />,
     },
   ];
 

@@ -121,6 +121,16 @@ import {
   getActivityFilterOptions,
   deleteOldActivities,
 } from '../controllers/activityController.js';
+import {
+  getComplianceStatus,
+  getAllComplianceRecords,
+  checkCompliance,
+  approveServer,
+  rejectServer,
+  suspendServer,
+  getAuditLog,
+  getComplianceDashboard,
+} from '../controllers/complianceController.js';
 import { auth } from '../middlewares/auth.js';
 import { getBetterAuthRuntimeConfig } from '../services/betterAuthConfig.js';
 
@@ -233,6 +243,16 @@ export const initRoutes = async (app: express.Application): Promise<void> => {
   router.get('/activities/filters', getActivityFilterOptions);
   router.get('/activities/:id', getActivityById);
   router.delete('/activities/cleanup', deleteOldActivities);
+
+  // Compliance routes
+  router.get('/compliance/servers', getAllComplianceRecords);
+  router.get('/compliance/dashboard', getComplianceDashboard);
+  router.get('/compliance/status/:serverId', getComplianceStatus);
+  router.post('/compliance/check', checkCompliance);
+  router.post('/compliance/approve/:serverId', approveServer);
+  router.post('/compliance/reject/:serverId', rejectServer);
+  router.post('/compliance/suspend/:serverId', suspendServer);
+  router.get('/compliance/audit/:serverId', getAuditLog);
 
   // Tool management routes
   router.post('/tools/call/:server', callTool);

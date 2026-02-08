@@ -8,6 +8,8 @@ import OAuthClient from './OAuthClient.js';
 import OAuthToken from './OAuthToken.js';
 import BearerKey from './BearerKey.js';
 import Activity from './Activity.js';
+import ComplianceRecord from './ComplianceRecord.js';
+import ComplianceAuditLog from './ComplianceAuditLog.js';
 
 // Export all entities
 export default [
@@ -21,6 +23,8 @@ export default [
   OAuthToken,
   BearerKey,
   Activity,
+  ComplianceRecord,
+  ComplianceAuditLog,
 ];
 
 // Export individual entities for direct use
@@ -35,4 +39,6 @@ export {
   OAuthToken,
   BearerKey,
   Activity,
+  ComplianceRecord,
+  ComplianceAuditLog,
 };
