@@ -6,6 +6,7 @@
   "scripts": {
     "build": "cross-env INPUT=dummy-app.html vite build",
     "start": "node server.ts",
+    "serve": "vite --port 8080 --open",
     "dev": "npm run build && npm start"
   },
   "dependencies": {

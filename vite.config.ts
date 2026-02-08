@@ -3,17 +3,20 @@ import react from "@vitejs/plugin-react";
 import { viteSingleFile } from "vite-plugin-singlefile";
 
 const INPUT = process.env.INPUT;
-if (!INPUT) {
-  throw new Error("INPUT environment variable is not set");
-}
 
-export default defineConfig({
-  plugins: [react(), viteSingleFile()],
-  build: {
-    rollupOptions: {
-      input: INPUT,
+export default defineConfig(({ command }) => {
+  if (command === "build" && !INPUT) {
+    throw new Error("INPUT environment variable is not set");
+  }
+
+  return {
+    plugins: [react(), viteSingleFile()],
+    build: {
+      rollupOptions: {
+        input: INPUT,
+      },
+      outDir: "dist",
+      emptyOutDir: false,
     },
-    outDir: "dist",
-    emptyOutDir: false,
-  },
+  };
 });

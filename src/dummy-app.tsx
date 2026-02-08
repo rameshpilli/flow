@@ -1,5 +1,5 @@
 import { useApp } from "@modelcontextprotocol/ext-apps/react";
-import { StrictMode, useCallback, useMemo, useState } from "react";
+import { StrictMode, useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 const IMPLEMENTATION = {
@@ -7,11 +7,24 @@ const IMPLEMENTATION = {
   version: "1.0.0",
 };
 
+const MOCK_STATUS = `System Status Report:
+- MCPJam Server: Running (standalone mode)
+- Database Connection: Active
+- API Response Time: 45ms
+- Memory Usage: 128MB / 512MB
+- Uptime: 2 hours 34 minutes`;
+
 function DummyDashboard() {
   const { app, error } = useApp({
     appInfo: IMPLEMENTATION,
     capabilities: {},
   });
+
+  const [standalone, setStandalone] = useState(false);
+
+  useEffect(() => {
+    if (error) setStandalone(true);
+  }, [error]);
 
   const [statusMessage, setStatusMessage] = useState(
     "Click button to fetch status"
@@ -34,6 +47,12 @@ function DummyDashboard() {
   );
 
   const handleGetStatus = useCallback(async () => {
+    if (standalone) {
+      setStatusMessage("Loading status...");
+      await new Promise((r) => setTimeout(r, 300));
+      setStatusMessage(MOCK_STATUS);
+      return;
+    }
     if (!app) return;
     try {
       setStatusMessage("Loading status...");
@@ -46,9 +65,22 @@ function DummyDashboard() {
       console.error("Failed to send message:", e);
       setStatusMessage("Error fetching status");
     }
-  }, [app, extractText]);
+  }, [app, standalone, extractText]);
 
   const handleChat = useCallback(async () => {
+    if (standalone) {
+      if (!prompt.trim()) {
+        setLlmStatus("Please enter a prompt.");
+        return;
+      }
+      setLlmStatus("Sending to LLM gateway...");
+      await new Promise((r) => setTimeout(r, 500));
+      setLlmResponse(
+        `[Standalone mode] Echo: "${prompt.trim()}"\n\nTo use a real LLM gateway, run this app inside MCPJam Inspector with the MCP server configured.`
+      );
+      setLlmStatus("Response received (standalone mode).");
+      return;
+    }
     if (!app) return;
     if (!prompt.trim()) {
       setLlmStatus("Please enter a prompt.");
@@ -66,17 +98,11 @@ function DummyDashboard() {
       console.error("Failed to call LLM gateway:", e);
       setLlmStatus("Error calling LLM gateway.");
     }
-  }, [app, extractText, prompt]);
+  }, [app, standalone, extractText, prompt]);
 
-  if (error) {
-    return (
-      <div style={{ padding: "20px", color: "red" }}>
-        <strong>ERROR:</strong> {error.message}
-      </div>
-    );
-  }
+  const loading = !standalone && !app && !error;
 
-  if (!app) {
+  if (loading) {
     return <div style={{ padding: "20px" }}>Loading MCPJam Dashboard...</div>;
   }
 
@@ -94,6 +120,21 @@ function DummyDashboard() {
       <h1 style={{ fontSize: "24px", marginBottom: "16px", color: "#333" }}>
         📊 MCPJam Dummy Dashboard
       </h1>
+      {standalone && (
+        <p
+          style={{
+            fontSize: "12px",
+            color: "#b45309",
+            backgroundColor: "#fef3c7",
+            padding: "8px 12px",
+            borderRadius: "6px",
+            marginBottom: "16px",
+          }}
+        >
+          Running in standalone mode. For full MCP integration, use MCPJam
+          Inspector.
+        </p>
+      )}
 
       <div
         style={{
