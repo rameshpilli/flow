@@ -129,12 +129,10 @@ Use Docker Compose for local testing, then deploy the same image to Kubernetes.
 ### Quick Start
 
 ```bash
-cd MCPJam-Inspector
-
 # Copy the env template and fill in your values
 cp mcpjam-inspector/.env.docker mcpjam-inspector/.env
 
-# Build and run
+# Build and run (from repo root)
 docker compose -f mcpjam-inspector/docker-compose.yml build
 docker compose -f mcpjam-inspector/docker-compose.yml up
 ```

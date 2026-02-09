@@ -2,7 +2,7 @@ version: "3.9"
 services:
   mcpjam-inspector:
     build:
-      context: ..          # parent dir (has mcpjam-inspector/ + sdk/)
+      context: ..          # repo root (has mcpjam-inspector/ + sdk/)
       dockerfile: mcpjam-inspector/Dockerfile
       args:
         VITE_INTERNAL_AUTH: "true"
