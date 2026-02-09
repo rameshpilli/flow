@@ -1,0 +1,23 @@
+version: "3.9"
+services:
+  mcpjam-inspector:
+    build:
+      context: ..          # parent dir (has mcpjam-inspector/ + sdk/)
+      dockerfile: mcpjam-inspector/Dockerfile
+      args:
+        VITE_INTERNAL_AUTH: "true"
+        VITE_DISABLE_POSTHOG_LOCAL: "true"
+    ports:
+      - "127.0.0.1:6274:6274"
+    environment:
+      # --- Internal Auth ---
+      MCPJAM_INTERNAL_AUTH: "true"
+      MCPJAM_INTERNAL_USER_EMAIL: "admin@internal.local"
+      MCPJAM_INTERNAL_USER_NAME: "Internal Admin"
+      # --- LLM Gateway ---
+      LLM_SERVER_URL: "http://host.docker.internal:4000/v1/chat/completions"
+      LLM_MODELS: "gpt-4,gpt-4o,claude-3-5-sonnet"
+      LLM_API_KEY: "${LLM_API_KEY:-your-api-key-here}"
+      # --- Disable analytics ---
+      VITE_DISABLE_POSTHOG_LOCAL: "true"
+    restart: unless-stopped
