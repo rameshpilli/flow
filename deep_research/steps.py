@@ -144,6 +144,8 @@ async def plan_research(ctx: Any) -> dict[str, Any]:
         plan.get("source_hints"),
         plan.get("date_range"),
     )
+    # Explicitly set in context so downstream steps can read via ctx.get()
+    ctx.set("research_plan", plan)
     return {"research_plan": plan}
 
 
@@ -164,6 +166,7 @@ async def search_news(ctx: Any) -> dict[str, Any]:
         llm=llm,
     )
     capped, _ = cap_items_with_metadata(findings, max_items=settings.results_per_source)
+    ctx.set("news_findings", capped)
     return {"news_findings": capped}
 
 
@@ -184,6 +187,7 @@ async def search_capiq(ctx: Any) -> dict[str, Any]:
         llm=llm,
     )
     capped, _ = cap_items_with_metadata(findings, max_items=settings.results_per_source)
+    ctx.set("capiq_findings", capped)
     return {"capiq_findings": capped}
 
 
@@ -231,6 +235,13 @@ async def aggregate_sources(ctx: Any) -> dict[str, Any]:
         len(all_findings), len(unique), len(news), len(capiq),
     )
 
+    ctx.set("aggregated_findings", unique)
+    ctx.set("source_counts", {
+        "ravenpack": len(news),
+        "capiq": len(capiq),
+        "total_raw": len(all_findings),
+        "total_unique": len(unique),
+    })
     return {
         "aggregated_findings": unique,
         "source_counts": {
@@ -291,6 +302,8 @@ async def cross_verify(ctx: Any) -> dict[str, Any]:
         len(verified), len(flagged), verification.get("removed", 0),
     )
 
+    ctx.set("verified_findings", verified)
+    ctx.set("flagged_findings", flagged)
     return {
         "verified_findings": verified,
         "flagged_findings": flagged,
@@ -318,6 +331,7 @@ async def generate_report(ctx: Any) -> dict[str, Any]:
             "**Query:** " + query + "\n\n"
             "**Suggestion:** Broaden the date range or lower the deal-value threshold."
         )
+        ctx.set("report", report)
         return {"report": report, "report_format": settings.report_format}
 
     findings_json = json.dumps(verified, indent=2)
@@ -349,6 +363,7 @@ async def generate_report(ctx: Any) -> dict[str, Any]:
         if len(flagged) > 10:
             report += f"\n_...and {len(flagged) - 10} more flagged items._\n"
 
+    ctx.set("report", report)
     return {
         "report": report,
         "report_format": settings.report_format,

@@ -109,7 +109,8 @@ def _make_llm_stub() -> MagicMock:
         # Step detection from prompt content
         p = prompt.lower()
 
-        if "research plan" in p or "sub_queries" in p or "sub-queries" in p:
+        # Planning step: the planner prompt contains "research plan" AND asks for sub_queries JSON
+        if ("research plan" in p or "research planning assistant" in p) and "sub_queries" in p:
             return json.dumps({
                 "sub_queries": [
                     "M&A deals technology sector 2026",
@@ -120,6 +121,33 @@ def _make_llm_stub() -> MagicMock:
                 "system_instructions": ["Focus on deals > $1B", "Include all sectors"],
                 "entities_of_interest": ["technology", "healthcare", "energy"],
             })
+
+        # ReAct search agent prompt: always begins with "Question: Research the following sub-queries"
+        if "question:" in p and "research the following" in p:
+            findings = json.dumps([
+                {
+                    "title": "Alphabet Acquires Wiz for $32B",
+                    "date": "2026-02-25",
+                    "source": "RavenPack",
+                    "deal_value_usd": 32000000000,
+                    "acquirer": "Alphabet Inc.",
+                    "target": "Wiz Inc.",
+                    "sector": "Cloud Security",
+                    "summary": "Alphabet acquired Wiz in the largest deal in its history.",
+                },
+                {
+                    "title": "BlackRock / HPS Investment Partners",
+                    "date": "2026-01-12",
+                    "source": "CapIQ",
+                    "deal_id": "ciq-2026-00452",
+                    "deal_value_usd": 12500000000,
+                    "acquirer": "BlackRock Inc.",
+                    "target": "HPS Investment Partners",
+                    "sector": "Asset Management",
+                    "summary": "BlackRock acquires credit-focused HPS to build out alternatives platform.",
+                },
+            ])
+            return f"Thought: I have the findings.\nFinal Answer: {findings}"
 
         if "cross-verif" in p or "verify" in p or "conflict" in p:
             return json.dumps({
@@ -196,6 +224,8 @@ confidence score 0.95. All values in USD unless otherwise stated.
     stub.complete = AsyncMock(side_effect=_complete)
     stub.chat = AsyncMock(side_effect=_complete)
     stub.generate = AsyncMock(side_effect=_complete)
+    stub.generate_async = AsyncMock(side_effect=_complete)
+    stub.acomplete = AsyncMock(side_effect=_complete)
     return stub
 
 
@@ -219,6 +249,11 @@ async def run_in_process_test() -> bool:
     os.environ.setdefault("MCP_RAVENPACK_ROUTING", "jsonrpc")
     os.environ.setdefault("MCP_CAPIQ_ENDPOINT", f"{MOCK_MCP_BASE}/capiq")
     os.environ.setdefault("MCP_CAPIQ_ROUTING", "jsonrpc")
+    # Dummy auth env vars so MCPToolAdapter can generate a JWT for the mock server
+    # (the mock MCP server ignores authentication headers entirely)
+    os.environ.setdefault("MCP_USER_EMAIL", "dev@local.test")
+    os.environ.setdefault("MCP_SECRET", "dev-local-secret-for-testing-only")
+    os.environ.setdefault("MCP_USER_NAME", "Dev User")
     os.environ.setdefault("MAX_OBSERVATION_CHARS", "32000")
     os.environ.setdefault("REACT_MAX_ITERATIONS", "2")
     os.environ.setdefault("PLANNER_MAX_SUB_QUERIES", "2")
@@ -317,22 +352,26 @@ async def run_in_process_test() -> bool:
     if missing:
         failures.append(f"Steps not completed: {missing}")
 
-    if not result.get("report"):
+    # Step outputs are in result["context"]["data"] (set via ctx.set() in steps)
+    ctx_data: dict = result.get("context", {}).get("data", {})
+
+    report = ctx_data.get("report")
+    if not report:
         failures.append("Final report is empty")
     else:
-        logger.info("  ✓ Report generated (%d chars)", len(result["report"]))
+        logger.info("  ✓ Report generated (%d chars)", len(report))
 
-    if "plan" in result or "research_plan" in result:
+    if ctx_data.get("research_plan"):
         logger.info("  ✓ Research plan present in context")
 
-    news = result.get("news_findings") or []
-    capiq = result.get("capiq_findings") or []
+    news = ctx_data.get("news_findings") or []
+    capiq = ctx_data.get("capiq_findings") or []
     if not news and not capiq:
         failures.append("No findings from either source (both news_findings and capiq_findings empty)")
     else:
         logger.info("  ✓ Findings: %d news, %d deals", len(news), len(capiq))
 
-    agg = result.get("aggregated_findings") or []
+    agg = ctx_data.get("aggregated_findings") or []
     logger.info("  ✓ Aggregated findings: %d items", len(agg))
 
     # ── Result ────────────────────────────────────────────────────────────────
@@ -531,11 +570,18 @@ async def run_mock_mcp_unit_tests() -> bool:
             ),
         ]
 
+        def _parse_mock_resp(resp_text: str) -> dict:
+            """Parse SSE or plain JSON from mock MCP response."""
+            for line in resp_text.strip().split("\n"):
+                if line.startswith("data: "):
+                    return json.loads(line[6:])
+            return json.loads(resp_text)
+
         for desc, url, payload, assert_fn in cases:
             try:
                 resp = await client.post(url, json=payload)
                 resp.raise_for_status()
-                data = resp.json()
+                data = _parse_mock_resp(resp.text)
                 if "error" in data:
                     failures.append(f"{desc}: JSON-RPC error — {data['error']}")
                     logger.error("  ✗ %s → %s", desc, data["error"])

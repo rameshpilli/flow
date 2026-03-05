@@ -42,12 +42,18 @@ class SecretString:
 
     Security:
         - __str__ and __repr__ always return masked values
+        - Blocks pickle serialization to prevent secret exposure
+        - Blocks __dict__ and vars() access to prevent introspection
+        - JSON serialization with default=vars is blocked
         - Use get_secret_value() explicitly when you need the actual secret
         - This prevents accidental logging of secrets
     """
 
+    # Use __slots__ to prevent __dict__ access and reduce memory footprint
+    __slots__ = ('_value',)
+
     def __init__(self, value: str | None):
-        self._value = value
+        object.__setattr__(self, '_value', value)
 
     def __repr__(self) -> str:
         """Safe repr that never exposes the secret."""
@@ -58,15 +64,35 @@ class SecretString:
         return "***"
 
     def __bool__(self) -> bool:
-        return bool(self._value)
+        return bool(object.__getattribute__(self, '_value'))
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, SecretString):
-            return self._value == other._value
+            return object.__getattribute__(self, '_value') == object.__getattribute__(other, '_value')
         return False
 
     def __hash__(self) -> int:
-        return hash(self._value)
+        return hash(object.__getattribute__(self, '_value'))
+
+    def __reduce_ex__(self, protocol: int):
+        """Prevent pickle serialization by raising an error."""
+        raise TypeError(
+            "SecretString cannot be pickled for security reasons. "
+            "Use get_secret_value() before serialization if needed."
+        )
+
+    def __getstate__(self):
+        """Prevent pickle serialization via __getstate__."""
+        raise TypeError(
+            "SecretString cannot be pickled for security reasons. "
+            "Use get_secret_value() before serialization if needed."
+        )
+
+    def __setstate__(self, state):
+        """Prevent pickle deserialization via __setstate__."""
+        raise TypeError(
+            "SecretString cannot be unpickled for security reasons."
+        )
 
     def get_secret_value(self) -> str:
         """
@@ -78,15 +104,16 @@ class SecretString:
         Returns:
             str: The actual secret value, or empty string if None.
         """
-        return self._value or ""
+        return object.__getattribute__(self, '_value') or ""
 
     def get_masked(self, show_chars: int = 4) -> str:
         """Show last N characters for debugging."""
-        if not self._value:
+        val = object.__getattribute__(self, '_value')
+        if not val:
             return "None"
-        if len(self._value) <= show_chars:
+        if len(val) <= show_chars:
             return "***"
-        return f"***{self._value[-show_chars:]}"
+        return f"***{val[-show_chars:]}"
 
     @property
     def value(self) -> str | None:
@@ -95,7 +122,7 @@ class SecretString:
 
         Deprecated: Use get_secret_value() instead.
         """
-        return self._value
+        return object.__getattribute__(self, '_value')
 
 # Load .env file if python-dotenv is available
 try:
@@ -499,6 +526,156 @@ class ContextStoreConfig:
         return f"{scheme}://{auth}{self.redis_host}:{self.redis_port}/{self.redis_db}"
 
 
+@dataclass
+class MCPServerConfig:
+    """
+    Configuration for a single MCP server.
+
+    Attributes:
+        name: Server name (e.g., "RavenPack News", "CapIQ")
+        endpoint: MCP server endpoint URL
+        secret: API secret/token for authentication
+        use_path_routing: Use path-based routing vs JSON-RPC (default: True)
+        verify_ssl: Verify SSL certificates (default: True)
+        cache_enabled: Enable tool response caching (default: True)
+        cache_ttl_seconds: Cache TTL in seconds (default: 3600)
+        cache_max_entries: Max cache entries (default: 500)
+    """
+
+    name: str
+    endpoint: str
+    secret: SecretString | None = None
+    use_path_routing: bool = True
+    verify_ssl: bool = True
+    cache_enabled: bool = True
+    cache_ttl_seconds: int = 3600
+    cache_max_entries: int = 500
+
+    @property
+    def is_configured(self) -> bool:
+        """Check if server is properly configured."""
+        return bool(self.endpoint) and bool(self.secret)
+
+
+@dataclass
+class MCPConfig:
+    """
+    MCP (Model Context Protocol) integration configuration.
+
+    Supports multiple MCP servers with auto-discovery from environment variables.
+
+    Environment Variables:
+        Default server (fallback):
+        - MCP_ENDPOINT: Default MCP endpoint
+        - MCP_SECRET: Default MCP secret
+
+        Named servers (recommended):
+        - <NAME>_MCP_ENDPOINT: Server endpoint
+        - <NAME>_MCP_SECRET: Server secret
+        - <NAME>_MCP_USER_EMAIL: Optional user email
+
+        Examples:
+            RAVENPACK_MCP_ENDPOINT=https://...
+            RAVENPACK_MCP_SECRET=xxx
+            CAPIQ_MCP_ENDPOINT=https://...
+            CAPIQ_MCP_SECRET=yyy
+            RBC_INSIGHTS_MCP_ENDPOINT=https://...
+            RBC_INSIGHTS_MCP_SECRET=zzz
+            FACTSET_EARNINGS_MCP_ENDPOINT=https://...
+            FACTSET_EARNINGS_MCP_SECRET=www
+    """
+
+    servers: dict[str, MCPServerConfig] = field(default_factory=dict)
+
+    def register(self, server_config: MCPServerConfig) -> None:
+        """Register an MCP server configuration."""
+        self.servers[server_config.name] = server_config
+
+    def get(self, name: str) -> MCPServerConfig | None:
+        """Get MCP server configuration by name."""
+        return self.servers.get(name)
+
+    def list_servers(self) -> list[str]:
+        """List all registered MCP server names."""
+        return list(self.servers.keys())
+
+    @classmethod
+    def from_env(cls) -> "MCPConfig":
+        """
+        Load MCP configuration from environment variables.
+
+        Auto-discovers MCP servers by looking for *_MCP_ENDPOINT patterns.
+        """
+        config = cls()
+        import re
+
+        # Find all MCP endpoint environment variables
+        env_vars = dict(os.environ)
+        mcp_endpoints = {}
+
+        # Pattern: <PREFIX>_MCP_ENDPOINT
+        for key, value in env_vars.items():
+            if key.endswith("_MCP_ENDPOINT") and value:
+                # Extract prefix (server name)
+                prefix = key[:-13]  # Remove "_MCP_ENDPOINT"
+                mcp_endpoints[prefix] = value
+
+        # Create server configs for each discovered endpoint
+        for prefix, endpoint in mcp_endpoints.items():
+            secret_key = f"{prefix}_MCP_SECRET"
+            secret = _get_env(secret_key)
+
+            if not secret:
+                logger.warning(f"MCP endpoint found for {prefix} but no secret ({secret_key})")
+                continue
+
+            # Convert prefix to friendly name
+            # RAVENPACK -> RavenPack, CAPIQ -> CapIQ, RBC_INSIGHTS -> RBC Insights
+            name_parts = prefix.split("_")
+            if len(name_parts) == 1:
+                # Single word: capitalize properly
+                if prefix.upper() == "CAPIQ":
+                    name = "CapIQ"
+                elif prefix.upper() == "RBC":
+                    name = "RBC"
+                else:
+                    name = prefix.title()
+            else:
+                # Multiple words: title case each part
+                name = " ".join(part.title() for part in name_parts)
+
+            server_config = MCPServerConfig(
+                name=name,
+                endpoint=endpoint,
+                secret=SecretString(secret),
+                use_path_routing=True,  # Most servers use path-based
+                verify_ssl=True,
+            )
+
+            config.register(server_config)
+            logger.debug(f"Registered MCP server: {name} -> {endpoint}")
+
+        # Also check for default MCP_ vars (backward compatibility)
+        default_endpoint = _get_env("MCP_ENDPOINT")
+        default_secret = _get_env("MCP_SECRET")
+        if default_endpoint and default_secret and "DEFAULT" not in mcp_endpoints:
+            server_config = MCPServerConfig(
+                name="Default MCP",
+                endpoint=default_endpoint,
+                secret=SecretString(default_secret),
+            )
+            config.register(server_config)
+            logger.debug(f"Registered default MCP server: {default_endpoint}")
+
+        logger.info(f"Loaded {len(config.servers)} MCP server(s): {', '.join(config.list_servers())}")
+        return config
+
+    @property
+    def is_configured(self) -> bool:
+        """Check if at least one MCP server is configured."""
+        return len(self.servers) > 0
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #                           MAIN CONFIG CLASS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -520,6 +697,8 @@ class Config:
     summarizer: SummarizerConfig = field(default_factory=SummarizerConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     context_store: ContextStoreConfig = field(default_factory=ContextStoreConfig)
+    mcp: MCPConfig = field(default_factory=MCPConfig)
+    s3: Any = None  # S3Config - imported dynamically to avoid circular imports
 
     # General settings
     log_level: str = "INFO"
@@ -529,6 +708,19 @@ class Config:
     @classmethod
     def from_env(cls) -> "Config":
         """Load all configuration from environment variables."""
+        # Import S3Config here to avoid circular imports
+        try:
+            from agentorchestrator.services.s3 import S3Config
+            # Try to load S3 config, but don't fail if bucket_name is missing
+            try:
+                s3_config = S3Config.from_env()
+            except Exception:
+                # S3 not configured - that's OK
+                s3_config = None
+        except ImportError:
+            # boto3 not installed - that's OK
+            s3_config = None
+
         return cls(
             llm=LLMConfig.from_env(),
             foundation=FoundationConfig.from_env(),
@@ -537,6 +729,8 @@ class Config:
             summarizer=SummarizerConfig.from_env(),
             cache=CacheConfig.from_env(),
             context_store=ContextStoreConfig.from_env(),
+            mcp=MCPConfig.from_env(),
+            s3=s3_config,
             log_level=_get_env("LOG_LEVEL", "INFO"),
             verbose=_get_env_bool("VERBOSE", False),
         )
@@ -739,6 +933,38 @@ class Config:
             logger.warning(f"Unknown context store backend: {cfg.backend}, falling back to memory")
             return create_context_store(backend="memory")
 
+    def get_s3_client(self) -> Any | None:
+        """
+        Create and return an S3 client from config.
+
+        Returns None if S3 is not configured or boto3 not installed.
+
+        Returns:
+            S3Service instance if configured and boto3 available, None otherwise
+
+        Example:
+            >>> config = Config.from_env()
+            >>> s3 = config.get_s3_client()
+            >>> if s3:
+            ...     await s3.upload_file("local.pdf", "docs/report.pdf")
+        """
+        if not self.s3:
+            logger.warning("S3 not configured - missing bucket_name or other required settings")
+            return None
+
+        # Check if S3 has minimum required configuration
+        # bucket_name is required, and either endpoint or credentials should be present
+        if not hasattr(self.s3, 'bucket_name') or not self.s3.bucket_name:
+            logger.warning("S3 not configured - missing bucket_name")
+            return None
+
+        try:
+            from agentorchestrator.services.s3 import S3Service
+            return S3Service(config=self.s3)
+        except ImportError:
+            logger.warning("boto3 not installed - install with: pip install agentorchestrator[s3]")
+            return None
+
     def setup_logging(self) -> None:
         """
         Configure logging based on config settings.
@@ -791,6 +1017,13 @@ class Config:
                 "default_ttl_seconds": self.context_store.default_ttl_seconds,
                 "offload_threshold_bytes": self.context_store.offload_threshold_bytes,
             },
+            "s3": {
+                "configured": self.s3 is not None,
+                "bucket_name": self.s3.bucket_name if self.s3 else None,
+                "endpoint_url": self.s3.endpoint_url if self.s3 else None,
+                "region": self.s3.region if self.s3 else None,
+                "use_ssl": self.s3.use_ssl if self.s3 else None,
+            } if self.s3 else {"configured": False},
             "log_level": self.log_level,
             "verbose": self.verbose,
         }
@@ -944,6 +1177,8 @@ __all__ = [
     "SummarizerConfig",
     "CacheConfig",
     "ContextStoreConfig",
+    "MCPConfig",
+    "MCPServerConfig",
     # Utilities
     "ConfigError",
     "SecretString",

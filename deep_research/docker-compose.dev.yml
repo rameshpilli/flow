@@ -42,22 +42,17 @@ services:
   mock-mcp:
     build:
       context: ..
-      dockerfile: deep_research/Dockerfile
+      dockerfile: deep_research/Dockerfile.mock
     container_name: deep_research_mock_mcp
     ports:
       - "8001:8001"
     environment:
       MOCK_MCP_PORT: "8001"
-    command: >
-      python -m uvicorn deep_research.mock_mcp:app
-        --host 0.0.0.0
-        --port 8001
-        --workers 1
     volumes:
       # Mount fixtures so you can edit them without rebuilding
       - ./fixtures:/app/deep_research/fixtures:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]
       interval: 10s
       timeout: 5s
       retries: 5

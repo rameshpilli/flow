@@ -19,6 +19,16 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# Exceptions
+# =============================================================================
+
+
+class EventPublishError(Exception):
+    """Raised when a critical event fails to publish."""
+    pass
+
+
+# =============================================================================
 # Event model
 # =============================================================================
 
@@ -137,30 +147,81 @@ class EventSubscription:
             return
         self._closed = True
         async with self._bus._lock:
+            # Filter out this queue (handle both direct queue refs and weakrefs)
             self._bus._subscribers = [
-                (q, f) for (q, f) in self._bus._subscribers if q is not self._queue
+                (ref, f) for (ref, f) in self._bus._subscribers
+                if (ref() if hasattr(ref, '__call__') else ref) is not self._queue
             ]
 
 
 class InMemoryEventBus(EventBus):
-    """Process-local pub/sub using asyncio queues."""
+    """
+    Process-local pub/sub using asyncio queues.
+
+    Memory Leak Fix (v2.0): Uses weakref for queue references to allow GC
+    when subscriptions are abandoned without explicit cleanup.
+    """
 
     def __init__(self, max_queue_size: int = 1000):
-        self._subscribers: list[tuple[asyncio.Queue[Event], set[str] | None]] = []
+        import weakref
+        self._subscribers: list[tuple[weakref.ref, set[str] | None]] = []
         self._max_queue_size = max_queue_size
         self._lock = asyncio.Lock()
+        self._cleanup_task: asyncio.Task | None = None
+        self._start_cleanup_task()
+
+    def _start_cleanup_task(self):
+        """Start background task to cleanup dead weak references."""
+        async def cleanup_loop():
+            try:
+                while True:
+                    await asyncio.sleep(60)  # Cleanup every minute
+                    await self._cleanup_dead_refs()
+            except asyncio.CancelledError:
+                pass  # Normal shutdown
+
+        try:
+            loop = asyncio.get_running_loop()
+            self._cleanup_task = loop.create_task(cleanup_loop())
+        except RuntimeError:
+            # No event loop available yet, cleanup will happen lazily during publish
+            pass
+
+    async def _cleanup_dead_refs(self):
+        """Remove dead weak references from subscribers list."""
+        async with self._lock:
+            self._subscribers = [
+                (ref, filters) for (ref, filters) in self._subscribers
+                if ref() is not None
+            ]
+            logger.debug(f"Cleaned up dead subscriptions, active: {len(self._subscribers)}")
 
     async def publish(self, event: Event) -> None:
         async with self._lock:
             targets = list(self._subscribers)
         delivered = 0
-        for queue, filters in targets:
+        dead_refs = []
+        for i, (queue_ref, filters) in enumerate(targets):
+            queue = queue_ref()
+            if queue is None:
+                # Queue was garbage collected, mark for cleanup
+                dead_refs.append(i)
+                continue
             if filters is None or event.type in filters:
                 try:
                     queue.put_nowait(event)
                     delivered += 1
                 except asyncio.QueueFull:
                     logger.warning("Event queue full; dropping event %s", event.type)
+
+        # Lazy cleanup of dead refs during publish
+        if dead_refs:
+            async with self._lock:
+                self._subscribers = [
+                    (ref, filters) for i, (ref, filters) in enumerate(self._subscribers)
+                    if i not in dead_refs
+                ]
+
         logger.debug("Event published type=%s delivered=%s", event.type, delivered)
 
     async def subscribe(
@@ -193,14 +254,24 @@ class InMemoryEventBus(EventBus):
         Returns:
             EventSubscription: Async iterator with proper cleanup support.
         """
+        import weakref
         filters = set(event_types) if event_types else None
         queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=self._max_queue_size)
         async with self._lock:
-            self._subscribers.append((queue, filters))
-        
+            self._subscribers.append((weakref.ref(queue), filters))
+
         return EventSubscription(self, queue, filters)
 
     async def close(self) -> None:
+        """Close the event bus and cleanup resources."""
+        # Cancel cleanup task
+        if self._cleanup_task:
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
+
         async with self._lock:
             self._subscribers.clear()
 
@@ -228,14 +299,17 @@ class RedisEventBus(EventBus):
     async def publish(self, event: Event) -> None:
         """
         Publish an event to Redis pub/sub.
-        
+
         Failure handling:
         - Connection errors are logged and event is dropped (best-effort)
-        - For critical events, consider using a persistent queue instead
-        
-        Note: Redis pub/sub is fire-and-forget. If no subscribers are 
+        - Critical events (metadata["critical"]=True) raise EventPublishError
+
+        Note: Redis pub/sub is fire-and-forget. If no subscribers are
         listening, the message is lost. For guaranteed delivery, use
         Redis Streams or a message queue like RabbitMQ/Kafka.
+
+        Raises:
+            EventPublishError: If a critical event fails to publish
         """
         try:
             await self.redis_service.ensure_connected()
@@ -245,11 +319,17 @@ class RedisEventBus(EventBus):
             # Include event type for debugging which events are being lost
             logger.error(
                 "RedisEventBus publish failed for event type=%s run_id=%s: %s. "
-                "Event will be dropped. Consider using persistent messaging for critical events.",
+                "Event will be dropped.",
                 event.type,
                 event.run_id,
                 e,
             )
+
+            # Raise for critical events to prevent silent data loss
+            if event.metadata.get("critical"):
+                raise EventPublishError(
+                    f"Failed to publish critical event type={event.type} run_id={event.run_id}: {e}"
+                ) from e
 
     async def subscribe(
         self, event_types: Optional[Sequence[str]] = None

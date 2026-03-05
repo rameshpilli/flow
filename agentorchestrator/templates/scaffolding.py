@@ -112,7 +112,7 @@ def get_readme(name: str, description: str) -> str:
 
 {description}
 
-Built with [AgentOrchestrator](https://github.com/agentorchestrator/agentorchestrator) - A DAG-based Chain Orchestration Framework.
+Built with [AgentOrchestrator](https://rbcgithub.fg.rbc.com/rbc-cm/isa0-agent-arc) - A DAG-based Chain Orchestration Framework.
 
 ## Quick Start
 

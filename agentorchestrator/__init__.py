@@ -67,14 +67,10 @@ from agentorchestrator.middleware.summarizer import (
 )
 from agentorchestrator.middleware.token_manager import TokenManagerMiddleware
 
-# =============================================================================
-# TESTING - For user tests
-# =============================================================================
-from agentorchestrator.testing import (
-    IsolatedOrchestrator,
-    MockAgent,
-    create_test_context,
-)
+# testing module removed in this branch — skip import gracefully
+IsolatedOrchestrator = None
+MockAgent = None
+create_test_context = None
 
 # =============================================================================
 # UTILITIES - Common helpers

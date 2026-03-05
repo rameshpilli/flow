@@ -1,46 +1,35 @@
 # AgentOrchestrator
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-A DAG-based orchestration framework for AI/ML pipelines.
-
-## Why AgentOrchestrator?
-
-| Feature | AgentOrchestrator | LangChain | LlamaIndex |
-|---------|-------------------|-----------|------------|
-| **Decorator-driven API** | ✅ `@ao.step()`, `@ao.chain()` | ❌ Class-based chains | ❌ Class-based |
-| **DAG execution** | ✅ Auto-parallel, resumable | ⚠️ Sequential chains | ⚠️ Limited |
-| **Type-safe state** | ✅ Pydantic models | ❌ Dict-based | ❌ Dict-based |
-| **Event-driven workflows** | ✅ Redis/in-memory bus | ❌ No native support | ❌ No native support |
-| **Multi-agent patterns** | ✅ Squad, Supervisor, ReAct | ⚠️ Agent executor only | ⚠️ Agent runner |
-| **Built-in resilience** | ✅ Retry, circuit breaker | ❌ Manual setup | ❌ Manual setup |
-| **Checkpointing/Resume** | ✅ Automatic | ❌ Manual | ❌ Manual |
-| **Corporate auth (OAuth)** | ✅ LLM Gateway | ❌ API keys only | ❌ API keys only |
-
-**Best for**: Teams that want Dagster-style ergonomics for AI pipelines with built-in resilience, multi-agent support, and enterprise authentication.
+**AgentOrchestrator** - DAG-based orchestration framework for AI Workflows.
 
 ## Architecture
 
 ```
-├── agentorchestrator/    # Core framework
+ChainServer/
+├── agentorchestrator/    # Core framework (domain-agnostic)
 │   ├── core/             # Orchestrator, Context, DAG, Registry
 │   ├── middleware/       # Cache, Logger, Summarizer, Token Manager
 │   ├── squad/            # Multi-agent orchestration
 │   ├── agents/           # BaseAgent, ResilientAgent
-│   └── services/         # LLM Gateway, Redis, Vector store
-├── Makefile              # Build, test, run targets
-└── pyproject.toml        # Package config
+│   ├── services/         # LLM Gateway, Redis, Vector store
+│   └── docs/             # Documentation (MkDocs)
+├── cmpt/                 # Domain-specific CMPT implementation
+└── tests/                # Test suite
 ```
-
-See [gist.MD](gist.MD) for the full architecture diagram.
 
 ## Quick Start
 
 ```bash
-pip install -e ".[dev]"
-make test
+# Install
+pip install -e ./agentorchestrator
+
+# Run tests
+pytest tests/ -v
+
+# Use the CLI
 ao --help
 ```
 
@@ -56,13 +45,6 @@ Full documentation is in [`agentorchestrator/docs/`](agentorchestrator/docs/):
 | [Architecture](agentorchestrator/docs/ARCHITECTURE.md) | System design |
 | [API Reference](agentorchestrator/docs/API.md) | Full API docs |
 
-### Build Docs Locally
-
-```bash
-pip install mkdocs-material mkdocs-minify-plugin
-mkdocs serve
-# Open http://localhost:8000
-```
 
 ## Basic Usage
 
@@ -88,6 +70,54 @@ class MyPipeline:
 import asyncio
 result = asyncio.run(ao.launch("my_pipeline", {}))
 ```
+
+## S3 Service
+
+AgentOrchestrator includes an enterprise S3 integration for object storage, supporting both AWS S3 and on-premises S3-compatible services (CAGE S3, MinIO, Ceph).
+
+**Installation:**
+```bash
+pip install agentorchestrator[s3]
+```
+
+**Basic Usage:**
+```python
+from agentorchestrator.config import get_config
+
+# Load S3 client from .env configuration
+config = get_config()
+s3 = config.get_s3_client()
+
+# Connect and use
+await s3.connect()
+
+# Upload file
+await s3.upload_file("local_file.txt", "remote/key.txt")
+
+# Download file
+await s3.download_file("remote/key.txt", "downloaded.txt")
+
+# List objects
+objects = await s3.list_objects(prefix="remote/")
+
+# Generate presigned URL
+url = s3.generate_presigned_url("remote/key.txt", expires_in=3600)
+
+# Cleanup
+await s3.close()
+```
+
+**Configuration:**
+Configure S3 in your `.env` file:
+```bash
+S3_BUCKET_NAME=your-bucket-name
+S3_AWS_ACCESS_KEY_ID=your-access-key
+S3_AWS_SECRET_ACCESS_KEY=your-secret-key
+S3_AWS_ENDPOINT_URL=https://your-s3-endpoint.com  # For on-prem S3
+S3_REGION=us-east-1  # Optional for AWS
+```
+
+See `.env.example` for all available S3 configuration options.
 
 ## CLI
 
@@ -117,7 +147,3 @@ ao version            # Show version
 ```
 
 See [CLI Reference](agentorchestrator/docs/cli/index.md) for complete documentation.
-
-## License
-
-MIT

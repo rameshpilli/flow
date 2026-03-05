@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 logger = logging.getLogger(__name__)
 
@@ -353,24 +353,42 @@ async def _dispatch_capiq(body: dict) -> dict:
     return _err(req_id, -32601, f"Unknown method: {method}")
 
 
-@app.post("/ravenpack/mcp")
-async def ravenpack_mcp(request: Request) -> JSONResponse:
+def _sse(payload: dict) -> Response:
+    """Wrap a JSON-RPC result in SSE format that parse_sse_response() can read."""
+    body = f"data: {json.dumps(payload)}\n\n"
+    return Response(content=body, media_type="text/event-stream")
+
+
+async def _handle_ravenpack(request: Request) -> Response:
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
     result = await _dispatch_ravenpack(body)
-    return JSONResponse(content=result)
+    return _sse(result)
 
 
-@app.post("/capiq/mcp")
-async def capiq_mcp(request: Request) -> JSONResponse:
+async def _handle_capiq(request: Request) -> Response:
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
     result = await _dispatch_capiq(body)
-    return JSONResponse(content=result)
+    return _sse(result)
+
+
+# Serve at both /ravenpack and /ravenpack/mcp so the MCPToolAdapter works
+# regardless of whether use_path_routing=True or False is chosen.
+@app.post("/ravenpack")
+@app.post("/ravenpack/mcp")
+async def ravenpack_mcp(request: Request) -> JSONResponse:
+    return await _handle_ravenpack(request)
+
+
+@app.post("/capiq")
+@app.post("/capiq/mcp")
+async def capiq_mcp(request: Request) -> JSONResponse:
+    return await _handle_capiq(request)
 
 
 @app.get("/health")

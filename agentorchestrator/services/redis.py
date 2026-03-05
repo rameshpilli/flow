@@ -910,6 +910,9 @@ class RedisService:
         Uses SCAN iterator instead of KEYS command to avoid
         blocking the server on large datasets.
 
+        Performance optimization (v2.0): Yields to event loop every 10
+        iterations to prevent blocking on large keyspaces (1M+ keys).
+
         Args:
             pattern (str): Glob pattern. Default: "*" (all keys).
                 Examples: "user:*", "session:*:data", "*cache*"
@@ -925,9 +928,17 @@ class RedisService:
         """
         keys = []
         cursor = 0
+        iteration_count = 0
         while True:
             cursor, batch = await self.client.scan(cursor, match=pattern, count=100)
             keys.extend(batch)
+            iteration_count += 1
+
+            # Yield to event loop every 10 iterations to prevent blocking
+            # on large keyspaces (e.g., 1M+ keys)
+            if iteration_count % 10 == 0:
+                await asyncio.sleep(0)
+
             if cursor == 0:
                 break
         return keys

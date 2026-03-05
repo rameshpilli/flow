@@ -155,14 +155,25 @@ class StateStore(Generic[StateModel]):
         self._lock = asyncio.Lock()
         self._initial_state = self._copy_state(self._state)
 
-    def _copy_state(self, state: StateModel) -> StateModel:
+    def _copy_state(self, state: StateModel | None) -> StateModel:
         """
         Deep copy a Pydantic model across v1/v2.
 
         Pydantic v2: model_copy(deep=True)
         Pydantic v1: copy(deep=True)
         Fallback: copy.deepcopy
+
+        Args:
+            state: The state model to copy
+
+        Raises:
+            ValueError: If state is None
         """
+        if state is None:
+            raise ValueError(
+                "Cannot copy None state. State must be initialized with a valid "
+                "Pydantic model instance."
+            )
         if hasattr(state, "model_copy"):
             return state.model_copy(deep=True)
         if hasattr(state, "copy"):

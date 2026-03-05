@@ -628,6 +628,7 @@ class AgentOrchestrator:
         input_key: str | None = None,
         validate_output: bool = True,
         state_model: type | None = None,
+        condition: Callable[[Any], bool] | None = None,
     ) -> F | Callable[[F], F]:
         """
         Register a chain step (similar to Dagster's @asset).
@@ -661,6 +662,9 @@ class AgentOrchestrator:
             output_model (type | None): Pydantic model to validate output.
             input_key (str | None): Context key to validate. Default: "request".
             validate_output (bool): Whether to validate output. Default: True.
+            condition (Callable[[Any], bool] | None): Optional condition function
+                that receives ctx and returns bool. Step only executes if condition
+                returns True. If False, step is skipped with reason "condition not met".
 
         Returns:
             F | Callable[[F], F]: Decorated function or decorator.
@@ -786,6 +790,7 @@ class AgentOrchestrator:
                 input_key=input_key,  # Key to validate
                 validate_output=validate_output,  # Whether to validate output
                 state_model=state_model,  # Typed state model (optional)
+                condition=condition,  # Conditional execution
             )
             func._fg_name = step_name
             func._fg_type = "step"
@@ -1295,7 +1300,11 @@ class AgentOrchestrator:
             ... )
         """
         run_id = run_id or f"event_{uuid.uuid4().hex[:8]}"
-        ctx = ChainContext(request_id=run_id, initial_data=initial_context_data)
+        ctx = ChainContext(
+            request_id=run_id,
+            initial_data=initial_context_data,
+            resource_manager=self._resource_manager,
+        )
         
         # Initialize checkpoint tracking
         checkpoint_id = None
@@ -1612,6 +1621,60 @@ class AgentOrchestrator:
 
         return self
 
+    def provide(
+        self,
+        name: str,
+        instance_or_factory: Any,
+        scope: ResourceScope = ResourceScope.SINGLETON,
+        cleanup: Callable[[Any], Any] | None = None,
+    ) -> "AgentOrchestrator":
+        """
+        Register a resource with simplified API (convenience method).
+
+        This is a more intuitive alternative to register_resource() for common cases.
+        Use this when you want to quickly register a resource instance or factory.
+
+        Args:
+            name (str): Resource identifier (e.g., "db_manager", "s3_client").
+            instance_or_factory (Any): Either a resource instance or a factory function.
+                If callable, treated as factory. If not, treated as instance.
+            scope (ResourceScope): Resource lifetime. Default: SINGLETON.
+            cleanup (Callable[[Any], Any] | None): Optional cleanup function.
+
+        Returns:
+            AgentOrchestrator: Self for method chaining.
+
+        Example:
+            >>> # Direct instances
+            >>> ao.provide("db_manager", db_manager)
+            >>> ao.provide("s3_client", s3_client)
+            >>> ao.provide("llm_gateway", llm_gateway)
+            >>>
+            >>> # Factory function
+            >>> ao.provide(
+            ...     "cache",
+            ...     lambda: Redis(host="localhost"),
+            ...     cleanup=lambda c: c.close()
+            ... )
+            >>>
+            >>> # Access in steps
+            >>> async def my_step(ctx: ChainContext):
+            ...     db = await ctx.get_resource("db_manager")
+            ...     s3 = await ctx.get_resource("s3_client")
+            ...     # Use resources...
+
+        See Also:
+            register_resource(): Full-featured resource registration.
+            ctx.get_resource(): Access resources in steps.
+        """
+        return self.register_resource(
+            name=name,
+            resource=instance_or_factory if not callable(instance_or_factory) else None,
+            factory=instance_or_factory if callable(instance_or_factory) else None,
+            scope=scope,
+            cleanup=cleanup,
+        )
+
     def resource(
         self,
         name: str | None = None,
@@ -1693,6 +1756,8 @@ class AgentOrchestrator:
             >>> ao.use(LoggingMiddleware())
         """
         self._middleware.append(middleware)
+        # Sort by priority (lower priority runs first)
+        self._middleware.sort(key=lambda m: getattr(m, "_ao_priority", 100))
         self._executor.add_middleware(middleware)
         return self
 
@@ -2789,7 +2854,12 @@ class AgentOrchestrator:
             ...     counter: int = 0
             >>> ctx = ao.create_context("req_123", state_model=MyState)
         """
-        ctx = ChainContext(request_id=request_id, initial_data=data, state_model=state_model)
+        ctx = ChainContext(
+            request_id=request_id,
+            initial_data=data,
+            state_model=state_model,
+            resource_manager=self._resource_manager,
+        )
         self._context_manager._contexts[request_id] = ctx
         return ctx
 

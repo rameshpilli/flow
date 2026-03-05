@@ -87,6 +87,8 @@ from agentorchestrator.middleware.rolling_summary import (
     RollingSummaryMiddleware,
     RollingSummaryState,
 )
+from agentorchestrator.middleware.database_state import DatabaseStateMiddleware
+from agentorchestrator.middleware.execution_logger import ExecutionLoggerMiddleware
 
 __all__ = [
     # Base
@@ -164,6 +166,10 @@ __all__ = [
     # Rolling Summary (Incremental Summarization)
     "RollingSummaryMiddleware",
     "RollingSummaryState",
+    # Database State Tracking
+    "DatabaseStateMiddleware",
+    # Per-Execution Logging
+    "ExecutionLoggerMiddleware",
     # Other middleware
     "CacheMiddleware",
     "LoggerMiddleware",

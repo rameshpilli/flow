@@ -1,0 +1,22 @@
+# Lightweight image for the mock MCP server (dev/testing only)
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir \
+    "fastapi>=0.111.0" \
+    "uvicorn[standard]>=0.29.0" \
+    "httpx>=0.27.0"
+
+# Copy only what mock_mcp.py needs.
+# Use a blank __init__.py — the mock server does not need the full package.
+RUN mkdir -p ./deep_research
+RUN echo "" > ./deep_research/__init__.py
+COPY deep_research/mock_mcp.py ./deep_research/mock_mcp.py
+COPY deep_research/fixtures/ ./deep_research/fixtures/
+
+ENV MOCK_MCP_PORT=8001
+
+EXPOSE 8001
+
+CMD ["uvicorn", "deep_research.mock_mcp:app", "--host", "0.0.0.0", "--port", "8001"]

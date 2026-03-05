@@ -1,1962 +1,1142 @@
 """
-AgentOrchestrator Context Management
-====================================
+AgentOrchestrator Context Store - External Storage for Large Payloads
 
-This module provides the context management system for chain execution in AgentOrchestrator.
+Offloads large data to external storage (Redis, mem0, etc.),
+keeping only lightweight references in chain context.
 
-ChainContext is the central data structure that flows through all steps in a chain,
-providing shared state, scoped storage, token tracking, and citation support.
-It enables data sharing between steps while maintaining isolation where needed.
+Key Principles:
+1. NEVER lose data - full payloads preserved in storage
+2. NEVER blind-truncate - always keep hashes, lengths, and retrieval links
+3. Context stays lightweight - only refs in ChainContext
+4. Pluggable backends - Redis, mem0, or custom stores
 
-Classes:
-    ContextScope: Enum defining data lifetime scopes (STEP, CHAIN, GLOBAL).
-    ContextEntry: Dataclass representing a single context entry with metadata.
-    StepResult: Dataclass for step execution results with error tracking.
-    ExecutionSummary: Summary of chain execution with partial success tracking.
-    ChainContext: Main context class managing shared state between steps.
-    ContextManager: Singleton manager for multiple concurrent chain contexts.
+Architecture:
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                      Chain Context (in-memory, lightweight)      │
+    │  ┌─────────────────────────────────────────────────────────────┐ │
+    │  │  "large_data" → ContextRef(                                 │ │
+    │  │      ref_id="ctx_abc", size=1.2MB, hash="a1b2c3",          │ │
+    │  │      summary="Data summary...",                             │ │
+    │  │      key_fields={key1: val1, key2: val2}                   │ │
+    │  │  )                                                          │ │
+    │  └─────────────────────────────────────────────────────────────┘ │
+    └─────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+    ┌─────────────────────────────────────────────────────────────────┐
+    │              Context Store (Redis, mem0, etc.)                   │
+    │  ctx_abc → <1.2MB of data - NEVER truncated>                   │
+    │  ctx_xyz → <800KB of data - FULL data preserved>               │
+    └─────────────────────────────────────────────────────────────────┘
 
 Usage:
-    from agentorchestrator.core.context import ChainContext, ContextScope
+    from agentorchestrator.core.context_store import RedisContextStore, ContextRef
 
-    # Create a context for a chain execution
-    ctx = ChainContext(request_id="req_123")
+    # Initialize store
+    store = RedisContextStore(host="localhost", port=6379)
 
-    # Store data with different scopes
-    ctx.set("user_query", "Who is the CEO?", scope=ContextScope.CHAIN)
-    ctx.set("temp_data", {...}, scope=ContextScope.STEP)  # Cleaned up after step
+    # Store large payload, get reference with summary
+    ref = await store.store(
+        key="my_data",
+        data=large_data,
+        summary="Description of the data",
+        key_fields={"key1": "value1", "key2": "value2"},
+    )
 
-    # Retrieve data
-    query = ctx.get("user_query")
+    # Store ref in context (lightweight - ~500 bytes instead of 1.2MB)
+    ctx.set("data_ref", ref)
 
-    # Use step scope for automatic cleanup
-    async with ctx.step_scope("my_step"):
-        ctx.set("local_var", value, scope=ContextScope.STEP)
-        # ... step logic ...
-    # local_var is automatically cleaned up here
-
-Example:
-    >>> from agentorchestrator.core.context import ChainContext, ContextScope, StepResult
-    >>>
-    >>> # Create context with initial data
-    >>> ctx = ChainContext(
-    ...     request_id="req_abc123",
-    ...     initial_data={"company": "Apple Inc"},
-    ...     max_tokens=100000,
-    ... )
-    >>>
-    >>> # Store step results
-    >>> ctx.add_result(StepResult(
-    ...     step_name="extract_company",
-    ...     output={"ticker": "AAPL"},
-    ...     duration_ms=150.5,
-    ... ))
-    >>>
-    >>> # Check results
-    >>> print(ctx.last_result.success)  # True
-    >>> print(ctx.total_tokens)  # Token count for LLM context management
-
-Thread-safety:
-    - Uses asyncio.Lock for concurrent access protection
-    - Uses contextvars for per-task step tracking (safe for parallel steps)
-    - Step-scoped data is isolated per step using namespaced keys
-
-See Also:
-    - agentorchestrator.core.orchestrator: Uses ChainContext for execution.
-    - agentorchestrator.core.decorators: Step decorators that work with context.
-    - agentorchestrator.models.citation: Citation model for source tracking.
+    # Later, retrieve full data (NEVER lost)
+    data = await store.retrieve(ref)
 """
 
-import asyncio
-import contextvars
-import copy
+import hashlib
+import json
 import logging
-from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager, contextmanager
+import pickle
+import uuid
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
-
-if TYPE_CHECKING:
-    from agentorchestrator.core.serializers import ContextSerializer
-    from agentorchestrator.core.state import StateStore
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-__all__ = [
-    "ChainContext",
-    "Context",
-    "ContextScope",
-    "ContextEntry",
-    "ContextManager",
-    "StepResult",
-    "ExecutionSummary",
-]
-
-T = TypeVar("T")
-StateModel = TypeVar("StateModel")
-
-# Context variable for tracking current step per async task
-# This is the async-safe equivalent of thread-local storage
-_current_step_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "current_step", default=None
-)
-
-
-class ContextScope(Enum):
-    """
-    Defines the scope/lifetime of context data.
-
-    Controls how long data persists and who can access it.
-    Choose the appropriate scope based on data lifecycle needs.
-
-    Attributes:
-        STEP: Data available only within current step execution.
-            Automatically cleaned up when step completes.
-            Ideal for temporary calculations or intermediate results.
-        CHAIN: Data available throughout the entire chain execution.
-            Persists from first step to last, then cleaned up.
-            Use for data that flows between steps.
-        GLOBAL: Data persists across multiple chain executions.
-            Use sparingly for truly global configuration.
-
-    Example:
-        >>> from agentorchestrator.core.context import ContextScope
-        >>>
-        >>> # Step-scoped data (cleaned up after step)
-        >>> ctx.set("temp_result", data, scope=ContextScope.STEP)
-        >>>
-        >>> # Chain-scoped data (available to all steps)
-        >>> ctx.set("company_info", info, scope=ContextScope.CHAIN)
-        >>>
-        >>> # Global data (persists across chains)
-        >>> ctx.set("config", config, scope=ContextScope.GLOBAL)
-    """
-
-    STEP = "step"  # Available only within current step
-    CHAIN = "chain"  # Available throughout the chain execution
-    GLOBAL = "global"  # Persists across multiple chain executions
-
 
 @dataclass
-class ContextEntry:
+class ContextRef:
     """
-    A single entry in the context store.
+    Lightweight reference to data stored in Redis.
 
-    Wraps stored values with metadata for tracking, debugging,
-    and token management.
+    Contains enough metadata to understand what's stored without
+    retrieving it, plus the ability to retrieve full data on demand.
 
-    Attributes:
-        key (str): Unique identifier for this entry.
-        value (Any): The stored data value.
-        scope (ContextScope): Lifetime scope of this entry.
-        created_at (datetime): When the entry was first created.
-        updated_at (datetime): When the entry was last modified.
-        token_count (int): Estimated token count for LLM context tracking.
-        source_step (str | None): Name of step that created this entry.
-        metadata (dict[str, Any]): Additional entry metadata.
-
-    Example:
-        >>> entry = ContextEntry(
-        ...     key="company_data",
-        ...     value={"name": "Apple", "ticker": "AAPL"},
-        ...     scope=ContextScope.CHAIN,
-        ...     token_count=50,
-        ...     source_step="extract_company",
-        ... )
+    Key principle: NEVER lose information
+    - size_bytes: Know exactly how big the data is
+    - content_hash: Verify integrity, enable deduplication
+    - summary: Human-readable summary of content
+    - key_fields: Critical extracted fields (numbers, dates, entities)
+    - item_count: For lists, how many items
+    - omitted_count: If items were capped, how many were omitted
     """
+    ref_id: str
+    size_bytes: int
+    content_hash: str  # SHA256 for integrity/dedup
+    content_type: str = "application/json"
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    ttl_seconds: int = 3600  # Default 1 hour
 
-    key: str
-    value: Any
-    scope: ContextScope
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
-    token_count: int = 0
+    # Summary info (NEVER blind-truncate - always keep these)
+    summary: str = ""  # Human-readable summary
+    key_fields: dict[str, Any] = field(default_factory=dict)  # Critical extracted fields
+
+    # For list/collection data
+    item_count: int = 0  # Total items in original data
+    omitted_count: int = 0  # Items not included (if capped)
+
+    # Source tracking
     source_step: str | None = None
+    source_agent: str | None = None
+
+    # Metadata
     metadata: dict[str, Any] = field(default_factory=dict)
 
-
-@dataclass
-class StepResult:
-    """
-    Result from a step execution with rich error metadata.
-
-    Captures comprehensive information about a step's execution,
-    including output, timing, errors, and retry information.
-    Used for debugging, logging, and partial success tracking.
-
-    Attributes:
-        step_name (str): Name of the executed step.
-        output (Any): Output data from the step (None on failure).
-        duration_ms (float): Execution time in milliseconds.
-        token_count (int): Token count for LLM calls in this step.
-        metadata (dict[str, Any]): Additional step metadata.
-        error (Exception | None): Exception if step failed.
-        error_type (str | None): Type of error (for structured logging).
-        error_traceback (str | None): Full traceback string (for debugging).
-        retry_count (int): Number of retries attempted.
-        skipped_reason (str | None): Reason if step was skipped.
-
-    Properties:
-        success (bool): True if step completed without error or skip.
-        failed (bool): True if step raised an exception.
-        skipped (bool): True if step was skipped.
-
-    Methods:
-        to_dict(): Convert to dictionary for serialization.
-
-    Example:
-        >>> result = StepResult(
-        ...     step_name="fetch_data",
-        ...     output={"revenue": 394.3},
-        ...     duration_ms=1250.5,
-        ...     token_count=150,
-        ...     metadata={"source": "sec_api"},
-        ... )
-        >>>
-        >>> if result.success:
-        ...     print(f"Step completed in {result.duration_ms}ms")
-        ... elif result.failed:
-        ...     print(f"Error: {result.error_type}: {result.error}")
-
-    See Also:
-        ExecutionSummary: Aggregates StepResults for chain summary.
-        ChainContext.add_result(): Method to add results to context.
-    """
-
-    step_name: str
-    output: Any
-    duration_ms: float
-    token_count: int = 0
-    metadata: dict[str, Any] = field(default_factory=dict)
-    error: Exception | None = None
-    error_type: str | None = None
-    error_traceback: str | None = None
-    retry_count: int = 0
-    skipped_reason: str | None = None
-
-    @property
-    def success(self) -> bool:
-        """
-        Check if the step completed successfully.
-
-        Returns:
-            bool: True if no error occurred and step was not skipped.
-
-        Example:
-            >>> if result.success:
-            ...     process_output(result.output)
-        """
-        return self.error is None and self.skipped_reason is None
-
-    @property
-    def failed(self) -> bool:
-        """
-        Check if the step failed with an exception.
-
-        Returns:
-            bool: True if an error occurred during execution.
-
-        Example:
-            >>> if result.failed:
-            ...     logger.error(f"{result.error_type}: {result.error}")
-        """
-        return self.error is not None
-
-    @property
-    def skipped(self) -> bool:
-        """
-        Check if the step was skipped.
-
-        Returns:
-            bool: True if step was skipped (e.g., due to unmet conditions).
-
-        Example:
-            >>> if result.skipped:
-            ...     print(f"Skipped: {result.skipped_reason}")
-        """
-        return self.skipped_reason is not None
+    # For context serialization
+    _is_context_ref: bool = field(default=True, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        Convert to dictionary for serialization (errors as strings).
-
-        Returns:
-            dict[str, Any]: JSON-serializable dictionary representation.
-
-        Example:
-            >>> result_dict = result.to_dict()
-            >>> json.dumps(result_dict)  # Safe for JSON serialization
-        """
+        """Convert to JSON-serializable dict (for logging/API responses)."""
         return {
-            "step_name": self.step_name,
-            "success": self.success,
-            "output": self.output,
-            "duration_ms": self.duration_ms,
-            "token_count": self.token_count,
+            "_is_context_ref": True,
+            "ref_id": self.ref_id,
+            "size_bytes": self.size_bytes,
+            "size_human": self._human_size(self.size_bytes),
+            "content_hash": self.content_hash,
+            "content_type": self.content_type,
+            "created_at": self.created_at,
+            "ttl_seconds": self.ttl_seconds,
+            # Summary info - ALWAYS included
+            "summary": self.summary,
+            "key_fields": self.key_fields,
+            "item_count": self.item_count,
+            "omitted_count": self.omitted_count,
+            # Source tracking
+            "source_step": self.source_step,
+            "source_agent": self.source_agent,
             "metadata": self.metadata,
-            "error": str(self.error) if self.error else None,
-            "error_type": self.error_type,
-            "error_traceback": self.error_traceback,
-            "retry_count": self.retry_count,
-            "skipped_reason": self.skipped_reason,
+            # Retrieval info
+            "_retrieve_hint": f"Use store.retrieve(ref) to get full {self._human_size(self.size_bytes)} payload",
         }
 
+    @staticmethod
+    def _human_size(size_bytes: int) -> str:
+        """Convert bytes to human readable string."""
+        for unit in ["B", "KB", "MB", "GB"]:
+            if size_bytes < 1024:
+                return f"{size_bytes:.1f}{unit}"
+            size_bytes /= 1024
+        return f"{size_bytes:.1f}TB"
 
-@dataclass
-class ExecutionSummary:
-    """
-    Summary of chain execution with partial success tracking.
-
-    Enables graceful degradation - know exactly what succeeded,
-    what failed, and what was skipped, even in continue mode.
-    Useful for reporting, debugging, and error recovery.
-
-    Attributes:
-        chain_name (str): Name of the executed chain.
-        request_id (str): Unique request identifier.
-        total_steps (int): Total number of steps in the chain.
-        completed_steps (int): Number of successfully completed steps.
-        failed_steps (int): Number of failed steps.
-        skipped_steps (int): Number of skipped steps.
-        total_duration_ms (float): Total execution time in milliseconds.
-        success (bool): True if all steps completed successfully.
-        partial_success (bool): True if some steps succeeded and some failed.
-        error (str | None): Error message if chain failed.
-        error_type (str | None): Type of error that caused failure.
-        error_traceback (str | None): Full traceback for debugging.
-        step_results (list[StepResult]): Detailed results for each step.
-
-    Properties:
-        completion_rate (float): Percentage of steps that completed.
-
-    Methods:
-        add_result(): Add a step result and update counters.
-        finalize(): Finalize the summary after execution.
-        to_dict(): Convert to dictionary for serialization.
-        get_failed_steps(): Get all failed step results.
-        get_skipped_steps(): Get all skipped step results.
-        get_successful_steps(): Get all successful step results.
-
-    Example:
-        >>> summary = ExecutionSummary(
-        ...     chain_name="data_pipeline",
-        ...     request_id="req_123",
-        ...     total_steps=5,
-        ... )
-        >>>
-        >>> # Add results as steps execute
-        >>> summary.add_result(StepResult(step_name="step1", output={}, duration_ms=100))
-        >>> summary.add_result(StepResult(step_name="step2", output={}, duration_ms=200))
-        >>>
-        >>> # Finalize and check status
-        >>> summary.finalize()
-        >>> print(f"Completion rate: {summary.completion_rate}%")
-        >>> if summary.partial_success:
-        ...     print("Some steps failed - check get_failed_steps()")
-
-    See Also:
-        StepResult: Individual step result dataclass.
-        ChainContext: Uses ExecutionSummary for chain tracking.
-    """
-
-    chain_name: str
-    request_id: str
-    total_steps: int
-    completed_steps: int = 0
-    failed_steps: int = 0
-    skipped_steps: int = 0
-    total_duration_ms: float = 0.0
-    success: bool = False
-    partial_success: bool = False
-    error: str | None = None
-    error_type: str | None = None
-    error_traceback: str | None = None
-
-    # Per-step details
-    step_results: list[StepResult] = field(default_factory=list)
-
-    @property
-    def completion_rate(self) -> float:
-        """
-        Percentage of steps that completed successfully.
-
-        Returns:
-            float: Completion rate as percentage (0.0 to 100.0).
-
-        Example:
-            >>> if summary.completion_rate < 50:
-            ...     logger.warning("Less than half of steps completed")
-        """
-        if self.total_steps == 0:
-            return 0.0
-        return (self.completed_steps / self.total_steps) * 100
-
-    def add_result(self, result: StepResult) -> None:
-        """
-        Add a step result and update counters.
-
-        Args:
-            result (StepResult): The step result to add.
-
-        Example:
-            >>> summary.add_result(StepResult(
-            ...     step_name="fetch_data",
-            ...     output={"data": [...]},
-            ...     duration_ms=500,
-            ... ))
-        """
-        self.step_results.append(result)
-        self.total_duration_ms += result.duration_ms
-
-        if result.success:
-            self.completed_steps += 1
-        elif result.skipped:
-            self.skipped_steps += 1
-        else:
-            self.failed_steps += 1
-
-    def finalize(self) -> None:
-        """
-        Finalize the summary after execution.
-
-        Sets success and partial_success flags based on step results.
-        Call this after all steps have been added.
-
-        Example:
-            >>> summary.finalize()
-            >>> if summary.success:
-            ...     print("All steps completed successfully!")
-        """
-        self.success = self.failed_steps == 0 and self.skipped_steps == 0
-        self.partial_success = (
-            self.completed_steps > 0 and
-            (self.failed_steps > 0 or self.skipped_steps > 0)
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ContextRef":
+        """Reconstruct from dict."""
+        return cls(
+            ref_id=data["ref_id"],
+            size_bytes=data["size_bytes"],
+            content_hash=data["content_hash"],
+            content_type=data.get("content_type", "application/json"),
+            created_at=data.get("created_at", datetime.utcnow().isoformat()),
+            ttl_seconds=data.get("ttl_seconds", 3600),
+            summary=data.get("summary", ""),
+            key_fields=data.get("key_fields", {}),
+            item_count=data.get("item_count", 0),
+            omitted_count=data.get("omitted_count", 0),
+            source_step=data.get("source_step"),
+            source_agent=data.get("source_agent"),
+            metadata=data.get("metadata", {}),
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Convert to dictionary for JSON serialization.
-
-        Returns:
-            dict[str, Any]: JSON-serializable dictionary representation.
-
-        Example:
-            >>> summary_json = json.dumps(summary.to_dict(), indent=2)
-        """
-        return {
-            "chain_name": self.chain_name,
-            "request_id": self.request_id,
-            "success": self.success,
-            "partial_success": self.partial_success,
-            "total_steps": self.total_steps,
-            "completed_steps": self.completed_steps,
-            "failed_steps": self.failed_steps,
-            "skipped_steps": self.skipped_steps,
-            "completion_rate": f"{self.completion_rate:.1f}%",
-            "total_duration_ms": self.total_duration_ms,
-            "error": self.error,
-            "error_type": self.error_type,
-            "step_results": [r.to_dict() for r in self.step_results],
-        }
-
-    def get_failed_steps(self) -> list[StepResult]:
-        """
-        Get all failed step results.
-
-        Returns:
-            list[StepResult]: List of results for failed steps.
-
-        Example:
-            >>> for failed in summary.get_failed_steps():
-            ...     print(f"{failed.step_name}: {failed.error}")
-        """
-        return [r for r in self.step_results if r.failed]
-
-    def get_skipped_steps(self) -> list[StepResult]:
-        """
-        Get all skipped step results.
-
-        Returns:
-            list[StepResult]: List of results for skipped steps.
-
-        Example:
-            >>> for skipped in summary.get_skipped_steps():
-            ...     print(f"{skipped.step_name}: {skipped.skipped_reason}")
-        """
-        return [r for r in self.step_results if r.skipped]
-
-    def get_successful_steps(self) -> list[StepResult]:
-        """
-        Get all successful step results.
-
-        Returns:
-            list[StepResult]: List of results for successful steps.
-
-        Example:
-            >>> successful = summary.get_successful_steps()
-            >>> print(f"{len(successful)} steps completed successfully")
-        """
-        return [r for r in self.step_results if r.success]
+    def __repr__(self) -> str:
+        summary_preview = self.summary[:50] + "..." if len(self.summary) > 50 else self.summary
+        return f"ContextRef({self.ref_id}, {self._human_size(self.size_bytes)}, '{summary_preview}')"
 
 
-class ChainContext(Generic[StateModel]):
+class ContextRefNotFoundError(Exception):
+    """Raised when context ref is not found or has expired."""
+
+    def __init__(self, ref_id: str):
+        self.ref_id = ref_id
+        super().__init__(f"Context ref not found (may have expired): {ref_id}")
+
+
+class ContextStore(ABC):
     """
-    Manages shared state and data flow between chain steps.
+    Abstract base class for context storage backends.
 
-    ChainContext is the central data structure that flows through all steps
-    in a chain execution. It provides scoped storage, token tracking for
-    LLM context management, automatic cleanup, and citation support.
+    Implementations provide external storage for large payloads.
+    """
 
-    Attributes:
-        request_id (str): Unique identifier for this chain execution.
-        max_tokens (int): Maximum token budget for LLM context.
-        created_at (datetime): When the context was created.
-        metadata (dict[str, Any]): Additional context metadata.
+    @abstractmethod
+    async def store(
+        self,
+        key: str,
+        data: Any,
+        ttl_seconds: int = 3600,
+        summary: str = "",
+        key_fields: dict[str, Any] | None = None,
+        source_step: str | None = None,
+        source_agent: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ContextRef:
+        """
+        Store data and return a lightweight reference.
 
-    Properties:
-        current_step (str | None): Name of the currently executing step.
-        total_tokens (int): Total tokens currently stored in context.
-        results (list[StepResult]): All step results in execution order.
-        last_result (StepResult | None): Most recent step result.
+        Args:
+            key: Logical key for the data (will be prefixed with unique ID)
+            data: The data to store (will be serialized)
+            ttl_seconds: Time-to-live in seconds
+            summary: Human-readable summary of the content
+            key_fields: Critical fields to preserve in reference
+            source_step: Step that produced this data
+            source_agent: Agent that fetched this data
+            metadata: Additional metadata
 
-    Methods:
-        set(): Store a value in the context with specified scope.
-        get(): Retrieve a value from the context.
-        get_entry(): Get the full context entry including metadata.
-        has(): Check if a key exists in context.
-        delete(): Remove a key from context.
-        keys(): Get all keys, optionally filtered by scope.
-        add_result(): Add a step execution result.
-        get_result(): Get result for a specific step.
-        enter_step(): Enter a step execution scope.
-        exit_step(): Exit a step execution scope with cleanup.
-        step_scope(): Async context manager for step execution.
-        step_scope_sync(): Sync context manager for step execution.
-        to_dict(): Export context as dictionary.
-        clone(): Create a deep copy of the context.
-        add_citation(): Add a citation for source tracking.
-        add_source_content(): Add raw source content for verification.
-        get_citations(): Get citations from the context.
-        verify_citations(): Verify all citations against sources.
-        get_citation_summary(): Get citation coverage summary.
+        Returns:
+            ContextRef that can be stored in ChainContext
+        """
+        pass
 
-    Example:
-        >>> from agentorchestrator.core.context import ChainContext, ContextScope
-        >>>
-        >>> # Create context
-        >>> ctx = ChainContext(
-        ...     request_id="req_123",
-        ...     initial_data={"query": "Apple revenue"},
-        ...     max_tokens=100000,
-        ... )
-        >>>
-        >>> # Store and retrieve data
-        >>> ctx.set("company", "Apple Inc", scope=ContextScope.CHAIN)
-        >>> company = ctx.get("company")  # "Apple Inc"
-        >>>
-        >>> # Use step scope for automatic cleanup
-        >>> async with ctx.step_scope("process_data"):
-        ...     ctx.set("temp", {...}, scope=ContextScope.STEP)
-        ...     # temp is available here
-        ... # temp is automatically cleaned up
-        >>>
-        >>> # Track step results
-        >>> ctx.add_result(StepResult(
-        ...     step_name="fetch",
-        ...     output={"revenue": 394.3},
-        ...     duration_ms=500,
-        ... ))
-        >>>
-        >>> # Add citations for provenance
-        >>> ctx.add_citation(
-        ...     content="Total revenue was $394.3 billion",
-        ...     source_name="sec_filing",
-        ...     reasoning="Direct revenue figure from 10-K",
-        ... )
+    @abstractmethod
+    async def retrieve(self, ref: ContextRef) -> Any:
+        """
+        Retrieve full data from a context reference.
 
-    Thread-safety:
-        ChainContext is designed for concurrent access:
-        - Uses asyncio.Lock for async operations (async_set, edit_state)
-        - Uses threading.RLock for sync operations (set, get)
-        - Uses contextvars for per-task step tracking (safe for parallel steps)
-        - STEP-scoped data is isolated per step (no cross-step interference)
+        Args:
+            ref: The context reference
 
-    Race Conditions (Parallel Steps):
-        When parallel steps modify the same CHAIN-scoped key, race conditions
-        are possible. Mitigation strategies:
+        Returns:
+            Original data (deserialized) - NEVER truncated
 
-        1. **Use STEP-scoped data** for step-local temporary data:
-           >>> ctx.set("temp", value, scope=ContextScope.STEP)
+        Raises:
+            ContextRefNotFoundError: If data has expired or doesn't exist
+        """
+        pass
 
-        2. **Use StateStore** for shared state with validation:
-           >>> async with ctx.edit_state() as state:
-           ...     state.counter += 1  # Atomic and validated
+    @abstractmethod
+    async def delete(self, ref: ContextRef) -> bool:
+        """Delete stored data."""
+        pass
 
-        3. **Use async_set()** for explicit atomic CHAIN-scoped updates:
-           >>> await ctx.async_set("shared_key", new_value)
+    @abstractmethod
+    async def exists(self, ref: ContextRef) -> bool:
+        """Check if data exists."""
+        pass
 
-        4. **Avoid read-modify-write patterns** in parallel steps:
-           # BAD: Race condition possible
-           >>> value = ctx.get("counter")
-           >>> ctx.set("counter", value + 1)
+    def _serialize(self, data: Any) -> bytes:
+        """Serialize data for storage."""
+        try:
+            # Try JSON first (human readable, widely compatible)
+            return json.dumps(data, default=str).encode("utf-8")
+        except (TypeError, ValueError):
+            # Fall back to pickle for complex objects
+            return pickle.dumps(data)
 
-           # GOOD: Use StateStore or async_set with atomic updates
-           >>> async with ctx.edit_state() as state:
-           ...     state.counter += 1
+    def _deserialize(self, data: bytes, content_type: str = "application/json") -> Any:
+        """Deserialize data from storage."""
+        if content_type == "application/json":
+            try:
+                return json.loads(data.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+        return pickle.loads(data)
 
-    See Also:
-        ContextScope: Enum for data lifetime scopes.
-        StepResult: Dataclass for step execution results.
-        ContextManager: Manager for multiple contexts.
+    def _compute_hash(self, data: bytes) -> str:
+        """Compute SHA256 hash of data."""
+        return hashlib.sha256(data).hexdigest()[:16]
+
+    def _generate_id(self, key: str) -> str:
+        """Generate unique context ref ID."""
+        return f"ctx_{key}_{uuid.uuid4().hex[:8]}"
+
+    def _count_items(self, data: Any) -> int:
+        """Count items in data (for lists/dicts)."""
+        if isinstance(data, list):
+            return len(data)
+        if isinstance(data, dict):
+            return len(data)
+        return 1
+
+
+class InMemoryContextStore(ContextStore):
+    """
+    In-memory context store for development and testing.
+
+    Data is lost when process exits. Use RedisContextStore for production.
+    """
+
+    def __init__(self):
+        self._store: dict[str, tuple[bytes, str, datetime]] = {}
+
+    async def store(
+        self,
+        key: str,
+        data: Any,
+        ttl_seconds: int = 3600,
+        summary: str = "",
+        key_fields: dict[str, Any] | None = None,
+        source_step: str | None = None,
+        source_agent: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ContextRef:
+        serialized = self._serialize(data)
+        ref_id = self._generate_id(key)
+        content_hash = self._compute_hash(serialized)
+
+        # Determine content type
+        content_type = "application/json"
+        try:
+            json.dumps(data, default=str)
+        except (TypeError, ValueError):
+            content_type = "application/pickle"
+
+        self._store[ref_id] = (serialized, content_type, datetime.utcnow())
+
+        ref = ContextRef(
+            ref_id=ref_id,
+            size_bytes=len(serialized),
+            content_hash=content_hash,
+            content_type=content_type,
+            ttl_seconds=ttl_seconds,
+            summary=summary,
+            key_fields=key_fields or {},
+            item_count=self._count_items(data),
+            source_step=source_step,
+            source_agent=source_agent,
+            metadata=metadata or {},
+        )
+
+        logger.debug(f"Stored in memory: {ref}")
+        return ref
+
+    async def retrieve(self, ref: ContextRef) -> Any:
+        if ref.ref_id not in self._store:
+            raise ContextRefNotFoundError(ref.ref_id)
+
+        serialized, content_type, _ = self._store[ref.ref_id]
+        return self._deserialize(serialized, content_type)
+
+    async def delete(self, ref: ContextRef) -> bool:
+        if ref.ref_id in self._store:
+            del self._store[ref.ref_id]
+            return True
+        return False
+
+    async def exists(self, ref: ContextRef) -> bool:
+        return ref.ref_id in self._store
+
+
+class RedisContextStore(ContextStore):
+    """
+    Redis-based context store for production use.
+
+    Supports multiple deployment scenarios:
+    - Same container: host="localhost" (your current Docker setup)
+    - Kubernetes: host="redis-service.namespace"
+    - AWS ElastiCache: host="xxx.cache.amazonaws.com", ssl=True
+    - Azure Cache: host="xxx.redis.cache.windows.net", ssl=True
+
+    Memory Configuration:
+        The maxmemory setting controls how much memory Redis will use.
+        When maxmemory is reached, Redis uses the eviction policy (default: allkeys-lru).
+
+        Sizing guidelines:
+        - Small workloads: 128MB-256MB (handles ~100-500 concurrent contexts)
+        - Medium workloads: 512MB-1GB (handles ~1000-5000 concurrent contexts)
+        - Large workloads: 2GB-4GB (handles ~10000+ concurrent contexts)
+
+    Usage:
+        # Local/same container
+        store = RedisContextStore(host="localhost", port=6379)
+
+        # Kubernetes
+        store = RedisContextStore(host="redis-service.default.svc.cluster.local")
+
+        # AWS ElastiCache (TLS)
+        store = RedisContextStore(
+            host="my-cluster.abc123.use1.cache.amazonaws.com",
+            ssl=True,
+        )
+
+        ref = await store.store("large_data", data, summary="Data description")
     """
 
     def __init__(
         self,
-        request_id: str,
-        initial_data: dict[str, Any] | None = None,
-        max_tokens: int = 100000,
-        state_model: type[StateModel] | None = None,
+        host: str = "localhost",
+        port: int = 6379,
+        db: int = 0,
+        password: str | None = None,
+        key_prefix: str = "agentorchestrator:ctx:",
+        max_connections: int = 10,
+        maxmemory: str | None = None,
+        maxmemory_policy: str = "allkeys-lru",
+        ssl: bool = False,
+        ssl_cert_reqs: str | None = None,
     ):
         """
-        Initialize a new ChainContext.
+        Initialize Redis context store.
 
         Args:
-            request_id (str): Unique identifier for this chain execution.
-                Used for tracing, logging, and context retrieval.
-            initial_data (dict[str, Any] | None): Initial data to populate
-                the context with. All keys are stored with CHAIN scope.
-            max_tokens (int): Maximum token budget for LLM context management.
-                Default: 100000. Used for tracking context size.
-            state_model (type[StateModel] | None): Optional Pydantic model
-                for type-safe state management. If provided, enables
-                ctx.state and ctx.edit_state() for typed access.
-
-        Example:
-            >>> ctx = ChainContext(
-            ...     request_id="req_abc123",
-            ...     initial_data={"company": "Apple", "year": 2024},
-            ...     max_tokens=50000,
-            ... )
-            >>>
-            >>> # With Pydantic state model
-            >>> from pydantic import BaseModel
-            >>> class MyState(BaseModel):
-            ...     counter: int = 0
-            >>> ctx = ChainContext(
-            ...     request_id="req_123",
-            ...     state_model=MyState,
-            ... )
+            host: Redis host (localhost, K8s service name, or cloud endpoint)
+            port: Redis port (default 6379)
+            db: Redis database number
+            password: Redis password (required for most cloud Redis)
+            key_prefix: Prefix for all context keys
+            max_connections: Maximum connection pool size
+            maxmemory: Memory limit for Redis (e.g., "128mb", "512mb", "1gb", "2gb").
+                      If provided, will configure Redis server on first connection.
+                      Note: May not work on managed Redis services.
+            maxmemory_policy: Eviction policy when maxmemory is reached.
+                             Options: "allkeys-lru" (default), "volatile-lru",
+                             "allkeys-random", "volatile-random", "volatile-ttl", "noeviction"
+            ssl: Enable SSL/TLS connection (required for ElastiCache, Azure, etc.)
+            ssl_cert_reqs: SSL certificate requirements ("none", "optional", "required")
         """
-        self.request_id = request_id
-        self.max_tokens = max_tokens
-        self._store: dict[str, ContextEntry] = {}
-        self._results: list[StepResult] = []
-        self._step_stores: dict[str, dict[str, ContextEntry]] = {}  # Per-step isolated storage
-        self._lock = asyncio.Lock()
-        self._sync_lock = __import__("threading").RLock()  # For sync access
-        self.created_at = datetime.utcnow()
-        self.metadata: dict[str, Any] = {}
-        
-        # Type-safe state management (optional)
-        self._state_store: "StateStore[StateModel] | None" = None
-        if state_model is not None:
+        self._host = host
+        self._port = port
+        self._db = db
+        self._password = password
+        self._key_prefix = key_prefix
+        self._max_connections = max_connections
+        self._maxmemory = maxmemory
+        self._maxmemory_policy = maxmemory_policy
+        self._ssl = ssl
+        self._ssl_cert_reqs = ssl_cert_reqs
+        self._redis = None
+        self._memory_configured = False
+
+    async def _get_redis(self):
+        """Lazy initialization of Redis connection."""
+        if self._redis is None:
             try:
-                from agentorchestrator.core.state import StateStore
-                self._state_store = StateStore(state_model)
+                import redis.asyncio as redis
             except ImportError:
-                logger.warning(
-                    "Pydantic state model requested but pydantic not installed. "
-                    "Install with: pip install pydantic"
+                raise ImportError(
+                    "redis package required for RedisContextStore. "
+                    "Install with: pip install redis"
                 )
 
-        # Initialize with any provided data
-        if initial_data:
-            for key, value in initial_data.items():
-                self.set(key, value, scope=ContextScope.CHAIN)
-
-    @property
-    def current_step(self) -> str | None:
-        """
-        Get current step name (async-task-safe via contextvars).
-
-        Returns:
-            str | None: Name of the currently executing step, or None
-                if not within a step scope.
-
-        Example:
-            >>> async with ctx.step_scope("my_step"):
-            ...     print(ctx.current_step)  # "my_step"
-            >>> print(ctx.current_step)  # None
-        """
-        return _current_step_var.get()
-
-    @property
-    def total_tokens(self) -> int:
-        """
-        Total tokens currently stored in context.
-
-        Includes tokens from all scopes (step, chain, global).
-        Use for LLM context budget management.
-
-        Returns:
-            int: Total estimated token count.
-
-        Example:
-            >>> if ctx.total_tokens > ctx.max_tokens * 0.8:
-            ...     logger.warning("Context approaching token limit")
-        """
-        with self._sync_lock:
-            total = sum(entry.token_count for entry in self._store.values())
-            # Include step-scoped tokens
-            for step_store in self._step_stores.values():
-                total += sum(entry.token_count for entry in step_store.values())
-            return total
-
-    @property
-    def results(self) -> list[StepResult]:
-        """
-        All step results in execution order.
-
-        Returns:
-            list[StepResult]: Copy of the results list (thread-safe).
-
-        Example:
-            >>> for result in ctx.results:
-            ...     print(f"{result.step_name}: {result.duration_ms}ms")
-        """
-        with self._sync_lock:
-            return self._results.copy()
-
-    @property
-    def last_result(self) -> StepResult | None:
-        """
-        Most recent step result.
-
-        Returns:
-            StepResult | None: The last added result, or None if empty.
-
-        Example:
-            >>> if ctx.last_result and ctx.last_result.success:
-            ...     process(ctx.last_result.output)
-        """
-        with self._sync_lock:
-            return self._results[-1] if self._results else None
-    
-    @property
-    def state(self) -> StateModel:
-        """
-        Get type-safe state (read-only).
-        
-        Only available if context was created with state_model parameter.
-        For modifications, use edit_state() context manager.
-        
-        Returns:
-            StateModel: Current state instance with type hints.
-        
-        Raises:
-            RuntimeError: If context was not created with a state_model.
-        
-        Example:
-            >>> from pydantic import BaseModel
-            >>> class MyState(BaseModel):
-            ...     counter: int = 0
-            >>> ctx = ChainContext("req_1", state_model=MyState)
-            >>> count = ctx.state.counter  # Type-safe access!
-        
-        See Also:
-            edit_state(): For atomic state modifications.
-        """
-        if self._state_store is None:
-            raise RuntimeError(
-                "Context was not created with a state_model. "
-                "Create context with state_model parameter to use typed state."
-            )
-        return self._state_store.state
-
-    def _is_async_context(self) -> bool:
-        """Check if we're running inside an async event loop."""
-        try:
-            asyncio.get_running_loop()
-            return True
-        except RuntimeError:
-            return False
-
-    def _warn_parallel_chain_scope_access(self, key: str, is_write: bool = True) -> None:
-        """
-        Warn when CHAIN-scoped data is accessed in parallel async context.
-
-        This method detects potential race conditions when parallel steps
-        modify shared CHAIN-scoped data without using async_set() or edit_state().
-        """
-        if not self._is_async_context():
-            return
-
-        # Check if key already exists (read-modify-write pattern risk)
-        if is_write and key in self._store:
-            current_step = self.current_step
-            existing_entry = self._store[key]
-            if existing_entry.source_step and existing_entry.source_step != current_step:
-                logger.warning(
-                    f"Potential race condition: Step '{current_step}' is modifying "
-                    f"CHAIN-scoped key '{key}' that was set by step '{existing_entry.source_step}'. "
-                    f"For parallel steps, use `await ctx.async_set()` or `async with ctx.edit_state()` "
-                    f"to ensure atomic updates. See docs/understanding/context.md for details."
-                )
-
-    def set(
-        self,
-        key: str,
-        value: Any,
-        scope: ContextScope = ContextScope.CHAIN,
-        token_count: int = 0,
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
-        """
-        Store a value in the context.
-
-        This method uses both sync and async locking to prevent race conditions
-        in parallel step execution.
-
-        Args:
-            key (str): Unique identifier for the value.
-            value (Any): The data to store (any JSON-serializable type).
-            scope (ContextScope): Lifetime scope of the data.
-                Default: ContextScope.CHAIN.
-            token_count (int): Estimated token count for LLM tracking.
-                Default: 0.
-            metadata (dict[str, Any] | None): Additional metadata about
-                this entry. Default: None.
-
-        Note:
-            STEP-scoped data is isolated per step - parallel steps cannot
-            see or interfere with each other's step-scoped data.
-
-            For CHAIN-scoped data modified by parallel async steps, consider
-            using `await ctx.async_set()` for explicit async-safe operations,
-            or use `async with ctx.edit_state()` for validated state updates.
-
-        Example:
-            >>> # Store chain-wide data
-            >>> ctx.set("company", "Apple Inc", scope=ContextScope.CHAIN)
-            >>>
-            >>> # Store with token tracking
-            >>> ctx.set(
-            ...     "document",
-            ...     long_text,
-            ...     token_count=1500,
-            ...     metadata={"source": "sec_filing"},
-            ... )
-            >>>
-            >>> # Step-scoped temporary data
-            >>> ctx.set("temp_calc", result, scope=ContextScope.STEP)
-        """
-        current_step = self.current_step
-
-        entry = ContextEntry(
-            key=key,
-            value=value,
-            scope=scope,
-            token_count=token_count,
-            source_step=current_step,
-            metadata=metadata or {},
-        )
-
-        # Warn about potential race conditions in parallel async steps
-        if scope == ContextScope.CHAIN:
-            self._warn_parallel_chain_scope_access(key, is_write=True)
-
-        # Use sync lock - this serializes access even from parallel async tasks
-        # since they share the same thread. The lock prevents interleaving
-        # of the read-check-write operations below.
-        with self._sync_lock:
-            if scope == ContextScope.STEP:
-                # Step-scoped data goes into per-step isolated storage
-                if current_step is None:
-                    logger.warning(
-                        f"Setting STEP-scoped key '{key}' outside of a step context. "
-                        "It will be stored in a temporary namespace."
-                    )
-                    step_key = "__no_step__"
-                else:
-                    step_key = current_step
-
-                if step_key not in self._step_stores:
-                    self._step_stores[step_key] = {}
-
-                step_store = self._step_stores[step_key]
-                if key in step_store:
-                    entry.created_at = step_store[key].created_at
-                step_store[key] = entry
-            elif scope == ContextScope.GLOBAL:
-                # GLOBAL scoped data goes to the singleton ContextManager's global store
-                # This allows it to persist across multiple chain executions
-                manager = ContextManager()
-                manager.set_global(key, entry)
-            else:
-                # CHAIN scoped data goes into per-context shared store
-                if key in self._store:
-                    entry.created_at = self._store[key].created_at
-                self._store[key] = entry
-
-        logger.debug(
-            f"Context set: {key} (scope={scope.value}, step={current_step}, tokens={token_count})"
-        )
-
-    async def async_set(
-        self,
-        key: str,
-        value: Any,
-        scope: ContextScope = ContextScope.CHAIN,
-        token_count: int = 0,
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
-        """
-        Store a value in the context with async-safe locking.
-
-        This method provides explicit async-safe atomic operations for
-        concurrent coroutines. Use this when:
-        - Multiple parallel steps may write to the same CHAIN-scoped key
-        - You need guaranteed atomicity in async code
-        - You're modifying shared state from parallel workers
-
-        Args:
-            key (str): Unique identifier for the value.
-            value (Any): The data to store (any JSON-serializable type).
-            scope (ContextScope): Lifetime scope of the data.
-                Default: ContextScope.CHAIN.
-            token_count (int): Estimated token count for LLM tracking.
-                Default: 0.
-            metadata (dict[str, Any] | None): Additional metadata about
-                this entry. Default: None.
-
-        Thread-Safety Note:
-            The standard set() method uses a sync lock (threading.RLock) which
-            is safe for most use cases. However, for CHAIN-scoped data modified
-            by truly parallel async steps, this async_set() method provides
-            stronger guarantees using asyncio.Lock.
-
-        Best Practices for Parallel Steps:
-            1. Use STEP-scoped data for step-local temporary data (isolated per step)
-            2. Use StateStore (ctx.edit_state()) for shared state with validation
-            3. Use async_set() for explicit atomic CHAIN-scoped updates
-            4. Avoid read-modify-write patterns on shared keys in parallel steps
-
-        Example:
-            >>> # In parallel steps that might race
-            >>> await ctx.async_set("shared_counter", new_value)
-            >>>
-            >>> # For shared state, prefer StateStore
-            >>> async with ctx.edit_state() as state:
-            ...     state.counter += 1  # Atomic and validated
-        """
-        current_step = self.current_step
-
-        entry = ContextEntry(
-            key=key,
-            value=value,
-            scope=scope,
-            token_count=token_count,
-            source_step=current_step,
-            metadata=metadata or {},
-        )
-
-        # Acquire both locks to ensure coordination with sync set() calls
-        async with self._lock:
-            with self._sync_lock:
-                if scope == ContextScope.STEP:
-                    # Step-scoped data goes into per-step isolated storage
-                    if current_step is None:
-                        logger.warning(
-                            f"Setting STEP-scoped key '{key}' outside of a step context. "
-                            "It will be stored in a temporary namespace."
-                        )
-                        step_key = "__no_step__"
-                    else:
-                        step_key = current_step
-
-                    if step_key not in self._step_stores:
-                        self._step_stores[step_key] = {}
-
-                    step_store = self._step_stores[step_key]
-                    if key in step_store:
-                        entry.created_at = step_store[key].created_at
-                    step_store[key] = entry
-                elif scope == ContextScope.GLOBAL:
-                    # GLOBAL scoped data goes to the singleton ContextManager's global store
-                    manager = ContextManager()
-                    manager.set_global(key, entry)
-                else:
-                    # CHAIN scoped data goes into per-context shared store
-                    if key in self._store:
-                        entry.created_at = self._store[key].created_at
-                    self._store[key] = entry
-
-        logger.debug(
-            f"Context async_set: {key} (scope={scope.value}, step={current_step}, tokens={token_count})"
-        )
-
-    def get(self, key: str, default: Any = None) -> Any:
-        """
-        Retrieve a value from the context.
-
-        Checks step-scoped storage first (current step only),
-        then chain-scoped storage, then global storage.
-
-        Args:
-            key (str): The key to look up.
-            default (Any): Value to return if key not found. Default: None.
-
-        Returns:
-            Any: The stored value or default.
-
-        Example:
-            >>> company = ctx.get("company")
-            >>> timeout = ctx.get("timeout", default=30)
-        """
-        with self._sync_lock:
-            # First check step-scoped storage for current step
-            current_step = self.current_step
-            if current_step and current_step in self._step_stores:
-                step_store = self._step_stores[current_step]
-                if key in step_store:
-                    return step_store[key].value
-
-            # Then check chain-scoped store
-            entry = self._store.get(key)
-            if entry is not None:
-                return entry.value
-
-            # Finally check global store (ContextManager singleton)
-            manager = ContextManager()
-            global_entry = manager.get_global(key)
-            if global_entry is not None:
-                # Global store contains ContextEntry objects
-                if isinstance(global_entry, ContextEntry):
-                    return global_entry.value
-                return global_entry
-            return default
-
-    def get_entry(self, key: str) -> ContextEntry | None:
-        """
-        Get the full context entry including metadata.
-
-        Unlike get(), this returns the ContextEntry wrapper with
-        all metadata (scope, timestamps, token count, etc.).
-
-        Args:
-            key (str): The key to look up.
-
-        Returns:
-            ContextEntry | None: The entry or None if not found.
-
-        Example:
-            >>> entry = ctx.get_entry("company")
-            >>> if entry:
-            ...     print(f"Created by: {entry.source_step}")
-            ...     print(f"Tokens: {entry.token_count}")
-        """
-        with self._sync_lock:
-            # First check step-scoped storage
-            current_step = self.current_step
-            if current_step and current_step in self._step_stores:
-                step_store = self._step_stores[current_step]
-                if key in step_store:
-                    return step_store[key]
-
-            # Then check chain-scoped store
-            entry = self._store.get(key)
-            if entry is not None:
-                return entry
-
-            # Finally check global store
-            manager = ContextManager()
-            global_entry = manager.get_global(key)
-            if isinstance(global_entry, ContextEntry):
-                return global_entry
-            return None
-
-    def has(self, key: str) -> bool:
-        """
-        Check if a key exists in context.
-
-        Checks step-scoped, chain-scoped, and global storage.
-
-        Args:
-            key (str): The key to check.
-
-        Returns:
-            bool: True if the key exists.
-
-        Example:
-            >>> if ctx.has("company"):
-            ...     process_company(ctx.get("company"))
-        """
-        with self._sync_lock:
-            # Check step-scoped storage first
-            current_step = self.current_step
-            if current_step and current_step in self._step_stores:
-                if key in self._step_stores[current_step]:
-                    return True
-            # Check chain-scoped store
-            if key in self._store:
-                return True
-            # Check global store
-            manager = ContextManager()
-            return manager.get_global(key) is not None
-
-    def delete(self, key: str) -> bool:
-        """
-        Remove a key from context.
-
-        Checks step-scoped storage first, then chain-scoped, then global storage.
-
-        Args:
-            key (str): The key to delete.
-
-        Returns:
-            bool: True if key was found and deleted.
-
-        Example:
-            >>> if ctx.delete("temp_data"):
-            ...     print("Temporary data cleaned up")
-        """
-        with self._sync_lock:
-            # Check step-scoped storage first
-            current_step = self.current_step
-            if current_step and current_step in self._step_stores:
-                step_store = self._step_stores[current_step]
-                if key in step_store:
-                    del step_store[key]
-                    return True
-
-            # Check chain-scoped store
-            if key in self._store:
-                del self._store[key]
-                return True
-
-            # Check global store
-            manager = ContextManager()
-            if manager.get_global(key) is not None:
-                manager.delete_global(key)
-                return True
-            return False
-
-    def keys(self, scope: ContextScope | None = None) -> list[str]:
-        """
-        Get all keys, optionally filtered by scope.
-
-        Args:
-            scope (ContextScope | None): Filter by scope. If None, returns
-                all keys from all scopes (step + chain + global).
-
-        Returns:
-            list[str]: List of keys matching the filter.
-
-        Example:
-            >>> # Get all keys
-            >>> all_keys = ctx.keys()
-            >>>
-            >>> # Get only step-scoped keys
-            >>> step_keys = ctx.keys(scope=ContextScope.STEP)
-            >>>
-            >>> # Get only chain-scoped keys
-            >>> chain_keys = ctx.keys(scope=ContextScope.CHAIN)
-            >>>
-            >>> # Get only global keys
-            >>> global_keys = ctx.keys(scope=ContextScope.GLOBAL)
-        """
-        with self._sync_lock:
-            if scope == ContextScope.STEP:
-                # Only return keys from current step's storage
-                current_step = self.current_step
-                if current_step and current_step in self._step_stores:
-                    return list(self._step_stores[current_step].keys())
-                return []
-            elif scope == ContextScope.GLOBAL:
-                # Return keys from the global store
-                manager = ContextManager()
-                return manager.global_keys()
-            elif scope == ContextScope.CHAIN:
-                # Only from chain-scoped store (filter out any misplaced entries)
-                return [k for k, v in self._store.items() if v.scope == ContextScope.CHAIN]
-            else:
-                # None - Return all keys (step + chain + global)
-                all_keys = list(self._store.keys())
-                current_step = self.current_step
-                if current_step and current_step in self._step_stores:
-                    all_keys.extend(self._step_stores[current_step].keys())
-                # Include global keys
-                manager = ContextManager()
-                all_keys.extend(manager.global_keys())
-                return all_keys
-
-    def keys_for_step(self, step_name: str) -> list[str]:
-        """
-        Get all CHAIN/GLOBAL keys produced by a specific step.
-
-        Uses the source_step metadata recorded on ContextEntry.
-        This is useful for middleware that needs to update or replace
-        a step's outputs (e.g., summarization, offloading).
-        """
-        with self._sync_lock:
-            return [
-                key for key, entry in self._store.items()
-                if entry.source_step == step_name
-            ]
-
-    def update_step_outputs(
-        self,
-        step_name: str,
-        value: Any,
-        keys: list[str] | None = None,
-    ) -> list[str]:
-        """
-        Replace stored outputs for a step with a new value.
-
-        Args:
-            step_name: Name of the step.
-            value: Replacement value to store.
-            keys: Optional explicit list of keys to update. If None, uses
-                keys_for_step(step_name).
-
-        Returns:
-            list[str]: Keys that were updated.
-        """
-        keys = keys or self.keys_for_step(step_name)
-        updated: list[str] = []
-        for key in keys:
-            entry = self.get_entry(key)
-            if entry is None:
-                continue
-            self.set(key, value, scope=entry.scope)
-            updated.append(key)
-        return updated
-
-    def add_result(self, result: StepResult) -> None:
-        """
-        Add a step execution result (thread-safe).
-
-        Args:
-            result (StepResult): The step result to add.
-
-        Example:
-            >>> ctx.add_result(StepResult(
-            ...     step_name="fetch_data",
-            ...     output={"revenue": 394.3},
-            ...     duration_ms=500,
-            ...     token_count=100,
-            ... ))
-        """
-        with self._sync_lock:
-            self._results.append(result)
-        logger.debug(f"Result added: {result.step_name} (success={result.success})")
-
-    def get_result(self, step_name: str) -> StepResult | None:
-        """
-        Get result for a specific step (thread-safe).
-
-        Returns the most recent result if step was executed multiple times.
-
-        Args:
-            step_name (str): Name of the step.
-
-        Returns:
-            StepResult | None: The result or None if step not found.
-
-        Example:
-            >>> result = ctx.get_result("fetch_data")
-            >>> if result and result.success:
-            ...     print(f"Fetch completed in {result.duration_ms}ms")
-        """
-        with self._sync_lock:
-            for result in reversed(self._results):
-                if result.step_name == step_name:
-                    return result
-            return None
-
-    def enter_step(self, step_name: str) -> contextvars.Token:
-        """
-        Called when entering a new step.
-
-        Uses contextvars for async-task-safe step tracking, so parallel
-        steps each have their own current_step value.
-
-        Args:
-            step_name (str): Name of the step being entered.
-
-        Returns:
-            contextvars.Token: Token that must be passed to exit_step()
-                to properly reset the contextvar.
-
-        Note:
-            Prefer using step_scope() context manager instead of
-            manually calling enter_step/exit_step.
-
-        Example:
-            >>> token = ctx.enter_step("my_step")
-            >>> try:
-            ...     # Step execution
-            ...     pass
-            ... finally:
-            ...     ctx.exit_step(token)
-        """
-        token = _current_step_var.set(step_name)
-        logger.debug(f"Entering step: {step_name}")
-        return token
-
-    def exit_step(self, token: contextvars.Token | None = None) -> None:
-        """
-        Called when exiting a step - cleans up step-scoped data.
-
-        Cleans up only THIS step's storage, not other parallel steps.
-
-        Args:
-            token (contextvars.Token | None): The token returned by
-                enter_step(). If provided, uses it to properly reset
-                the contextvar. If not provided, resets to None.
-
-        Note:
-            Prefer using step_scope() context manager instead of
-            manually calling enter_step/exit_step.
-
-        Example:
-            >>> token = ctx.enter_step("my_step")
-            >>> try:
-            ...     ctx.set("temp", value, scope=ContextScope.STEP)
-            ... finally:
-            ...     ctx.exit_step(token)  # temp is cleaned up
-        """
-        step_name = self.current_step
-
-        # Clean up only this step's storage
-        with self._sync_lock:
-            if step_name and step_name in self._step_stores:
-                cleaned_count = len(self._step_stores[step_name])
-                del self._step_stores[step_name]
-            else:
-                cleaned_count = 0
-
-            # Also clean up __no_step__ orphan entries to prevent memory leaks
-            if "__no_step__" in self._step_stores:
-                orphan_count = len(self._step_stores["__no_step__"])
-                if orphan_count > 0:
-                    logger.debug(f"Cleaning up {orphan_count} orphan __no_step__ entries")
-                    del self._step_stores["__no_step__"]
-                    cleaned_count += orphan_count
-
-        # Reset the contextvar
-        if token is not None:
-            _current_step_var.reset(token)
-        else:
-            _current_step_var.set(None)
-
-        logger.debug(f"Exiting step: {step_name}, cleaned {cleaned_count} step-scoped entries")
-
-    @asynccontextmanager
-    async def step_scope(self, step_name: str) -> AsyncIterator["ChainContext"]:
-        """
-        Async context manager for step execution with automatic cleanup.
-
-        Ensures step-scoped data is always cleaned up, even if the step
-        raises an exception. This prevents data leaks between steps.
-
-        Args:
-            step_name (str): Name of the step being executed.
-
-        Yields:
-            ChainContext: The context (self) for chaining.
-
-        Example:
-            >>> async with ctx.step_scope("process_data"):
-            ...     # Set step-scoped data
-            ...     ctx.set("temp", intermediate_result, scope=ContextScope.STEP)
-            ...
-            ...     # Do processing
-            ...     result = await process(ctx.get("temp"))
-            ...
-            ...     # Store chain-scoped result
-            ...     ctx.set("result", result, scope=ContextScope.CHAIN)
-            ...
-            ... # temp is automatically cleaned up here, result persists
-
-        See Also:
-            step_scope_sync(): Synchronous version.
-            enter_step(), exit_step(): Low-level step management.
-        """
-        token = self.enter_step(step_name)
-        try:
-            yield self
-        finally:
-            self.exit_step(token)
-
-    @contextmanager
-    def step_scope_sync(self, step_name: str) -> Iterator["ChainContext"]:
-        """
-        Sync context manager for step execution with automatic cleanup.
-
-        Synchronous version of step_scope() for non-async code.
-
-        Args:
-            step_name (str): Name of the step being executed.
-
-        Yields:
-            ChainContext: The context (self) for chaining.
-
-        Example:
-            >>> with ctx.step_scope_sync("process_data"):
-            ...     ctx.set("temp", value, scope=ContextScope.STEP)
-            ...     # ... step logic ...
-            ... # Automatic cleanup on exit
-
-        See Also:
-            step_scope(): Async version.
-        """
-        token = self.enter_step(step_name)
-        try:
-            yield self
-        finally:
-            self.exit_step(token)
-    
-    @asynccontextmanager
-    async def edit_state(self) -> AsyncIterator[StateModel]:
-        """
-        Async context manager for atomic state updates.
-        
-        Provides type-safe, atomic modifications to the Pydantic state model.
-        Changes are validated and committed atomically on exit.
-        
-        Only available if context was created with state_model parameter.
-        
-        Yields:
-            StateModel: Mutable state for modification with type hints.
-        
-        Raises:
-            RuntimeError: If context was not created with a state_model.
-            ValidationError: If modified state fails Pydantic validation.
-        
-        Example:
-            >>> from pydantic import BaseModel, Field
-            >>> class PipelineState(BaseModel):
-            ...     counter: int = 0
-            ...     items: list[str] = Field(default_factory=list)
-            >>>
-            >>> ctx = ChainContext("req_1", state_model=PipelineState)
-            >>>
-            >>> async with ctx.edit_state() as state:
-            ...     state.counter += 1  # Type-checked!
-            ...     state.items.append("new_item")  # IDE autocomplete!
-            ...     # Validated and committed atomically on exit
-        
-        Thread-safety:
-            Uses asyncio.Lock to ensure only one edit at a time.
-            Multiple concurrent edits will be serialized.
-        
-        See Also:
-            state: Read-only state access.
-            StateStore: Underlying state management.
-        """
-        if self._state_store is None:
-            raise RuntimeError(
-                "Context was not created with a state_model. "
-                "Create context with state_model parameter to use typed state."
-            )
-        
-        async with self._state_store.edit() as state:
-            yield state
-
-    def to_dict(
-        self,
-        serializer: "ContextSerializer | None" = None,
-        include_data: bool = True,
-        include_state: bool = True,
-    ) -> dict[str, Any]:
-        """
-        Export context as dictionary (for serialization).
-
-        Args:
-            serializer (ContextSerializer | None): Optional serializer for
-                redacting/truncating large fields. If None, uses default
-                serialization (may be large!).
-            include_data (bool): Whether to include context data.
-                Set False for lightweight summary. Default: True.
-            include_state (bool): Whether to include typed state (if present).
-                Set False to exclude Pydantic state from export. Default: True.
-
-        Returns:
-            dict[str, Any]: JSON-serializable dictionary.
-
-        Example:
-            >>> # Full export (may be large)
-            >>> full_dict = ctx.to_dict()
-            >>>
-            >>> # With truncation for logging
-            >>> from agentorchestrator.core.serializers import TruncatingSerializer
-            >>> safe_dict = ctx.to_dict(serializer=TruncatingSerializer(max_size=1000))
-            >>>
-            >>> # Lightweight summary only
-            >>> summary = ctx.to_dict(include_data=False)
-            >>>
-            >>> # Include typed state for checkpointing
-            >>> checkpoint = ctx.to_dict(include_state=True)
-            >>> # checkpoint["typed_state"] = {"model": "MyState", "data": {...}}
-        """
-        with self._sync_lock:
-            result = {
-                "request_id": self.request_id,
-                "created_at": self.created_at.isoformat(),
-                "total_tokens": self.total_tokens,
-                "results": [
-                    {
-                        "step": r.step_name,
-                        "success": r.success,
-                        "duration_ms": r.duration_ms,
-                    }
-                    for r in self._results
-                ],
+            # Build connection kwargs
+            conn_kwargs = {
+                "host": self._host,
+                "port": self._port,
+                "db": self._db,
+                "password": self._password,
+                "max_connections": self._max_connections,
+                "decode_responses": False,  # We handle bytes
             }
 
-            if include_data:
-                if serializer:
-                    result["data"] = serializer.serialize_context_data(
-                        {k: v.value for k, v in self._store.items()}
+            # Add SSL config if enabled
+            if self._ssl:
+                import ssl as ssl_module
+                conn_kwargs["ssl"] = True
+                if self._ssl_cert_reqs:
+                    cert_reqs_map = {
+                        "none": ssl_module.CERT_NONE,
+                        "optional": ssl_module.CERT_OPTIONAL,
+                        "required": ssl_module.CERT_REQUIRED,
+                    }
+                    conn_kwargs["ssl_cert_reqs"] = cert_reqs_map.get(
+                        self._ssl_cert_reqs.lower(), ssl_module.CERT_REQUIRED
                     )
-                else:
-                    result["data"] = {k: v.value for k, v in self._store.items()}
 
-            # Include typed state if present and requested
-            if include_state and self._state_store is not None:
-                result["typed_state"] = {
-                    "model": self._state_store.model_class.__name__,
-                    "module": self._state_store.model_class.__module__,
-                    "data": self._state_store.to_dict(),
-                }
+            self._redis = redis.Redis(**conn_kwargs)
 
-            return result
+            # Configure memory limits if specified (may not work on managed services)
+            if self._maxmemory and not self._memory_configured:
+                await self._configure_memory()
 
-    def clone(self) -> "ChainContext":
-        """
-        Create a deep copy of the context (thread-safe).
+        return self._redis
 
-        Useful for creating isolated context copies for parallel
-        execution or testing.
+    async def _configure_memory(self) -> None:
+        """Configure Redis memory settings."""
+        if not self._redis or self._memory_configured:
+            return
 
-        Returns:
-            ChainContext: A new context with deep-copied data.
+        try:
+            # Set maxmemory
+            await self._redis.config_set("maxmemory", self._maxmemory)
+            await self._redis.config_set("maxmemory-policy", self._maxmemory_policy)
+            self._memory_configured = True
 
-        Example:
-            >>> ctx_copy = ctx.clone()
-            >>> ctx_copy.set("new_key", "value")  # Doesn't affect original
-        """
-        with self._sync_lock:
-            new_ctx = ChainContext(
-                request_id=self.request_id,
-                max_tokens=self.max_tokens,
+            logger.info(
+                f"Redis memory configured: maxmemory={self._maxmemory}, "
+                f"policy={self._maxmemory_policy}"
             )
-            new_ctx._store = copy.deepcopy(self._store)
-            new_ctx._step_stores = copy.deepcopy(self._step_stores)
-            new_ctx._results = copy.deepcopy(self._results)
-            new_ctx.metadata = copy.deepcopy(self.metadata)
-            if self._state_store is not None:
-                new_ctx._state_store = self._state_store.clone()
-            return new_ctx
+        except Exception as e:
+            logger.warning(
+                f"Could not configure Redis memory settings: {e}. "
+                f"This may require Redis admin privileges. "
+                f"Configure Redis directly with: redis-cli CONFIG SET maxmemory {self._maxmemory}"
+            )
 
-    def load_state_from_dict(
+    def _redis_key(self, ref_id: str) -> str:
+        """Get Redis key for ref ID."""
+        return f"{self._key_prefix}{ref_id}"
+
+    async def store(
         self,
-        typed_state_dict: dict[str, Any],
-        state_model: type | None = None,
-    ) -> None:
-        """
-        Restore typed state from dictionary (for checkpoint restoration).
+        key: str,
+        data: Any,
+        ttl_seconds: int = 3600,
+        summary: str = "",
+        key_fields: dict[str, Any] | None = None,
+        source_step: str | None = None,
+        source_agent: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ContextRef:
+        redis = await self._get_redis()
 
-        This method loads typed state that was exported via to_dict() with
-        include_state=True. It reconstructs the StateStore and loads the data.
+        serialized = self._serialize(data)
+        ref_id = self._generate_id(key)
+        content_hash = self._compute_hash(serialized)
 
-        Args:
-            typed_state_dict: Dictionary with keys "model", "module", "data"
-                as produced by to_dict(include_state=True).
-            state_model: Optional Pydantic model class. If None, attempts
-                to import the model using "module" and "model" from the dict.
+        # Determine content type
+        content_type = "application/json"
+        try:
+            json.dumps(data, default=str)
+        except (TypeError, ValueError):
+            content_type = "application/pickle"
 
-        Raises:
-            RuntimeError: If state model cannot be resolved.
-            ValidationError: If data doesn't match the model schema.
+        # Store in Redis with TTL
+        redis_key = self._redis_key(ref_id)
+        await redis.setex(redis_key, ttl_seconds, serialized)
 
-        Example:
-            >>> # Save checkpoint
-            >>> checkpoint = ctx.to_dict(include_state=True)
-            >>>
-            >>> # Later, restore
-            >>> new_ctx = ChainContext(request_id=checkpoint["request_id"])
-            >>> if "typed_state" in checkpoint:
-            ...     new_ctx.load_state_from_dict(
-            ...         checkpoint["typed_state"],
-            ...         state_model=MyState,  # Pass model class
-            ...     )
-        """
-        if state_model is None:
-            # Try to import the model dynamically
-            model_name = typed_state_dict.get("model", "")
-            module_name = typed_state_dict.get("module", "")
-            if not model_name or not module_name:
-                raise RuntimeError(
-                    "Cannot restore typed state: missing 'model' or 'module' in dict. "
-                    "Pass state_model explicitly."
-                )
-            try:
-                import importlib
-                module = importlib.import_module(module_name)
-                state_model = getattr(module, model_name)
-            except (ImportError, AttributeError) as e:
-                raise RuntimeError(
-                    f"Cannot import state model {module_name}.{model_name}: {e}. "
-                    "Pass state_model explicitly."
-                ) from e
+        # Store metadata separately (for inspection without loading data)
+        meta_key = f"{redis_key}:meta"
+        meta = {
+            "content_type": content_type,
+            "size_bytes": len(serialized),
+            "content_hash": content_hash,
+            "created_at": datetime.utcnow().isoformat(),
+            "summary": summary,
+            "key_fields": key_fields or {},
+        }
+        await redis.setex(meta_key, ttl_seconds, json.dumps(meta).encode())
 
-        # Create state store with the model
-        from agentorchestrator.core.state import StateStore
-        self._state_store = StateStore(state_model)
-
-        # Load the data
-        state_data = typed_state_dict.get("data", {})
-        if state_data:
-            self._state_store.from_dict(state_data)
-
-    # =========================================================================
-    # Citation Support
-    # =========================================================================
-
-    def add_citation(
-        self,
-        content: str,
-        source_name: str,
-        source_type: str = "agent",
-        reasoning: str | None = None,
-        document_id: str | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """
-        Add a citation to the context's citation collection.
-
-        Citations track data provenance and enable source verification.
-        Use this to document where data came from and why it's relevant.
-
-        Args:
-            content (str): Verbatim quote from source.
-            source_name (str): Name of the source (agent, document, etc.).
-            source_type (str): Type of source. Default: "agent".
-                Options: "agent", "document", "api", "llm".
-            reasoning (str | None): Why this source supports the claim.
-            document_id (str | None): Document identifier if applicable.
-            **kwargs: Additional citation fields (page_number, etc.).
-
-        Example:
-            >>> ctx.add_citation(
-            ...     content="Total net sales were $394,328 million",
-            ...     source_name="sec_filing_agent",
-            ...     source_type="document",
-            ...     reasoning="Direct revenue figure from 10-K filing",
-            ...     document_id="AAPL-10K-2024",
-            ...     page_number=45,
-            ... )
-
-        See Also:
-            get_citations(): Retrieve stored citations.
-            verify_citations(): Verify citations against sources.
-        """
-        from agentorchestrator.models.citation import Citation, CitationCollection
-
-        # Get or create citation collection
-        collection = self.get("_citation_collection")
-        if not isinstance(collection, CitationCollection):
-            collection = CitationCollection()
-            self.set("_citation_collection", collection, scope=ContextScope.CHAIN)
-
-        citation = Citation(
-            source_type=source_type,
-            source_name=source_name,
-            content=content,
-            reasoning=reasoning,
-            document_id=document_id,
-            **kwargs,
+        ref = ContextRef(
+            ref_id=ref_id,
+            size_bytes=len(serialized),
+            content_hash=content_hash,
+            content_type=content_type,
+            ttl_seconds=ttl_seconds,
+            summary=summary,
+            key_fields=key_fields or {},
+            item_count=self._count_items(data),
+            source_step=source_step,
+            source_agent=source_agent,
+            metadata=metadata or {},
         )
-        collection.add(citation)
 
-    def add_source_content(self, source_name: str, content: str) -> None:
-        """
-        Add raw source content for citation verification.
+        logger.debug(f"Stored in Redis: {ref}")
+        return ref
 
-        Store the raw content from sources so citations can be
-        verified against the original text.
+    async def retrieve(self, ref: ContextRef) -> Any:
+        redis = await self._get_redis()
+        redis_key = self._redis_key(ref.ref_id)
 
-        Args:
-            source_name (str): Name of the source (should match
-                citation.source_name for verification).
-            content (str): Raw content from the source.
+        serialized = await redis.get(redis_key)
+        if serialized is None:
+            raise ContextRefNotFoundError(ref.ref_id)
 
-        Example:
-            >>> ctx.add_source_content(
-            ...     "sec_filing",
-            ...     raw_10k_text,
-            ... )
-            >>> # Later citations can be verified against this
-        """
-        from agentorchestrator.models.citation import CitationCollection
+        return self._deserialize(serialized, ref.content_type)
 
-        collection = self.get("_citation_collection")
-        if not isinstance(collection, CitationCollection):
-            collection = CitationCollection()
-            self.set("_citation_collection", collection, scope=ContextScope.CHAIN)
+    async def delete(self, ref: ContextRef) -> bool:
+        redis = await self._get_redis()
+        redis_key = self._redis_key(ref.ref_id)
+        meta_key = f"{redis_key}:meta"
 
-        collection.add_source_chunk(source_name, content)
+        deleted = await redis.delete(redis_key, meta_key)
+        return deleted > 0
 
-    def get_citations(self, source_name: str | None = None) -> list[Any]:
-        """
-        Get citations from the context.
+    async def exists(self, ref: ContextRef) -> bool:
+        redis = await self._get_redis()
+        redis_key = self._redis_key(ref.ref_id)
+        return await redis.exists(redis_key) > 0
 
-        Args:
-            source_name (str | None): Filter by source name.
-                If None, returns all citations.
+    async def get_stats(self) -> dict[str, Any]:
+        """Get context store statistics including memory usage."""
+        redis = await self._get_redis()
 
-        Returns:
-            list[Citation]: List of Citation objects.
+        # Count refs
+        pattern = f"{self._key_prefix}*"
+        keys = []
+        async for key in redis.scan_iter(match=pattern):
+            if not key.decode().endswith(":meta"):
+                keys.append(key)
 
-        Example:
-            >>> # Get all citations
-            >>> all_citations = ctx.get_citations()
-            >>>
-            >>> # Get citations from specific source
-            >>> sec_citations = ctx.get_citations(source_name="sec_filing")
-        """
-        from agentorchestrator.models.citation import CitationCollection
+        # Calculate total size
+        total_size = 0
+        for key in keys[:100]:  # Limit for performance
+            size = await redis.strlen(key)
+            total_size += size
 
-        collection = self.get("_citation_collection")
-        if not isinstance(collection, CitationCollection):
-            return []
+        # Get memory info
+        memory_info = {}
+        try:
+            info = await redis.info("memory")
+            memory_info = {
+                "used_memory": info.get("used_memory"),
+                "used_memory_human": info.get("used_memory_human"),
+                "used_memory_peak": info.get("used_memory_peak"),
+                "used_memory_peak_human": info.get("used_memory_peak_human"),
+                "maxmemory": info.get("maxmemory"),
+                "maxmemory_human": info.get("maxmemory_human"),
+                "maxmemory_policy": info.get("maxmemory_policy"),
+            }
+        except Exception as e:
+            logger.debug(f"Could not get Redis memory info: {e}")
 
-        if source_name:
-            return collection.get_by_source(source_name)
-        return collection.citations
+        return {
+            "backend": "redis",
+            "host": self._host,
+            "port": self._port,
+            "ref_count": len(keys),
+            "sample_size_bytes": total_size,
+            "memory": memory_info,
+            "configured_maxmemory": self._maxmemory,
+            "configured_policy": self._maxmemory_policy,
+        }
 
-    def verify_citations(self) -> dict[str, bool]:
-        """
-        Verify all citations against stored source content.
-
-        Checks if each citation's content exists in the corresponding
-        source's raw content.
-
-        Returns:
-            dict[str, bool]: Mapping of citation index to verification result.
-
-        Example:
-            >>> results = ctx.verify_citations()
-            >>> for idx, verified in results.items():
-            ...     status = "verified" if verified else "NOT FOUND"
-            ...     print(f"Citation {idx}: {status}")
-        """
-        from agentorchestrator.models.citation import CitationCollection
-
-        collection = self.get("_citation_collection")
-        if not isinstance(collection, CitationCollection):
-            return {}
-
-        return collection.verify_all()
-
-    def get_citation_summary(self) -> dict[str, Any]:
-        """
-        Get a summary of citation coverage and verification.
-
-        Returns:
-            dict[str, Any]: Statistics including total citations,
-                verified count, and per-source breakdown.
-
-        Example:
-            >>> summary = ctx.get_citation_summary()
-            >>> print(f"Total: {summary['total']}, Verified: {summary['verified']}")
-        """
-        from agentorchestrator.models.citation import CitationCollection
-
-        collection = self.get("_citation_collection")
-        if not isinstance(collection, CitationCollection):
-            return {"total": 0, "verified": 0, "by_source": {}}
-
-        return collection.get_verification_summary()
-
-    def __repr__(self) -> str:
-        """Return string representation of the context."""
-        state_info = f", state={type(self._state_store.state).__name__}" if self._state_store else ""
-        return f"ChainContext(request_id={self.request_id}, keys={len(self._store)}, results={len(self._results)}{state_info})"
+    async def close(self):
+        """Close Redis connection."""
+        if self._redis:
+            await self._redis.close()
 
 
-# Type alias for better ergonomics
-Context = ChainContext
+# ═══════════════════════════════════════════════════════════════════════════════
+#                      MEM0 CONTEXT STORE (SEMANTIC MEMORY)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
-class ContextManager:
+class Mem0ContextStore(ContextStore):
     """
-    Global context manager for managing multiple chain contexts.
+    Mem0-based context store for semantic/long-term memory.
 
-    Singleton pattern for tracking concurrent chain executions.
-    Each chain execution gets its own ChainContext identified by request_id.
+    Unlike Redis (key-value cache), mem0 provides:
+    - Semantic search across stored memories
+    - Automatic summarization and deduplication
+    - User/session scoped memory
+    - Cross-session persistence
 
-    Attributes:
-        _contexts (dict[str, ChainContext]): Active contexts by request ID.
-        _global_store (dict[str, Any]): Global values available to all contexts.
+    Use cases:
+    - Remember user preferences across sessions
+    - Store conversation history with semantic retrieval
+    - Build up knowledge about entities over time
 
-    Methods:
-        create_context(): Create and register a new chain context.
-        get_context(): Get an existing context by request ID.
-        remove_context(): Remove a context after chain completion.
-        set_global(): Set a global value available to all contexts.
-        get_global(): Get a global value.
+    Usage:
+        # Cloud mem0
+        store = Mem0ContextStore(api_key="m0-xxx")
 
-    Example:
-        >>> manager = ContextManager()  # Singleton
-        >>>
-        >>> # Create context for a chain execution
-        >>> ctx = manager.create_context("req_123", {"company": "Apple"})
-        >>>
-        >>> # Retrieve later
-        >>> ctx = manager.get_context("req_123")
-        >>>
-        >>> # Cleanup after execution
-        >>> manager.remove_context("req_123")
-        >>>
-        >>> # Set/get global values
-        >>> manager.set_global("config", config_dict)
-        >>> config = manager.get_global("config")
+        # Self-hosted mem0
+        store = Mem0ContextStore(host="http://mem0.internal:8080")
 
-    Note:
-        ContextManager is a singleton - all instances share state.
-        Use this for managing contexts across concurrent chain executions.
+        # Store with semantic indexing
+        ref = await store.store(
+            "user_preference",
+            {"format": "json", "detail_level": "high"},
+            summary="User prefers JSON output with high detail",
+        )
+
+        # Search semantically
+        results = await store.search("what format does user prefer")
     """
 
-    _instance: Optional["ContextManager"] = None
-
-    def __new__(cls) -> "ContextManager":
-        """Create or return the singleton instance."""
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._contexts: dict[str, ChainContext] = {}
-            cls._instance._global_store: dict[str, Any] = {}
-        return cls._instance
-
-    def create_context(
+    def __init__(
         self,
-        request_id: str,
-        initial_data: dict[str, Any] | None = None,
-    ) -> ChainContext:
+        api_key: str | None = None,
+        host: str | None = None,
+        user_id: str | None = None,
+        org_id: str | None = None,
+        agent_id: str | None = None,
+        redis_service: Any = None,
+    ):
         """
-        Create and register a new chain context.
+        Initialize mem0 context store.
 
         Args:
-            request_id (str): Unique identifier for the chain execution.
-            initial_data (dict[str, Any] | None): Initial data for context.
-
-        Returns:
-            ChainContext: The newly created context.
-
-        Example:
-            >>> ctx = manager.create_context("req_123", {"query": "Apple"})
+            api_key: mem0 cloud API key (for managed service)
+            host: Self-hosted mem0 endpoint URL
+            user_id: User ID for scoped memory (recommended)
+            org_id: Organization ID for shared memory
+            agent_id: Agent ID for agent-specific memory
+            redis_service: Optional RedisService for distributed ref cache
         """
-        ctx = ChainContext(request_id=request_id, initial_data=initial_data)
-        self._contexts[request_id] = ctx
-        return ctx
+        self._api_key = api_key
+        self._host = host
+        self._user_id = user_id
+        self._org_id = org_id
+        self._agent_id = agent_id
+        self._client = None
+        self._redis = redis_service
+        self._ref_cache: dict[str, dict] = {}  # Fallback local cache
 
-    def get_context(self, request_id: str) -> ChainContext | None:
-        """
-        Get an existing context by request ID.
+    async def _get_client(self):
+        """Lazy initialization of mem0 client."""
+        if self._client is None:
+            try:
+                from mem0 import MemoryClient, Memory
+            except ImportError:
+                raise ImportError(
+                    "mem0ai package required for Mem0ContextStore. "
+                    "Install with: pip install mem0ai"
+                )
 
-        Args:
-            request_id (str): The request ID to look up.
+            if self._api_key:
+                # Cloud mem0
+                self._client = MemoryClient(api_key=self._api_key)
+                logger.info("Connected to mem0 cloud")
+            elif self._host:
+                # Self-hosted - use Memory with custom config
+                config = {
+                    "version": "v1.1",
+                    "custom_endpoint": self._host,
+                }
+                self._client = Memory.from_config(config)
+                logger.info(f"Connected to self-hosted mem0 at {self._host}")
+            else:
+                # Local memory (development)
+                self._client = Memory()
+                logger.info("Using local mem0 memory (development mode)")
 
-        Returns:
-            ChainContext | None: The context or None if not found.
+        return self._client
 
-        Example:
-            >>> ctx = manager.get_context("req_123")
-            >>> if ctx:
-            ...     print(f"Found context with {len(ctx.results)} results")
-        """
-        return self._contexts.get(request_id)
+    async def store(
+        self,
+        key: str,
+        data: Any,
+        ttl_seconds: int = 3600,
+        summary: str = "",
+        key_fields: dict[str, Any] | None = None,
+        source_step: str | None = None,
+        source_agent: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ContextRef:
+        client = await self._get_client()
 
-    def remove_context(self, request_id: str) -> bool:
-        """
-        Remove a context after chain completion.
+        serialized = self._serialize(data)
+        ref_id = self._generate_id(key)
+        content_hash = self._compute_hash(serialized)
 
-        Args:
-            request_id (str): The request ID to remove.
+        # Prepare metadata for mem0
+        mem0_metadata = {
+            "ref_id": ref_id,
+            "key": key,
+            "content_hash": content_hash,
+            "size_bytes": len(serialized),
+            "source_step": source_step,
+            "source_agent": source_agent,
+            **(metadata or {}),
+            **(key_fields or {}),
+        }
 
-        Returns:
-            bool: True if context was found and removed.
+        # Create memory content (summary + key data)
+        memory_content = summary or _generate_summary(key, data, len(serialized))
+        if key_fields:
+            fields_str = ", ".join(f"{k}: {v}" for k, v in key_fields.items())
+            memory_content = f"{memory_content}\nKey fields: {fields_str}"
 
-        Example:
-            >>> if manager.remove_context("req_123"):
-            ...     print("Context cleaned up")
-        """
-        if request_id in self._contexts:
-            del self._contexts[request_id]
+        # Store in mem0
+        add_kwargs = {"messages": [{"role": "user", "content": memory_content}]}
+        if self._user_id:
+            add_kwargs["user_id"] = self._user_id
+        if self._agent_id:
+            add_kwargs["agent_id"] = self._agent_id
+        add_kwargs["metadata"] = mem0_metadata
+
+        result = client.add(**add_kwargs)
+        logger.debug(f"Stored in mem0: {result}")
+
+        # Cache the full data (mem0 is for semantic search, not raw storage)
+        cache_data = {
+            "data": serialized.hex() if isinstance(serialized, bytes) else serialized,
+            "content_type": "application/json",
+            "mem0_result": str(result),
+        }
+        
+        if self._redis:
+            # Use Redis for distributed cache
+            await self._redis.set_json(f"mem0_ref:{ref_id}", cache_data, ttl=ttl_seconds)
+        else:
+            # Fallback to local cache (warn in non-local environments)
+            self._ref_cache[ref_id] = cache_data
+
+        ref = ContextRef(
+            ref_id=ref_id,
+            size_bytes=len(serialized),
+            content_hash=content_hash,
+            content_type="application/json",
+            ttl_seconds=ttl_seconds,
+            summary=summary,
+            key_fields=key_fields or {},
+            item_count=self._count_items(data),
+            source_step=source_step,
+            source_agent=source_agent,
+            metadata={"mem0_result": result, **(metadata or {})},
+        )
+
+        return ref
+
+    async def retrieve(self, ref: ContextRef) -> Any:
+        # First check Redis if available
+        if self._redis:
+            cached = await self._redis.get_json(f"mem0_ref:{ref.ref_id}")
+            if cached:
+                data = bytes.fromhex(cached["data"]) if isinstance(cached["data"], str) else cached["data"]
+                return self._deserialize(data, cached.get("content_type", "application/json"))
+
+        # Then check local cache
+        if ref.ref_id in self._ref_cache:
+            cached = self._ref_cache[ref.ref_id]
+            data = bytes.fromhex(cached["data"]) if isinstance(cached["data"], str) else cached["data"]
+            return self._deserialize(data, cached.get("content_type", "application/json"))
+
+        raise ContextRefNotFoundError(ref.ref_id)
+
+    async def delete(self, ref: ContextRef) -> bool:
+        """Delete stored data from both local cache and Redis (if configured)."""
+        deleted = False
+        
+        # Delete from Redis cache if available
+        if self._redis:
+            try:
+                redis_deleted = await self._redis.delete(f"mem0_ref:{ref.ref_id}")
+                if redis_deleted:
+                    deleted = True
+            except Exception as e:
+                logger.warning(f"Failed to delete from Redis cache: {e}")
+        
+        # Delete from local cache
+        if ref.ref_id in self._ref_cache:
+            del self._ref_cache[ref.ref_id]
+            deleted = True
+            
+        return deleted
+
+    async def exists(self, ref: ContextRef) -> bool:
+        """Check if data exists in local cache or Redis (if configured)."""
+        # Check local cache first
+        if ref.ref_id in self._ref_cache:
             return True
+            
+        # Check Redis cache if available
+        if self._redis:
+            try:
+                cached = await self._redis.get_json(f"mem0_ref:{ref.ref_id}")
+                if cached:
+                    return True
+            except Exception as e:
+                logger.debug(f"Redis cache check failed: {e}")
+                
         return False
 
-    def set_global(self, key: str, value: Any) -> None:
+    async def search(
+        self,
+        query: str,
+        limit: int = 10,
+        user_id: str | None = None,
+    ) -> list[dict]:
         """
-        Set a global value available to all contexts.
+        Search memories semantically.
 
         Args:
-            key (str): The key to store.
-            value (Any): The value to store.
-
-        Example:
-            >>> manager.set_global("api_config", {"timeout": 30})
-        """
-        self._global_store[key] = value
-
-    def get_global(self, key: str, default: Any = None) -> Any:
-        """
-        Get a global value.
-
-        Args:
-            key (str): The key to look up.
-            default (Any): Value to return if not found.
+            query: Natural language search query
+            limit: Maximum results to return
+            user_id: Override default user_id
 
         Returns:
-            Any: The stored value or default.
-
-        Example:
-            >>> config = manager.get_global("api_config", {})
+            List of matching memories with scores
         """
-        return self._global_store.get(key, default)
+        client = await self._get_client()
 
-    def delete_global(self, key: str) -> bool:
-        """
-        Delete a global value.
+        search_kwargs = {"query": query, "limit": limit}
+        if user_id or self._user_id:
+            search_kwargs["user_id"] = user_id or self._user_id
+        if self._agent_id:
+            search_kwargs["agent_id"] = self._agent_id
 
-        Args:
-            key (str): The key to delete.
+        results = client.search(**search_kwargs)
+        return results
 
-        Returns:
-            bool: True if key was found and deleted.
+    async def get_all_memories(
+        self,
+        user_id: str | None = None,
+    ) -> list[dict]:
+        """Get all memories for a user."""
+        client = await self._get_client()
 
-        Example:
-            >>> if manager.delete_global("api_config"):
-            ...     print("Global config removed")
-        """
-        if key in self._global_store:
-            del self._global_store[key]
-            return True
-        return False
+        get_kwargs = {}
+        if user_id or self._user_id:
+            get_kwargs["user_id"] = user_id or self._user_id
+        if self._agent_id:
+            get_kwargs["agent_id"] = self._agent_id
 
-    def global_keys(self) -> list[str]:
-        """
-        Get all keys in the global store.
+        return client.get_all(**get_kwargs)
 
-        Returns:
-            list[str]: List of all global keys.
 
-        Example:
-            >>> for key in manager.global_keys():
-            ...     print(f"Global: {key}")
-        """
-        return list(self._global_store.keys())
+# ═══════════════════════════════════════════════════════════════════════════════
+#                      CONTEXT INTEGRATION HELPERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+async def offload_to_redis(
+    ctx: "ChainContext",
+    key: str,
+    data: Any,
+    store: ContextStore,
+    threshold_bytes: int = 100_000,  # 100KB default
+    ttl_seconds: int = 3600,
+    summary: str = "",
+    key_fields: dict[str, Any] | None = None,
+    extract_key_fields: bool = True,
+) -> ContextRef | Any:
+    """
+    Conditionally offload large data to Redis.
+
+    If data is larger than threshold, stores in Redis and returns ref.
+    Otherwise, returns data as-is.
+
+    NEVER loses data - full payload preserved in Redis.
+
+    Usage:
+        from agentorchestrator.core.context_store import offload_to_redis
+
+        @ao.step
+        async def fetch_data(ctx):
+            large_data = await fetch_large_payload()
+
+            # Offload if large, keep ref in context
+            result = await offload_to_redis(
+                ctx, "my_data", large_data,
+                store=ctx.get("_context_store"),
+                threshold_bytes=100_000,
+                summary="Large data payload",
+                key_fields={"type": "report", "count": 100},
+            )
+
+            ctx.set("data_ref", result)  # ContextRef or raw data
+            return {"data_ref": result}
+    """
+    # Estimate size
+    try:
+        serialized = json.dumps(data, default=str).encode()
+        size = len(serialized)
+    except (TypeError, ValueError):
+        serialized = pickle.dumps(data)
+        size = len(serialized)
+
+    if size < threshold_bytes:
+        logger.debug(f"Data '{key}' is small ({size} bytes), keeping in context")
+        return data
+
+    # Extract key fields automatically if requested
+    extracted_fields = key_fields or {}
+    if extract_key_fields and not key_fields:
+        extracted_fields = _extract_key_fields(data)
+
+    # Generate summary if not provided
+    if not summary:
+        summary = _generate_summary(key, data, size)
+
+    # Get source info from context
+    source_step = ctx.current_step
+    source_agent = None
+    if "agent" in key.lower():
+        source_agent = key
+
+    # Offload to Redis
+    logger.info(f"Offloading '{key}' to Redis ({size} bytes)")
+    ref = await store.store(
+        key=key,
+        data=data,
+        ttl_seconds=ttl_seconds,
+        summary=summary,
+        key_fields=extracted_fields,
+        source_step=source_step,
+        source_agent=source_agent,
+    )
+    return ref
+
+
+async def resolve_context_ref(
+    data: Any,
+    store: ContextStore,
+) -> Any:
+    """
+    Resolve a ContextRef to its full data.
+
+    If data is not a ContextRef, returns as-is.
+
+    Usage:
+        sec_data = ctx.get("sec_data")
+        full_data = await resolve_context_ref(sec_data, store)
+    """
+    if isinstance(data, ContextRef):
+        return await store.retrieve(data)
+    if isinstance(data, dict) and data.get("_is_context_ref"):
+        ref = ContextRef.from_dict(data)
+        return await store.retrieve(ref)
+    return data
+
+
+def is_context_ref(data: Any) -> bool:
+    """Check if data is a context reference."""
+    if isinstance(data, ContextRef):
+        return True
+    if isinstance(data, dict) and data.get("_is_context_ref"):
+        return True
+    return False
+
+
+def _extract_key_fields(data: Any) -> dict[str, Any]:
+    """
+    Auto-extract key fields from data.
+
+    Extracts common fields that are typically important to preserve in references.
+    Domain-specific extraction should be done at the application level.
+    """
+    key_fields = {}
+
+    if isinstance(data, dict):
+        # Common fields that are typically important
+        for field in [
+            "id", "name", "type", "status", "date", "created_at", "updated_at",
+            "count", "total", "value", "result",
+        ]:
+            if field in data:
+                key_fields[field] = data[field]
+
+        # Record top-level keys for reference
+        key_fields["keys"] = list(data.keys())[:10]
+
+    elif isinstance(data, list) and len(data) > 0:
+        # For lists, get count and sample of types
+        key_fields["count"] = len(data)
+        if isinstance(data[0], dict):
+            key_fields["sample_keys"] = list(data[0].keys())[:5]
+
+    return key_fields
+
+
+def _generate_summary(key: str, data: Any, size: int) -> str:
+    """Generate a human-readable summary of data."""
+    size_str = ContextRef._human_size(size)
+
+    if isinstance(data, list):
+        return f"{len(data)} items ({size_str}), key: {key}"
+    elif isinstance(data, dict):
+        keys_preview = ", ".join(list(data.keys())[:5])
+        return f"Dict with {len(data)} keys ({size_str}): {keys_preview}..."
+    elif isinstance(data, str):
+        preview = data[:100].replace("\n", " ")
+        return f"Text ({size_str}): {preview}..."
+    else:
+        return f"{type(data).__name__} ({size_str}), key: {key}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#                      FACTORY FUNCTION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def create_context_store(
+    backend: str = "memory",
+    **kwargs,
+) -> ContextStore:
+    """
+    Factory function to create context store instances.
+
+    Args:
+        backend: "memory", "redis", or "mem0"
+        **kwargs: Backend-specific configuration
+
+    Backend-specific kwargs:
+
+        redis:
+            host: Redis host (default: localhost)
+            port: Redis port (default: 6379)
+            db: Database number (default: 0)
+            password: Redis password
+            key_prefix: Key prefix (default: agentorchestrator:ctx:)
+            max_connections: Pool size (default: 10)
+            maxmemory: Memory limit (e.g., "128mb")
+            maxmemory_policy: Eviction policy (default: allkeys-lru)
+            ssl: Enable SSL/TLS (default: False)
+            ssl_cert_reqs: SSL cert requirements
+
+        mem0:
+            api_key: mem0 cloud API key
+            host: Self-hosted mem0 URL
+            user_id: User ID for scoped memory
+            org_id: Organization ID
+            agent_id: Agent ID
+
+    Returns:
+        ContextStore instance
+
+    Usage:
+        # Development (no dependencies)
+        store = create_context_store(backend="memory")
+
+        # Production Redis (same container)
+        store = create_context_store(
+            backend="redis",
+            host="localhost",
+            port=6379,
+        )
+
+        # Kubernetes Redis
+        store = create_context_store(
+            backend="redis",
+            host="redis-service.default.svc.cluster.local",
+        )
+
+        # AWS ElastiCache
+        store = create_context_store(
+            backend="redis",
+            host="my-cluster.abc123.use1.cache.amazonaws.com",
+            ssl=True,
+        )
+
+        # mem0 cloud
+        store = create_context_store(
+            backend="mem0",
+            api_key="m0-xxx",
+            user_id="user-123",
+        )
+    """
+    if backend == "memory":
+        return InMemoryContextStore()
+
+    elif backend == "redis":
+        return RedisContextStore(**kwargs)
+
+    elif backend == "mem0":
+        return Mem0ContextStore(**kwargs)
+
+    else:
+        logger.warning(f"Unknown context store backend: {backend}, falling back to memory")
+        return InMemoryContextStore()
+
+
+# Re-export ChainContext from context_store so that
+# `from agentorchestrator.core.context import ChainContext` keeps working
+# throughout the codebase (the class was moved to context_store.py).
+from agentorchestrator.core.context_store import (  # noqa: E402
+    ChainContext,
+    Context,
+    ContextManager,
+    ContextScope,
+    StepResult,
+    ExecutionSummary,
+)

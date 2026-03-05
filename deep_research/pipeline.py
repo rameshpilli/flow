@@ -147,11 +147,11 @@ def setup_middleware(ao: AgentOrchestrator, llm: Any) -> None:
     # 1. Structured logging — log every step start / end / error
     ao.use(LoggerMiddleware())
 
-    # 2. Metrics — in-memory counters; swap OTelMetricsBackend for production
-    ao.use(create_metrics_middleware(backend="in_memory"))
+    # 2. Metrics — in-memory counters; pass otel_meter=<meter> for production
+    ao.use(create_metrics_middleware())
 
     # 3. Cache — avoid re-running identical search sub-queries within a run
-    ao.use(CacheMiddleware(ttl=300))
+    ao.use(CacheMiddleware(ttl_seconds=300))
 
     # 4. Token budget — caps total tokens consumed across all steps
     ao.use(TokenManagerMiddleware())

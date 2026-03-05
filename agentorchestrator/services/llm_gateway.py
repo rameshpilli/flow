@@ -713,11 +713,23 @@ class LLMGatewayClient:
                 encoding = tiktoken.get_encoding("cl100k_base")
             return len(encoding.encode(text))
         except ImportError:
-            # Log warning once about inaccurate token counting
+            # Log warning once about missing tiktoken
             if not LLMGatewayClient._tiktoken_warning_logged:
                 logger.warning(
                     "tiktoken not installed - using character-based token estimation (~4 chars/token). "
                     "For accurate token counts, install tiktoken: pip install tiktoken"
+                )
+                LLMGatewayClient._tiktoken_warning_logged = True
+            # Fallback to rough heuristic (~4 chars per token)
+            return len(text) // 4
+        except Exception as e:
+            # Handle tiktoken download failures in restricted networks
+            if not LLMGatewayClient._tiktoken_warning_logged:
+                logger.warning(
+                    f"tiktoken encoding unavailable (network error: {type(e).__name__}) - "
+                    "using character-based token estimation (~4 chars/token). "
+                    "In restricted networks, consider pre-downloading tiktoken encodings or disabling token estimation. "
+                    "See: https://github.com/openai/tiktoken#offline-mode"
                 )
                 LLMGatewayClient._tiktoken_warning_logged = True
             # Fallback to rough heuristic (~4 chars per token)

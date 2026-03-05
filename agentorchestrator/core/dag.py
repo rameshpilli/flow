@@ -48,6 +48,9 @@ __all__ = [
     "ChainRunner",
     "DebugCallback",
     "resolve_state_model",
+    "MiddlewareManager",
+    "StepExecutor",
+    "DynamicStepManager",
 ]
 
 
@@ -159,6 +162,10 @@ class DAGBuilder:
     def __init__(self):
         self.step_registry = get_step_registry()
         self.chain_registry = get_chain_registry()
+        # Cache for step specs (v2.0 performance optimization)
+        # Avoids re-fetching step specs for frequently executed chains (1000+/hour)
+        # Cache key: step_name -> StepSpec
+        self._step_spec_cache: dict[str, Any] = {}
 
     def _resolve_dataflow_deps(self, nodes: dict[str, DAGNode]) -> None:
         """
@@ -202,6 +209,10 @@ class DAGBuilder:
         """
         Build an execution plan for a chain.
 
+        Performance optimization (v2.0): Caches execution plans for frequently
+        executed chains to avoid re-fetching step specs (overhead reduction
+        for 1000+/hour chains).
+
         Args:
             chain_name: Name of the chain
             existing_nodes: Optional dict of existing nodes to preserve state
@@ -218,9 +229,15 @@ class DAGBuilder:
                 nodes[step_name] = existing_nodes[step_name]
                 continue
 
-            step_spec = self.step_registry.get_spec(step_name)
-            if not step_spec:
-                raise ValueError(f"Step not found: {step_name}")
+            # Check spec cache first (performance optimization for 1000+/hour chains)
+            if step_name in self._step_spec_cache:
+                step_spec = self._step_spec_cache[step_name]
+            else:
+                step_spec = self.step_registry.get_spec(step_name)
+                if not step_spec:
+                    raise ValueError(f"Step not found: {step_name}")
+                # Cache the spec
+                self._step_spec_cache[step_name] = step_spec
 
             nodes[step_name] = DAGNode(
                 name=step_name,
@@ -307,8 +324,19 @@ class DAGBuilder:
                     )
                     continue
 
-                # Validate dependencies are satisfied
+                # Validate dependencies exist and are satisfied
                 node = nodes[step_name]
+
+                # Check all dependencies actually exist in the chain
+                missing_deps = node.dependencies - set(nodes.keys())
+                if missing_deps:
+                    raise ValueError(
+                        f"Step '{step_name}' in parallel_groups[{group_idx}] "
+                        f"has non-existent dependencies: {missing_deps}. "
+                        f"These dependencies are not registered steps in the chain."
+                    )
+
+                # Check dependencies have been executed in earlier groups
                 unmet_deps = node.dependencies - executed
                 if unmet_deps:
                     raise ValueError(
@@ -446,9 +474,570 @@ def resolve_state_model(
     return next(iter(unique_models), None)
 
 
+class MiddlewareManager:
+    """
+    Manages middleware lifecycle and execution.
+
+    Extracted from DAGExecutor to follow Single Responsibility Principle.
+    Handles middleware registration, ordering, filtering, and execution.
+    """
+
+    def __init__(self):
+        self._middleware: list[Any] = []
+
+    def add(self, middleware: Any) -> None:
+        """Add middleware and sort by priority"""
+        self._middleware.append(middleware)
+        self._middleware.sort(key=lambda m: getattr(m, "_ao_priority", 100))
+
+    def should_apply(
+        self,
+        mw: Any,
+        step_name: str,
+        ctx: ChainContext | None = None,
+        result: Any = None,
+    ) -> bool:
+        """Determine whether middleware should apply to a step"""
+        if hasattr(mw, "should_apply"):
+            try:
+                return mw.should_apply(step_name, ctx, result)
+            except Exception as e:
+                logger.warning(
+                    f"Middleware {mw.__class__.__name__} should_apply failed for "
+                    f"step {step_name}: {e}. Defaulting to apply."
+                )
+                return True
+
+        applies = getattr(mw, "_ao_applies_to", None)
+        try:
+            return applies is None or step_name in applies
+        except TypeError:
+            logger.warning(
+                f"Middleware {mw.__class__.__name__} has invalid _ao_applies_to "
+                f"(not iterable): {applies}. Skipping for step {step_name}."
+            )
+            return False
+
+    async def run_before(
+        self, ctx: ChainContext, step_name: str
+    ) -> tuple[list[Any], Exception | None]:
+        """Run before middleware with exception isolation"""
+        from agentorchestrator.middleware.base import SkipStep
+
+        applied: list[Any] = []
+        for mw in self._middleware:
+            if not self.should_apply(mw, step_name, ctx=ctx, result=None):
+                continue
+            applied.append(mw)
+            if hasattr(mw, "before"):
+                try:
+                    await mw.before(ctx, step_name)
+                except SkipStep as e:
+                    return applied, e
+                except Exception as e:
+                    logger.warning(
+                        f"Before middleware {mw.__class__.__name__} failed for "
+                        f"step {step_name}: {e}. Continuing execution."
+                    )
+        return applied, None
+
+    async def run_after(
+        self,
+        ctx: ChainContext,
+        step_name: str,
+        result: StepResult,
+        middleware_list: list[Any] | None = None,
+    ) -> None:
+        """Run after middleware with exception isolation"""
+        middleware_list = middleware_list or self._middleware
+        for mw in reversed(middleware_list):
+            if hasattr(mw, "after"):
+                if not self.should_apply(mw, step_name, ctx=ctx, result=result):
+                    continue
+                try:
+                    await mw.after(ctx, step_name, result)
+                except Exception as e:
+                    logger.warning(
+                        f"After middleware {mw.__class__.__name__} failed for "
+                        f"step {step_name}: {e}. Continuing execution."
+                    )
+
+    async def run_on_error(
+        self,
+        ctx: ChainContext,
+        step_name: str,
+        error: Exception,
+    ) -> None:
+        """Run on_error middleware with exception isolation"""
+        for mw in self._middleware:
+            if hasattr(mw, "on_error"):
+                if not self.should_apply(mw, step_name, ctx=ctx, result=error):
+                    continue
+                try:
+                    await mw.on_error(ctx, step_name, error)
+                except Exception as e:
+                    logger.warning(
+                        f"on_error middleware {mw.__class__.__name__} failed for "
+                        f"step {step_name}: {e}. Continuing execution."
+                    )
+
+
+class StepExecutor:
+    """
+    Handles individual step execution logic.
+
+    Extracted from DAGExecutor to follow Single Responsibility Principle.
+    Manages step execution, retries, timeouts, and result tracking.
+    """
+
+    def __init__(
+        self,
+        middleware_manager: MiddlewareManager,
+        default_timeout_ms: int = 30000,
+    ):
+        self.middleware = middleware_manager
+        self.default_timeout_ms = default_timeout_ms
+
+    async def execute(
+        self,
+        node: DAGNode,
+        ctx: ChainContext,
+        error_handling: str,
+        chain_name: str | None = None,
+        debug_callback: DebugCallback | None = None,
+        tracer: Any = None,
+        emit_event: Callable | None = None,
+    ) -> StepResult:
+        """
+        Execute a single step with retries, timeouts, and middleware.
+
+        This is the core step execution logic extracted from DAGExecutor._execute_step.
+        """
+        from contextlib import nullcontext
+
+        retry_config = node.spec.retry_config
+        max_attempts = 1 + retry_config.count if error_handling == "retry" else 1
+        delay_ms = retry_config.delay_ms
+        last_error: Exception | None = None
+
+        for attempt in range(max_attempts):
+            if attempt > 0:
+                logger.info(f"Retrying step {node.name} (attempt {attempt}/{retry_config.count})")
+                import random
+                jitter_factor = 0.75 + random.random() * 0.5
+                jittered_delay_ms = delay_ms * jitter_factor
+                await asyncio.sleep(jittered_delay_ms / 1000)
+                delay_ms = min(
+                    int(delay_ms * retry_config.backoff_multiplier),
+                    retry_config.max_delay_ms
+                )
+
+            await node.set_running()
+            if emit_event:
+                await emit_event(
+                    "StepStarted", chain_name, node.name, ctx.request_id,
+                    payload={"attempt": attempt}
+                )
+
+            start_time = time.perf_counter()
+            step_span_ctx = tracer.step_span(node.name) if tracer is not None else nullcontext()
+
+            async with ctx.step_scope(node.name):
+                with step_span_ctx as span:
+                    applied_middleware: list[Any] = []
+                    try:
+                        # Check condition if specified
+                        if node.spec.condition is not None:
+                            try:
+                                condition_met = node.spec.condition(ctx)
+                                if not condition_met:
+                                    duration_ms = (time.perf_counter() - start_time) * 1000
+                                    step_result = StepResult(
+                                        step_name=node.name,
+                                        output=None,
+                                        duration_ms=duration_ms,
+                                        retry_count=attempt,
+                                        skipped_reason="condition not met",
+                                    )
+                                    await node.set_skipped("condition not met")
+                                    node.result = step_result
+                                    ctx.add_result(step_result)
+                                    if emit_event:
+                                        await emit_event(
+                                            "StepSkipped", chain_name, node.name, ctx.request_id,
+                                            payload={"reason": "condition not met", "duration_ms": duration_ms}
+                                        )
+                                    return step_result
+                            except Exception as e:
+                                logger.warning(f"Condition check failed for {node.name}: {e}")
+                                # Continue execution if condition check fails
+
+                        # Run before middleware
+                        applied_middleware, skip_exc = await self.middleware.run_before(ctx, node.name)
+
+                        if skip_exc is not None:
+                            duration_ms = (time.perf_counter() - start_time) * 1000
+                            skip_reason = getattr(skip_exc, "reason", None) or str(skip_exc) or "skipped by middleware"
+                            step_result = StepResult(
+                                step_name=node.name,
+                                output=None,
+                                duration_ms=duration_ms,
+                                retry_count=attempt,
+                                skipped_reason=skip_reason,
+                            )
+                            await self.middleware.run_after(ctx, node.name, step_result, applied_middleware)
+                            await node.set_skipped(skip_reason)
+                            node.result = step_result
+                            ctx.add_result(step_result)
+                            if emit_event:
+                                await emit_event(
+                                    "StepSkipped", chain_name, node.name, ctx.request_id,
+                                    payload={"reason": skip_reason}
+                                )
+                            if debug_callback is not None:
+                                self._invoke_debug_callback(debug_callback, ctx, node.name, step_result)
+                            logger.info(f"Step {node.name} skipped by middleware: {skip_reason}")
+                            return step_result
+
+                        # Check for cache hit
+                        if ctx.get(f"_cache_hit_{node.name}"):
+                            cached_result = ctx.get(f"_cache_result_{node.name}")
+                            duration_ms = (time.perf_counter() - start_time) * 1000
+                            step_result = StepResult(
+                                step_name=node.name,
+                                output=cached_result,
+                                duration_ms=duration_ms,
+                                retry_count=attempt,
+                            )
+                            step_result.metadata["cache_hit"] = True
+                            await self.middleware.run_after(ctx, node.name, step_result, applied_middleware)
+                            await node.set_completed(step_result)
+                            ctx.add_result(step_result)
+                            if emit_event:
+                                await emit_event(
+                                    "StepCompleted", chain_name, node.name, ctx.request_id,
+                                    payload={"duration_ms": duration_ms, "retry_count": attempt, "cache_hit": True}
+                                )
+                            if debug_callback is not None:
+                                self._invoke_debug_callback(debug_callback, ctx, node.name, step_result)
+                            logger.info(f"Step {node.name} completed from cache in {duration_ms:.2f}ms")
+                            return step_result
+
+                        # Input validation
+                        if node.spec.input_model and is_pydantic_model(node.spec.input_model):
+                            input_key = node.spec.input_key or "request"
+                            validated_input = validate_input(
+                                step_name=node.name,
+                                input_model=node.spec.input_model,
+                                value=ctx.get(input_key),
+                                input_key=input_key,
+                            )
+                            ctx.set(input_key, validated_input, scope=ContextScope.CHAIN)
+
+                        # Execute handler
+                        timeout_ms = node.spec.timeout_ms or self.default_timeout_ms
+                        handler = node.spec.handler
+
+                        if node.spec.is_async:
+                            result = await asyncio.wait_for(handler(ctx), timeout=timeout_ms / 1000)
+                        else:
+                            result = await asyncio.wait_for(
+                                asyncio.to_thread(handler, ctx),
+                                timeout=timeout_ms / 1000,
+                            )
+
+                        # Store result for potential dynamic step processing
+                        # (Dynamic step manager needs this for conditional logic)
+                        step_output = result
+
+                        # Output validation
+                        if (
+                            node.spec.output_model
+                            and node.spec.validate_output
+                            and is_pydantic_model(node.spec.output_model)
+                        ):
+                            result = validate_output(
+                                step_name=node.name,
+                                output_model=node.spec.output_model,
+                                value=result,
+                            )
+
+                        duration_ms = (time.perf_counter() - start_time) * 1000
+                        step_result = StepResult(
+                            step_name=node.name,
+                            output=result,
+                            duration_ms=duration_ms,
+                            retry_count=attempt,
+                        )
+
+                        await self.middleware.run_after(ctx, node.name, step_result, applied_middleware)
+                        await node.set_completed(step_result)
+                        ctx.add_result(step_result)
+                        if emit_event:
+                            await emit_event(
+                                "StepCompleted", chain_name, node.name, ctx.request_id,
+                                payload={"duration_ms": duration_ms, "retry_count": attempt}
+                            )
+
+                        if span and hasattr(span, 'set_attribute'):
+                            span.set_attribute("step.duration_ms", duration_ms)
+                            span.set_attribute("step.success", True)
+                            span.set_attribute("step.retry_count", attempt)
+
+                        if debug_callback is not None:
+                            self._invoke_debug_callback(debug_callback, ctx, node.name, step_result)
+
+                        logger.info(f"Step {node.name} completed in {duration_ms:.2f}ms")
+                        return step_result
+
+                    except asyncio.TimeoutError:
+                        duration_ms = (time.perf_counter() - start_time) * 1000
+                        last_error = TimeoutError(f"Step {node.name} timed out after {timeout_ms}ms")
+                        logger.error(f"Step {node.name} timed out")
+
+                        if span and hasattr(span, 'record_exception'):
+                            span.record_exception(last_error)
+
+                        if attempt < max_attempts - 1:
+                            logger.warning(f"Retry {attempt + 1} for {node.name} failed: {last_error}")
+                            continue
+
+                        await self.middleware.run_on_error(ctx, node.name, last_error)
+
+                        step_result = StepResult(
+                            step_name=node.name,
+                            output=None,
+                            duration_ms=duration_ms,
+                            error=last_error,
+                            error_type="TimeoutError",
+                            error_traceback=traceback.format_exc(),
+                            retry_count=attempt,
+                        )
+
+                        await self.middleware.run_after(ctx, node.name, step_result, applied_middleware)
+                        await node.set_failed(step_result)
+                        ctx.add_result(step_result)
+                        if emit_event:
+                            await emit_event(
+                                "StepFailed", chain_name, node.name, ctx.request_id,
+                                payload={"error": str(last_error), "error_type": "TimeoutError", "duration_ms": duration_ms, "retry_count": attempt}
+                            )
+
+                        if debug_callback is not None:
+                            self._invoke_debug_callback(debug_callback, ctx, node.name, step_result)
+
+                        if error_handling == "continue":
+                            logger.warning(f"Step {node.name} timed out but continuing (error_handling=continue)")
+                            return step_result
+
+                        raise last_error
+
+                    except Exception as e:
+                        duration_ms = (time.perf_counter() - start_time) * 1000
+                        last_error = e
+                        logger.error(f"Step {node.name} failed: {e}")
+
+                        if span and hasattr(span, 'record_exception'):
+                            span.record_exception(e)
+
+                        # Check if we should retry this exception
+                        should_retry = attempt < max_attempts - 1
+                        if should_retry and retry_config.retry_on:
+                            # Only retry if exception matches one of the specified types
+                            should_retry = isinstance(e, tuple(retry_config.retry_on))
+                            if not should_retry:
+                                logger.info(
+                                    f"Not retrying {node.name}: exception {type(e).__name__} "
+                                    f"not in retry_on list {[t.__name__ for t in retry_config.retry_on]}"
+                                )
+
+                        if should_retry:
+                            logger.warning(f"Retry {attempt + 1} for {node.name} failed: {e}")
+                            continue
+
+                        if max_attempts > 1:
+                            logger.error(f"Step {node.name} failed after {retry_config.count} retries")
+
+                        await self.middleware.run_on_error(ctx, node.name, e)
+
+                        step_result = StepResult(
+                            step_name=node.name,
+                            output=None,
+                            duration_ms=duration_ms,
+                            error=e,
+                            error_type=type(e).__name__,
+                            error_traceback=traceback.format_exc(),
+                            retry_count=attempt,
+                        )
+
+                        await self.middleware.run_after(ctx, node.name, step_result, applied_middleware)
+                        await node.set_failed(step_result)
+                        ctx.add_result(step_result)
+                        if emit_event:
+                            await emit_event(
+                                "StepFailed", chain_name, node.name, ctx.request_id,
+                                payload={"error": str(e), "error_type": type(e).__name__, "duration_ms": duration_ms, "retry_count": attempt}
+                            )
+
+                        if debug_callback is not None:
+                            self._invoke_debug_callback(debug_callback, ctx, node.name, step_result)
+
+                        if error_handling == "continue":
+                            logger.warning(f"Step {node.name} failed but continuing (error_handling=continue)")
+                            return step_result
+
+                        raise
+
+    def _invoke_debug_callback(
+        self,
+        callback: DebugCallback,
+        ctx: ChainContext,
+        step_name: str,
+        step_result: StepResult,
+    ) -> None:
+        """Safely invoke debug callback, catching any exceptions"""
+        try:
+            result_dict = {
+                "success": step_result.success,
+                "output": step_result.output,
+                "duration_ms": step_result.duration_ms,
+                "error": str(step_result.error) if step_result.error else None,
+                "error_type": step_result.error_type,
+            }
+            callback(ctx, step_name, result_dict)
+        except Exception as e:
+            logger.warning(f"Debug callback failed for step {step_name}: {e}")
+
+
+class DynamicStepManager:
+    """
+    Manages dynamic step injection and execution.
+
+    Extracted from DAGExecutor to follow Single Responsibility Principle.
+    Handles registration, locking, and execution of dynamically injected steps.
+    """
+
+    def __init__(
+        self,
+        step_registry: Any,
+        chain_registry: Any,
+        step_executor: StepExecutor,
+        default_timeout_ms: int = 30000,
+    ):
+        self.step_registry = step_registry
+        self.chain_registry = chain_registry
+        self.step_executor = step_executor
+        self.default_timeout_ms = default_timeout_ms
+
+    async def handle(
+        self,
+        dynamic_steps: list[Any],
+        parent_node: DAGNode,
+        ctx: ChainContext,
+        chain_name: str | None,
+        emit_event: Callable | None = None,
+    ) -> None:
+        """Handle dynamic steps returned by a step handler"""
+        new_step_names = []
+        for i, step_data in enumerate(dynamic_steps):
+            if isinstance(step_data, dict) and "handler" in step_data:
+                name = step_data.get("name") or f"{parent_node.name}_dyn_{i}"
+                handler = step_data["handler"]
+                deps = step_data.get("deps", [parent_node.name])
+                self.step_registry.register_step(
+                    name=name,
+                    handler=handler,
+                    dependencies=deps,
+                    produces=step_data.get("produces"),
+                )
+                new_step_names.append(name)
+            elif isinstance(step_data, str):
+                new_step_names.append(step_data)
+
+        if new_step_names:
+            logger.info(f"Step {parent_node.name} injected dynamic steps: {new_step_names}")
+
+            if emit_event:
+                await emit_event(
+                    "DynamicStepInjected",
+                    chain_name,
+                    parent_node.name,
+                    ctx.request_id,
+                    payload={
+                        "injected_steps": new_step_names,
+                        "parent_step": parent_node.name,
+                    },
+                )
+
+            if chain_name and ctx.get("__dag_needs_rebuild__"):
+                chain_spec = self.chain_registry.get_spec(chain_name)
+                if chain_spec:
+                    for name in new_step_names:
+                        if name not in chain_spec.steps:
+                            chain_spec.steps.append(name)
+
+            # Execute dynamic steps
+            if not hasattr(ctx, '_dynamic_master_lock'):
+                ctx._dynamic_master_lock = asyncio.Lock()
+            if not hasattr(ctx, '_dynamic_step_locks'):
+                ctx._dynamic_step_locks = {}
+            if not hasattr(ctx, '_dynamic_steps_in_flight'):
+                ctx._dynamic_steps_in_flight = set()
+
+            for step_name in new_step_names:
+                spec = self.step_registry.get_spec(step_name)
+                if not spec:
+                    logger.warning(f"Dynamic step '{step_name}' not found in registry")
+                    continue
+
+                async with ctx._dynamic_master_lock:
+                    if step_name not in ctx._dynamic_step_locks:
+                        ctx._dynamic_step_locks[step_name] = asyncio.Lock()
+                    step_lock = ctx._dynamic_step_locks[step_name]
+
+                async with step_lock:
+                    if ctx.get_result(step_name) is not None:
+                        logger.debug(f"Skipping dynamic step '{step_name}' - already executed")
+                        continue
+
+                    if step_name in ctx._dynamic_steps_in_flight:
+                        logger.debug(f"Skipping dynamic step '{step_name}' - currently executing")
+                        continue
+
+                    ctx._dynamic_steps_in_flight.add(step_name)
+
+                    dynamic_node = DAGNode(name=step_name, spec=spec)
+                    timeout_ms = spec.timeout_ms or self.default_timeout_ms
+                    try:
+                        logger.info(f"Executing dynamic step: {step_name} (timeout={timeout_ms}ms)")
+                        await asyncio.wait_for(
+                            self.step_executor.execute(
+                                dynamic_node,
+                                ctx,
+                                error_handling="fail_fast",
+                                chain_name=chain_name,
+                                emit_event=emit_event,
+                            ),
+                            timeout=timeout_ms / 1000,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.error(f"Dynamic step {step_name} timed out after {timeout_ms}ms")
+                        raise TimeoutError(f"Dynamic step {step_name} timed out after {timeout_ms}ms")
+                    except Exception as e:
+                        logger.error(f"Dynamic step {step_name} failed: {e}")
+                        raise
+                    finally:
+                        ctx._dynamic_steps_in_flight.discard(step_name)
+
+
 class DAGExecutor:
     """
     Executes chains as DAGs with parallel step execution.
+
+    Now refactored to coordinate specialized components instead of handling everything:
+    - MiddlewareManager: Manages middleware lifecycle
+    - StepExecutor: Handles step execution logic
+    - DynamicStepManager: Handles dynamic step injection
 
     Features:
     - Automatic dependency resolution
@@ -478,15 +1067,24 @@ class DAGExecutor:
         self.default_timeout_ms = default_timeout_ms
         self.enable_tracing = enable_tracing
         self.builder = DAGBuilder()
-        self._middleware: list[Any] = []
-        # Prefer Redis-backed bus if available; otherwise fall back to in-memory
         self.event_bus = event_bus or get_event_bus(prefer_redis=True)
+
+        # Initialize specialized components
+        self.middleware_manager = MiddlewareManager()
+        self.step_executor = StepExecutor(
+            middleware_manager=self.middleware_manager,
+            default_timeout_ms=default_timeout_ms,
+        )
+        self.dynamic_step_manager = DynamicStepManager(
+            step_registry=self.builder.step_registry,
+            chain_registry=self.builder.chain_registry,
+            step_executor=self.step_executor,
+            default_timeout_ms=default_timeout_ms,
+        )
 
     def add_middleware(self, middleware: Any) -> None:
         """Add middleware to the executor"""
-        self._middleware.append(middleware)
-        # Sort by priority
-        self._middleware.sort(key=lambda m: getattr(m, "_ao_priority", 100))
+        self.middleware_manager.add(middleware)
 
     async def execute(
         self,
@@ -945,7 +1543,44 @@ class DAGExecutor:
         debug_callback: DebugCallback | None = None,
         tracer: Any = None,
     ) -> StepResult:
-        """Execute a single step with thread-safe state management, tracing, and debug callbacks"""
+        """
+        Execute a single step - delegates to StepExecutor.
+
+        Kept as a thin wrapper for backward compatibility and to handle dynamic steps.
+        """
+        # Execute the step using the extracted StepExecutor
+        result = await self.step_executor.execute(
+            node=node,
+            ctx=ctx,
+            error_handling=error_handling,
+            chain_name=chain_name,
+            debug_callback=debug_callback,
+            tracer=tracer,
+            emit_event=self._emit_event,
+        )
+
+        # Handle dynamic steps if present in the result
+        if isinstance(node.result, StepResult) and isinstance(node.result.output, dict):
+            output = node.result.output
+            if "__dynamic_steps__" in output:
+                dynamic_steps = output.pop("__dynamic_steps__")
+                if isinstance(dynamic_steps, list):
+                    await self.dynamic_step_manager.handle(
+                        dynamic_steps, node, ctx, chain_name, emit_event=self._emit_event
+                    )
+
+        return result
+
+    async def _execute_step_original_implementation(
+        self,
+        node: DAGNode,
+        ctx: ChainContext,
+        error_handling: str,
+        chain_name: str | None = None,
+        debug_callback: DebugCallback | None = None,
+        tracer: Any = None,
+    ) -> StepResult:
+        """DEPRECATED: Original implementation kept for reference, will be removed in future version"""
         from contextlib import nullcontext
 
         # Determine max attempts (1 + retry count for retry mode)
@@ -994,6 +1629,31 @@ class DAGExecutor:
                 with step_span_ctx as span:
                     applied_middleware: list[Any] = []
                     try:
+                        # Check condition if specified
+                        if node.spec.condition is not None:
+                            try:
+                                condition_met = node.spec.condition(ctx)
+                                if not condition_met:
+                                    duration_ms = (time.perf_counter() - start_time) * 1000
+                                    step_result = StepResult(
+                                        step_name=node.name,
+                                        output=None,
+                                        duration_ms=duration_ms,
+                                        retry_count=attempt,
+                                        skipped_reason="condition not met",
+                                    )
+                                    await node.set_skipped("condition not met")
+                                    node.result = step_result
+                                    ctx.add_result(step_result)
+                                    await self._emit_event(
+                                        "StepSkipped", chain_name, node.name, ctx.request_id,
+                                        payload={"reason": "condition not met", "duration_ms": duration_ms}
+                                    )
+                                    return step_result
+                            except Exception as e:
+                                logger.warning(f"Condition check failed for {node.name}: {e}")
+                                # Continue execution if condition check fails
+
                         # Run before middleware with exception isolation
                         # Middleware failures should not crash the step
                         applied_middleware, skip_exc = await self._run_before_middleware(ctx, node.name)
@@ -1235,8 +1895,19 @@ class DAGExecutor:
                         if span and hasattr(span, 'record_exception'):
                             span.record_exception(e)
 
+                        # Check if we should retry this exception
+                        should_retry = attempt < max_attempts - 1
+                        if should_retry and retry_config.retry_on:
+                            # Only retry if exception matches one of the specified types
+                            should_retry = isinstance(e, tuple(retry_config.retry_on))
+                            if not should_retry:
+                                logger.info(
+                                    f"Not retrying {node.name}: exception {type(e).__name__} "
+                                    f"not in retry_on list {[t.__name__ for t in retry_config.retry_on]}"
+                                )
+
                         # If we have more attempts, continue the retry loop
-                        if attempt < max_attempts - 1:
+                        if should_retry:
                             logger.warning(
                                 f"Retry {attempt + 1} for {node.name} failed: {e}"
                             )
@@ -1348,173 +2019,22 @@ class DAGExecutor:
         chain_name: str | None,
     ) -> None:
         """
-        Handle dynamic steps returned by a step handler.
+        DEPRECATED: Use dynamic_step_manager.handle() directly.
 
-        IMPORTANT: Dynamic steps execute IMMEDIATELY after the parent step completes.
-        They do NOT integrate into the DAG execution plan. Any `deps` declared on
-        dynamic steps (beyond the implicit parent dependency) are IGNORED at runtime.
-        The steps are registered with deps for documentation purposes only.
-
-        Use cases for dynamic steps:
-        - Spawning cleanup/validation tasks that run right after the parent
-        - Conditional sub-workflows that execute immediately
-        - Fan-out patterns where results spawn follow-up work
-
-        NOT suitable for:
-        - Steps that need to wait for other parallel steps to complete
-        - Steps that need to be scheduled based on complex dependencies
-        - Steps that should integrate into the main DAG execution order
-
-        For complex dynamic workflows, consider:
-        - Setting ctx.set("__dag_needs_rebuild__", True) to trigger a full rebuild
-        - Pre-registering conditional steps and using skip conditions instead
-
-        Args:
-            dynamic_steps: List of step definitions or names to inject.
-                Each can be:
-                - dict with "handler", optional "name", "deps", "produces"
-                - str name of an existing registered step
-            parent_node: The node that returned the dynamic steps.
-            ctx: Current execution context.
-            chain_name: Name of the executing chain (for registration).
-
-        Example return from a step handler:
-            >>> return {
-            ...     "result": "processed",
-            ...     "__dynamic_steps__": [
-            ...         {
-            ...             "name": "extra_validation",
-            ...             "handler": async_validate_func,
-            ...             # deps are registered but execution is immediate
-            ...         },
-            ...         "existing_cleanup_step",  # Reference existing step
-            ...     ],
-            ... }
+        Kept as thin wrapper for backward compatibility.
         """
-        new_step_names = []
-        for i, step_data in enumerate(dynamic_steps):
-            if isinstance(step_data, dict) and "handler" in step_data:
-                # It's a raw step definition
-                name = step_data.get("name") or f"{parent_node.name}_dyn_{i}"
-                handler = step_data["handler"]
-                # Dynamic steps implicitly depend on parent unless specified
-                deps = step_data.get("deps", [parent_node.name])
-                # Register the new step dynamically
-                self.builder.step_registry.register_step(
-                    name=name,
-                    handler=handler,
-                    dependencies=deps,
-                    produces=step_data.get("produces"),
-                )
-                new_step_names.append(name)
-            elif isinstance(step_data, str):
-                # It's an existing step name
-                new_step_names.append(step_data)
-        
-        if new_step_names:
-            logger.info(f"Step {parent_node.name} injected dynamic steps: {new_step_names}")
-            
-            # Emit event for observability
-            await self._emit_event(
-                "DynamicStepInjected",
-                chain_name,
-                parent_node.name,
-                ctx.request_id,
-                payload={
-                    "injected_steps": new_step_names,
-                    "parent_step": parent_node.name,
-                },
-            )
-            
-            # Update chain spec only when a DAG rebuild is explicitly requested
-            # This avoids leaking dynamic steps into future runs by default.
-            if chain_name and ctx.get("__dag_needs_rebuild__"):
-                chain_spec = self.builder.chain_registry.get_spec(chain_name)
-                if chain_spec:
-                    # Add new steps to chain if not already there
-                    for name in new_step_names:
-                        if name not in chain_spec.steps:
-                            chain_spec.steps.append(name)
-            
-            # EXECUTE the dynamic steps immediately
-            # Build nodes for the new steps and execute them
-            #
-            # IMPORTANT: Double-execution protection
-            # ══════════════════════════════════════════════════════════════════
-            # If a dynamic step references an existing step that has already
-            # executed (has results in context), we skip it to prevent double
-            # execution. This can happen when:
-            # - A step returns an existing step name in __dynamic_steps__
-            # - __dag_needs_rebuild__ is used but the step was already run
-            # ══════════════════════════════════════════════════════════════════
-            for step_name in new_step_names:
-                # Skip if step already has results (was already executed)
-                if ctx.get_result(step_name) is not None:
-                    logger.debug(
-                        f"Skipping dynamic step '{step_name}' - already executed "
-                        f"(result exists in context)"
-                    )
-                    continue
+        await self.dynamic_step_manager.handle(
+            dynamic_steps, parent_node, ctx, chain_name, emit_event=self._emit_event
+        )
 
-                spec = self.builder.step_registry.get_spec(step_name)
-                if spec:
-                    # Create a node for the dynamic step
-                    dynamic_node = DAGNode(name=step_name, spec=spec)
-
-                    # Execute the dynamic step with timeout protection
-                    # Use the step's configured timeout or the default
-                    timeout_ms = spec.timeout_ms or self.default_timeout_ms
-                    try:
-                        logger.info(f"Executing dynamic step: {step_name} (timeout={timeout_ms}ms)")
-                        await asyncio.wait_for(
-                            self._execute_step(
-                                dynamic_node,
-                                ctx,
-                                error_handling="fail_fast",
-                                chain_name=chain_name,
-                            ),
-                            timeout=timeout_ms / 1000,
-                        )
-                    except asyncio.TimeoutError:
-                        logger.error(f"Dynamic step {step_name} timed out after {timeout_ms}ms")
-                        raise TimeoutError(f"Dynamic step {step_name} timed out after {timeout_ms}ms")
-                    except Exception as e:
-                        logger.error(f"Dynamic step {step_name} failed: {e}")
-                        # Re-raise to propagate failure
-                        raise
+    # Middleware methods now delegated to MiddlewareManager
+    # Kept as thin wrappers for backward compatibility
 
     async def _run_before_middleware(
         self, ctx: ChainContext, step_name: str
     ) -> tuple[list[Any], Exception | None]:
-        """
-        Run before middleware with exception isolation.
-
-        Middleware failures are logged but don't crash the step execution.
-        This ensures cross-cutting concerns (logging, metrics) don't break
-        the core pipeline functionality.
-        """
-        from agentorchestrator.middleware.base import SkipStep
-
-        applied: list[Any] = []
-        for mw in self._middleware:
-            if not self._should_apply_middleware(mw, step_name, ctx=ctx, result=None):
-                continue
-            # Track middleware that applies (even if it has no before hook)
-            applied.append(mw)
-            if hasattr(mw, "before"):
-                try:
-                    await mw.before(ctx, step_name)
-                except SkipStep as e:
-                    # Skip step execution but keep track of applied middleware
-                    return applied, e
-                except Exception as e:
-                    # Log but don't crash - middleware shouldn't break steps
-                    logger.warning(
-                        f"Before middleware {mw.__class__.__name__} failed for "
-                        f"step {step_name}: {e}. Continuing execution."
-                    )
-
-        return applied, None
+        """DEPRECATED: Use middleware_manager.run_before() directly"""
+        return await self.middleware_manager.run_before(ctx, step_name)
 
     async def _run_after_middleware(
         self,
@@ -1523,25 +2043,8 @@ class DAGExecutor:
         result: StepResult,
         middleware_list: list[Any] | None = None,
     ) -> None:
-        """
-        Run after middleware with exception isolation.
-
-        Middleware failures are logged but don't crash the step execution.
-        """
-        middleware_list = middleware_list or self._middleware
-        # After hooks should run in reverse priority order
-        for mw in reversed(middleware_list):
-            if hasattr(mw, "after"):
-                if not self._should_apply_middleware(mw, step_name, ctx=ctx, result=result):
-                    continue
-                try:
-                    await mw.after(ctx, step_name, result)
-                except Exception as e:
-                    # Log but don't crash - middleware shouldn't break steps
-                    logger.warning(
-                        f"After middleware {mw.__class__.__name__} failed for "
-                        f"step {step_name}: {e}. Continuing execution."
-                    )
+        """DEPRECATED: Use middleware_manager.run_after() directly"""
+        await self.middleware_manager.run_after(ctx, step_name, result, middleware_list)
 
     async def _run_on_error_middleware(
         self,
@@ -1549,22 +2052,8 @@ class DAGExecutor:
         step_name: str,
         error: Exception,
     ) -> None:
-        """
-        Run on_error middleware with exception isolation.
-
-        Middleware failures are logged but don't crash the step execution.
-        """
-        for mw in self._middleware:
-            if hasattr(mw, "on_error"):
-                if not self._should_apply_middleware(mw, step_name, ctx=ctx, result=error):
-                    continue
-                try:
-                    await mw.on_error(ctx, step_name, error)
-                except Exception as e:
-                    logger.warning(
-                        f"on_error middleware {mw.__class__.__name__} failed for "
-                        f"step {step_name}: {e}. Continuing execution."
-                    )
+        """DEPRECATED: Use middleware_manager.run_on_error() directly"""
+        await self.middleware_manager.run_on_error(ctx, step_name, error)
 
     def _should_apply_middleware(
         self,
@@ -1573,31 +2062,8 @@ class DAGExecutor:
         ctx: ChainContext | None = None,
         result: Any = None,
     ) -> bool:
-        """
-        Determine whether middleware should apply to a step.
-
-        Prefers Middleware.should_apply() if present; falls back to legacy
-        _ao_applies_to handling for compatibility.
-        """
-        if hasattr(mw, "should_apply"):
-            try:
-                return mw.should_apply(step_name, ctx, result)
-            except Exception as e:
-                logger.warning(
-                    f"Middleware {mw.__class__.__name__} should_apply failed for "
-                    f"step {step_name}: {e}. Defaulting to apply."
-                )
-                return True
-
-        applies = getattr(mw, "_ao_applies_to", None)
-        try:
-            return applies is None or step_name in applies
-        except TypeError:
-            logger.warning(
-                f"Middleware {mw.__class__.__name__} has invalid _ao_applies_to "
-                f"(not iterable): {applies}. Skipping for step {step_name}."
-            )
-            return False
+        """DEPRECATED: Use middleware_manager.should_apply() directly"""
+        return self.middleware_manager.should_apply(mw, step_name, ctx, result)
 
     @property
     def chain_registry(self):

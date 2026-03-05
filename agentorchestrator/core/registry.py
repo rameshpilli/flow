@@ -103,12 +103,36 @@ class AgentSpec:
 
 @dataclass
 class RetryConfig:
-    """Configuration for step retry behavior"""
+    """
+    Configuration for step retry behavior with selective exception handling.
+
+    Attributes:
+        count (int): Number of retry attempts. Default: 0 (no retries).
+        delay_ms (int): Initial delay between retries in milliseconds. Default: 1000.
+        backoff_multiplier (float): Exponential backoff multiplier. Default: 1.0 (no backoff).
+        max_delay_ms (int): Maximum delay cap in milliseconds. Default: 30000 (30 seconds).
+        retry_on (list[type[Exception]] | None): List of exception types to retry on.
+            If None or empty, retry on all exceptions. If specified, only retry if the
+            caught exception is an instance of one of these types. Default: None (retry all).
+
+    Example:
+        >>> # Retry on all exceptions
+        >>> RetryConfig(count=3, delay_ms=1000, backoff_multiplier=2.0)
+        >>>
+        >>> # Retry only on specific exceptions
+        >>> RetryConfig(
+        ...     count=3,
+        ...     delay_ms=1000,
+        ...     backoff_multiplier=2.0,
+        ...     retry_on=[TimeoutError, ConnectionError]
+        ... )
+    """
 
     count: int = 0  # Number of retry attempts
     delay_ms: int = 1000  # Delay between retries in milliseconds
     backoff_multiplier: float = 1.0  # Exponential backoff multiplier
     max_delay_ms: int = 30000  # Maximum delay cap
+    retry_on: list[type[Exception]] | None = None  # Exception types to retry on (None = all)
 
 
 @dataclass
@@ -132,6 +156,8 @@ class StepSpec:
     validate_output: bool = True  # Whether to validate output against output_model
     # Optional typed state model for ChainContext
     state_model: type | None = None
+    # Conditional execution
+    condition: Callable[[Any], bool] | None = None  # Function that receives ctx and returns bool
 
 
 @dataclass
@@ -348,6 +374,7 @@ class StepRegistry(BaseRegistry):
         input_key: str | None = None,
         validate_output: bool = True,
         state_model: type | None = None,
+        condition: Callable[[Any], bool] | None = None,
         **kwargs,  # Accept extra kwargs for forward compatibility
     ) -> None:
         """
@@ -371,6 +398,7 @@ class StepRegistry(BaseRegistry):
             aliases: Alternative names for this step
             group: Step group for organization
             retry_config: RetryConfig instance or dict (overrides shorthand params)
+            condition: Optional condition function for conditional execution
         """
         metadata = ComponentMetadata(
             name=name,
@@ -423,6 +451,7 @@ class StepRegistry(BaseRegistry):
             input_key=input_key,
             validate_output=validate_output,
             state_model=state_model,
+            condition=condition,
         )
         self.register(name, spec, aliases, strict=strict)
 

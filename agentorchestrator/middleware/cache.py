@@ -75,6 +75,51 @@ class CacheMiddleware(Middleware):
         }
         # Lock for thread-safe cache operations during parallel step execution
         self._lock = asyncio.Lock()
+        # Background cleanup task to remove expired entries
+        self._cleanup_task: asyncio.Task | None = None
+        self._start_cleanup_task()
+
+    def _start_cleanup_task(self):
+        """Start background task to cleanup expired cache entries."""
+        async def cleanup_loop():
+            try:
+                while True:
+                    await asyncio.sleep(60)  # Cleanup every minute
+                    await self._cleanup_expired()
+            except asyncio.CancelledError:
+                pass  # Normal shutdown
+
+        try:
+            loop = asyncio.get_running_loop()
+            self._cleanup_task = loop.create_task(cleanup_loop())
+        except RuntimeError:
+            # No event loop available yet, cleanup will happen lazily
+            pass
+
+    async def _cleanup_expired(self):
+        """
+        Remove expired entries from cache.
+
+        Performance fix (v2.0): Proactively cleans expired entries to prevent
+        memory growth even when max_entries is not reached. Without this,
+        cache can grow to max_entries size even if 90% are expired.
+        """
+        async with self._lock:
+            current_time = time.time()
+            expired_keys = [
+                key for key, entry in self._cache.items()
+                if current_time > entry.expires_at
+            ]
+
+            for key in expired_keys:
+                del self._cache[key]
+                self._stats["evictions"] += 1
+
+            if expired_keys:
+                logger.debug(
+                    f"Cache cleanup: removed {len(expired_keys)} expired entries, "
+                    f"{len(self._cache)} remaining"
+                )
 
     def _default_cache_key(self, ctx: ChainContext, step_name: str) -> str:
         """Generate a default cache key based on context data"""

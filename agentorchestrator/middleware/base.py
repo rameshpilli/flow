@@ -238,6 +238,23 @@ class Middleware(ABC):
         self._ao_excludes = excludes or []
         self._ao_applies_when = applies_when
 
+    @property
+    def priority(self) -> int:
+        """
+        Get middleware priority (read-only).
+
+        Lower priority values execute first in before() hooks and last in after() hooks.
+
+        Returns:
+            int: Middleware priority.
+
+        Example:
+            >>> middleware = LoggerMiddleware(priority=50)
+            >>> print(f"Priority: {middleware.priority}")
+            Priority: 50
+        """
+        return self._ao_priority
+
     async def before(self, ctx: ChainContext, step_name: str) -> None:
         """
         Called before step execution.
@@ -347,6 +364,99 @@ class Middleware(ABC):
             CircuitBreakerMiddleware: Circuit breaker implementation.
         """
         pass
+
+    async def __aenter__(self, ctx: ChainContext, step_name: str):
+        """
+        Async context manager entry (optional override for transaction-style middleware).
+
+        This method is called when entering a step context. Override this to
+        implement transaction-style middleware that needs explicit setup and teardown.
+        The __aexit__ method will be called for cleanup, even if the step fails.
+
+        Args:
+            ctx (ChainContext): The chain execution context.
+            step_name (str): Name of the step entering.
+
+        Returns:
+            Any: Optional value to be bound to the `as` clause of the `with` statement.
+
+        Example:
+            >>> class TransactionMiddleware(Middleware):
+            ...     async def __aenter__(self, ctx: ChainContext, step_name: str):
+            ...         # Start DB transaction
+            ...         tx = await self.db.begin()
+            ...         ctx.set("_transaction", tx)
+            ...         return tx
+            ...
+            ...     async def __aexit__(self, ctx: ChainContext, step_name: str, exc_type, exc_val, exc_tb):
+            ...         tx = ctx.get("_transaction")
+            ...         if exc_type is None:
+            ...             await tx.commit()
+            ...         else:
+            ...             await tx.rollback()
+
+        Note:
+            If both __aenter__/__aexit__ and before/after are defined, __aenter__/__aexit__
+            will be called, wrapping the before/after hooks.
+
+        See Also:
+            __aexit__: Async context manager exit for cleanup.
+            before(): Alternative hook-based approach.
+        """
+        # Default implementation: call before() hook
+        await self.before(ctx, step_name)
+        return None
+
+    async def __aexit__(
+        self,
+        ctx: ChainContext,
+        step_name: str,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> bool | None:
+        """
+        Async context manager exit (optional override for transaction-style middleware).
+
+        This method is called when exiting a step context, even if an exception occurred.
+        Override this to implement transaction-style middleware with explicit cleanup.
+
+        Args:
+            ctx (ChainContext): The chain execution context.
+            step_name (str): Name of the step exiting.
+            exc_type (type[BaseException] | None): Exception type if an error occurred.
+            exc_val (BaseException | None): Exception value if an error occurred.
+            exc_tb (Any): Exception traceback if an error occurred.
+
+        Returns:
+            bool | None: If True, suppress the exception. If False/None, propagate it.
+
+        Example:
+            >>> class ResourceManagerMiddleware(Middleware):
+            ...     async def __aenter__(self, ctx: ChainContext, step_name: str):
+            ...         # Acquire resource
+            ...         resource = await self.pool.acquire()
+            ...         ctx.set("_resource", resource)
+            ...         return resource
+            ...
+            ...     async def __aexit__(self, ctx: ChainContext, step_name: str, exc_type, exc_val, exc_tb):
+            ...         # Release resource (even on error)
+            ...         resource = ctx.get("_resource")
+            ...         await self.pool.release(resource)
+            ...         return None  # Don't suppress exceptions
+
+        Note:
+            Return True to suppress exceptions, False/None to propagate them.
+            Most middleware should return None to let errors propagate naturally.
+
+        See Also:
+            __aenter__: Async context manager entry for setup.
+            on_error(): Alternative hook for error handling.
+        """
+        # Default implementation: call on_error() hook if error occurred
+        if exc_type is not None and exc_val is not None:
+            await self.on_error(ctx, step_name, exc_val)
+        return None  # Don't suppress exceptions
 
     def should_apply(
         self,
