@@ -193,15 +193,28 @@ _SYSTEM_PROMPTS: dict[str, str] = {
     ),
 }
 
-_TASK_TEMPLATE = (
-    "Research the following sub-queries and return all relevant findings as a "
-    "single JSON array.  Apply these system instructions strictly:\n"
-    "{system_instructions}\n\n"
-    "Sub-queries:\n{sub_queries}\n\n"
-    "Date range: {start_date} to {end_date}\n"
-    "Minimum deal value: ${min_value_usd:,.0f}\n\n"
-    "Return ONLY the JSON array — no markdown, no commentary."
-)
+_TASK_TEMPLATE = """\
+You are a financial research agent. You MUST use the available search tools to \
+gather data — do NOT answer from memory or training data.
+
+Sub-queries to research:
+{sub_queries}
+
+Constraints:
+- Date range: {start_date} to {end_date}
+- Minimum deal value: ${min_value_usd:,.0f}
+- Additional instructions: {system_instructions}
+
+Required steps:
+1. Call the primary search tool for EACH sub-query above.
+2. If a search returns fewer than 3 results, try a broader query.
+3. After all searches, compile ALL findings into one JSON array.
+4. End your response with EXACTLY this line (no markdown fences):
+   Final Answer: [{{...}}, {{...}}]
+
+The JSON array items must include every field returned by the search tools. \
+Do NOT summarise or omit fields. Return the raw tool results merged together.\
+"""
 
 
 def _td_to_tool(td: Any) -> Tool:
@@ -272,6 +285,78 @@ def _build_tools_for_source(source: str, adapter: Optional[MCPToolAdapter]) -> l
     return tools
 
 
+async def _direct_mcp_search(
+    source: str,
+    sub_queries: list[str],
+    date_range: dict[str, str],
+    min_value_usd: float,
+    adapter: MCPToolAdapter,
+    llm: Any,
+) -> list[dict[str, Any]]:
+    """Directly call MCP tools for each sub-query, then use LLM to synthesise.
+
+    This is used as a fallback (or primary path) when the ReAct loop returns
+    empty results — newer LLMs sometimes skip the tool-call step.
+    """
+    raw_results: list[str] = []
+    tool_names = [t.get("name", "") for t in (adapter.tools_list or [])]
+
+    # Pick the most relevant tool for this source
+    search_tool = None
+    for candidate in tool_names:
+        if "search" in candidate.lower() or "news" in candidate.lower() or "deal" in candidate.lower():
+            search_tool = candidate
+            break
+    if not search_tool and tool_names:
+        search_tool = tool_names[0]
+
+    if not search_tool:
+        logger.warning("[%s] No search tool found on adapter", source)
+        return []
+
+    logger.info("[%s] Direct MCP search — tool=%s queries=%d", source, search_tool, len(sub_queries))
+    for q in sub_queries:
+        try:
+            result = await adapter.session.call_tool(search_tool, {"query": q})
+            raw = json.dumps(result) if not isinstance(result, str) else result
+            limit = settings.max_observation_chars
+            if len(raw) > limit:
+                raw = raw[:limit] + "\n... [truncated]"
+            raw_results.append(raw)
+            logger.debug("[%s] tool call returned %d chars for query: %s", source, len(raw), q[:60])
+        except Exception as exc:
+            logger.warning("[%s] MCP tool call failed for query %r: %s", source, q, exc)
+
+    if not raw_results:
+        return []
+
+    # Ask the LLM to extract structured findings from the raw tool output
+    combined = "\n\n---\n\n".join(raw_results)
+    synthesis_prompt = (
+        f"You are a financial data analyst. Below are raw results from the {source} data source.\n"
+        f"Extract ALL deals/articles that match: deal value >= ${min_value_usd:,.0f}, "
+        f"date range {date_range.get('start_date', 'any')} to {date_range.get('end_date', 'today')}.\n\n"
+        f"Raw data:\n{combined}\n\n"
+        f"Return a JSON array of findings. Each item must include every field present in the raw data. "
+        f"Do NOT filter out items unless they clearly fail the criteria. "
+        f"Return ONLY the JSON array — no markdown, no explanation."
+    )
+
+    try:
+        raw_answer = await llm.generate_async(synthesis_prompt, max_tokens=4096, temperature=0.0)
+        raw_answer = raw_answer.strip()
+        if raw_answer.startswith("```"):
+            raw_answer = "\n".join(l for l in raw_answer.splitlines() if not l.startswith("```")).strip()
+        findings: list[dict[str, Any]] = json.loads(raw_answer)
+        if not isinstance(findings, list):
+            findings = [findings]
+        logger.info("[%s] Direct synthesis returned %d findings", source, len(findings))
+        return findings
+    except Exception as exc:
+        logger.warning("[%s] Direct synthesis failed: %s", source, exc)
+        return []
+
+
 async def search_source(
     source: str,
     sub_queries: list[str],
@@ -281,19 +366,14 @@ async def search_source(
     adapter: Optional[MCPToolAdapter],
     llm: Any,
 ) -> list[dict[str, Any]]:
-    """Run a ReAct search loop for a single data source.
+    """Search a single data source using ReAct loop with direct-call fallback.
 
-    Args:
-        source: One of "ravenpack", "capiq".
-        sub_queries: List of query strings from the planner step.
-        system_instructions: Extra constraints from the user (e.g. "exclude deals < $1B").
-        date_range: Dict with "start_date" and "end_date" (ISO-8601).
-        min_value_usd: Minimum deal value in USD (0 = no filter).
-        adapter: Live MCPToolAdapter or None (uses stub).
-        llm: LLMGatewayClient instance.
-
-    Returns:
-        List of finding dicts from the agent's final answer.
+    Strategy:
+      1. Try the ReAct loop (works well with smaller/older models that follow
+         text-format instructions strictly).
+      2. If ReAct returns 0 findings AND a live adapter is available, fall back
+         to calling the MCP tools directly and asking the LLM to synthesise
+         (more reliable with larger/newer models like Sonnet-4-5).
     """
     system_prompt = _SYSTEM_PROMPTS.get(source, next(iter(_SYSTEM_PROMPTS.values())))
     tools = _build_tools_for_source(source, adapter)
@@ -316,29 +396,40 @@ async def search_source(
     task = _TASK_TEMPLATE.format(
         system_instructions="\n".join(f"- {i}" for i in system_instructions) or "- None",
         sub_queries="\n".join(f"- {q}" for q in sub_queries),
-        start_date=date_range.get("start_date", ""),
-        end_date=date_range.get("end_date", ""),
+        start_date=date_range.get("start_date", "any"),
+        end_date=date_range.get("end_date", "today"),
         min_value_usd=min_value_usd,
     )
 
     logger.info("[%s] Starting ReAct search — %d sub-queries", source, len(sub_queries))
     result = await agent.run(question=task)
 
-    if not result.success:
-        logger.warning("[%s] ReAct loop did not succeed: %s", source, result.final_answer)
-        return []
+    findings: list[dict[str, Any]] = []
 
-    try:
-        answer = result.final_answer or "[]"
-        answer = answer.strip()
-        if answer.startswith("```"):
-            lines = answer.splitlines()
-            answer = "\n".join(line for line in lines if not line.startswith("```"))
-        findings: list[dict[str, Any]] = json.loads(answer)
-        if not isinstance(findings, list):
-            findings = [findings]
-        logger.info("[%s] ReAct returned %d findings", source, len(findings))
-        return findings
-    except json.JSONDecodeError as exc:
-        logger.warning("[%s] Could not parse ReAct JSON output: %s", source, exc)
-        return [{"source": source, "raw": result.final_answer, "parse_error": str(exc)}]
+    if result.success and result.final_answer:
+        try:
+            answer = result.final_answer.strip()
+            if answer.startswith("```"):
+                answer = "\n".join(l for l in answer.splitlines() if not l.startswith("```")).strip()
+            parsed = json.loads(answer)
+            findings = parsed if isinstance(parsed, list) else [parsed]
+            logger.info("[%s] ReAct returned %d findings", source, len(findings))
+        except json.JSONDecodeError as exc:
+            logger.warning("[%s] Could not parse ReAct JSON output: %s", source, exc)
+
+    # Fallback: if ReAct gave 0 findings and we have a live adapter, call tools directly
+    if not findings and adapter and adapter.session:
+        logger.info("[%s] ReAct returned empty — falling back to direct MCP call", source)
+        findings = await _direct_mcp_search(
+            source=source,
+            sub_queries=sub_queries,
+            date_range=date_range,
+            min_value_usd=min_value_usd,
+            adapter=adapter,
+            llm=llm,
+        )
+
+    if not findings:
+        logger.warning("[%s] No findings from ReAct or direct MCP search", source)
+
+    return findings

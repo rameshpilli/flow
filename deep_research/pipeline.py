@@ -126,7 +126,7 @@ def build_pipeline(ao: AgentOrchestrator) -> Pipeline:
             fn=generate_report,
             deps=["cross_verify"],
             description="Synthesise a comprehensive final research report.",
-            timeout_ms=120_000,
+            timeout_ms=300_000,   # 5 min — deep reports with many findings take time
         )
     )
 

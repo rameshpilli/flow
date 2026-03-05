@@ -78,27 +78,62 @@ Return ONLY the JSON — no markdown, no commentary.
 """
 
 _REPORT_PROMPT = """\
-You are a senior financial analyst writing a comprehensive research report.
+You are a senior M&A research analyst. Write a comprehensive deep research \
+report based on {n_findings} verified findings below.
 
-User query: {query}
+**Query:** {query}
+**Constraints:** {system_instructions}
 
-System instructions applied:
-{system_instructions}
-
-Research findings (verified):
+**Findings:**
 {findings_json}
 
-Write a {format} report that:
-1. Opens with an executive summary (2–3 sentences).
-2. Organises findings by category (e.g. by region or deal type if applicable).
-3. For each finding includes: deal name, parties involved, deal value, date,
-   status, and the source(s) it came from.
-4. Ends with a "Coverage Notes" section listing which sources were searched,
-   the date range covered, and any gaps or caveats.
-5. Uses clear headings and bullet points for easy scanning.
-6. Cites every source inline using [Source Name] notation.
+---
 
-Be comprehensive — include ALL verified findings, not just highlights.
+Structure your report with these sections:
+
+## Executive Summary
+3–4 sentences: total deal count, combined value in USD, dominant sectors, \
+key themes this quarter (e.g. AI consolidation, energy transition, PE take-privates).
+
+## Market Statistics
+- Total deals: N | Combined value: $X billion
+- By status: Completed / Announced / Pending
+- Largest deal | Smallest deal above threshold
+- Top 3 sectors by deal value
+
+## Sector Breakdown
+For each sector with 2+ deals: paragraph on deal count, combined value, \
+who is buying whom, and why consolidation is happening now.
+
+## Regional Overview
+Americas / Europe / Asia-Pacific / Middle East — deal count and combined value \
+per region, plus 1–2 notable deals per region.
+
+## Deal-by-Deal Summary
+For EVERY finding (do not skip any):
+**Target ← Acquirer | $Value | Status | Date**
+- Sector · Region · Deal type
+- Financing: [Cash / Stock / Debt]
+- Strategic rationale: one sentence
+- Regulatory: [status]
+- Source: [source]
+
+## Regulatory Watch
+3–5 deals with active regulatory risk (CFIUS, EU Phase 2, China SAMR). \
+What is at stake and expected timeline.
+
+## Key Trends
+5 bullet points on M&A themes visible in the data.
+
+## Outlook
+2–3 sentences: pending deals expected to close next quarter, pipeline signals.
+
+## Coverage Notes
+Sources: RavenPack News, S&P Capital IQ | Date range: from findings | \
+Findings verified: {n_findings}
+
+---
+Use {format} with clean headings. Be specific with names, values, dates.
 """
 
 
@@ -122,8 +157,14 @@ async def plan_research(ctx: Any) -> dict[str, Any]:
     logger.info("Planning research for query: %s", query[:120])
     raw = await llm.generate_async(prompt, max_tokens=1024, temperature=0.1)
 
+    # Strip markdown code fences that newer models sometimes add
+    raw_clean = raw.strip()
+    if raw_clean.startswith("```"):
+        lines = raw_clean.splitlines()
+        raw_clean = "\n".join(l for l in lines if not l.startswith("```")).strip()
+
     try:
-        plan: dict[str, Any] = json.loads(raw)
+        plan: dict[str, Any] = json.loads(raw_clean)
     except json.JSONDecodeError:
         logger.warning("Planner returned non-JSON; using defaults")
         plan = {
@@ -342,8 +383,9 @@ async def generate_report(ctx: Any) -> dict[str, Any]:
         query=query,
         system_instructions="\n".join(
             f"- {i}" for i in plan.get("system_instructions", [])
-        ) or "- None",
+        ) or "None",
         findings_json=findings_json,
+        n_findings=len(verified),
         format=settings.report_format,
     )
 

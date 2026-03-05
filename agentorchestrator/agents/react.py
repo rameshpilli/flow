@@ -444,8 +444,9 @@ class ReActAgent:
 
     def _parse_final_answer(self, text: str) -> str | None:
         """Parse final answer from LLM output."""
-        # Look for Final Answer: ...
-        pattern = r"Final Answer:\s*(.+?)(?:\n\n|$)"
+        # Greedy match from "Final Answer:" to end-of-string so multi-line
+        # JSON arrays are captured in full and not truncated at the first blank line.
+        pattern = r"Final Answer:\s*(.+)$"
         match = re.search(pattern, text, re.DOTALL)
         if match:
             return match.group(1).strip()

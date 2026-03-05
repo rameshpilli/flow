@@ -22,3 +22,5 @@ htmlcov/
 *.log
 .env
 .env.local
+local_llm/.env
+local_llm/.env.local
