@@ -91,6 +91,11 @@ from agentorchestrator.utils import (
 # =============================================================================
 # Use: from agentorchestrator.services import LLMGatewayClient
 
+# =============================================================================
+# MCP SERVER - Expose chains/agents as MCP tools (opt-in)
+# =============================================================================
+from agentorchestrator.server.mcp import MCPServer, MCPToolDef
+
 __version__ = "0.1.0"
 
 # Focused public API (~30 exports instead of 75+)
@@ -136,6 +141,9 @@ __all__ = [
     "CircuitBreakerConfig",
     "configure_logging",
     "get_logger",
+    # MCP Server (opt-in — expose chains as MCP tools)
+    "MCPServer",
+    "MCPToolDef",
 ]
 
 
