@@ -42,9 +42,8 @@ from agentorchestrator.services.llm_gateway import LLMGatewayClient
 from agentorchestrator.services.mcp_service import MCPServiceManager
 from agentorchestrator.utils.mcp_tool_adapter import MCPToolAdapter
 
-from deep_research.chain import CHAIN_NAME, build_pipeline
 from deep_research.config import settings
-from deep_research.middleware import setup_middleware
+from deep_research.pipeline import CHAIN_NAME, build_pipeline, setup_middleware
 
 logging.basicConfig(level=settings.log_level)
 logger = logging.getLogger(__name__)
@@ -100,7 +99,7 @@ async def lifespan(app: FastAPI):
 
     # MCP adapters — each is created, connected, then registered with the manager.
     # If an endpoint env var is not set the adapter is skipped gracefully; stub
-    # tools in tools.py are used instead.
+    # tools in search.py are used instead.
     _mcp = MCPServiceManager()
 
     _mcp_sources = [

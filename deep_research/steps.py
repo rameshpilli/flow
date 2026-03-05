@@ -24,7 +24,7 @@ from typing import Any
 from agentorchestrator.middleware.offload import cap_per_source
 
 from deep_research.config import settings
-from deep_research.react_searcher import search_source
+from deep_research.search import search_source
 
 logger = logging.getLogger(__name__)
 

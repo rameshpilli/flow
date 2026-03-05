@@ -78,15 +78,13 @@ The **ReAct loop** (Thought → Action → Observation) inside each search step 
 
 ```
 deep_research/
-├── __init__.py          # Package entry point
-├── config.py            # All settings from environment variables
-├── tools.py             # Shared ToolRegistry (utility + stub search tools)
-├── react_searcher.py    # ReActAgent factory — wraps MCP adapters per source
-├── steps.py             # Five @ao.step functions with LLM prompt templates
-├── chain.py             # Pipeline DSL — DAG wiring with deps and timeouts
-├── middleware.py        # Middleware stack composition (7 layers)
-├── server.py            # FastAPI app — endpoints, lifespan, SSE streaming
-├── README.md            # This file
+├── __init__.py    # Package entry point
+├── config.py      # All settings from environment variables
+├── search.py      # ToolRegistry (utility + stub tools) + ReActAgent searcher
+├── steps.py       # DAG step functions and LLM prompt templates
+├── pipeline.py    # DAG wiring (Pipeline DSL) + middleware stack (7 layers)
+├── server.py      # FastAPI app — endpoints, lifespan, SSE streaming
+├── README.md      # This file
 └── Dockerfile
 ```
 
