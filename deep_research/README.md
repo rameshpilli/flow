@@ -1,6 +1,6 @@
 # Deep Research Agent
 
-A production-ready, multi-source research agent built on the **AgentOrchestrator** framework.  It goes beyond simple Q&A by running an iterative, parallel research pipeline across news feeds, SEC/EDGAR filings, financial databases, and the web — then cross-verifying and synthesising findings into a comprehensive cited report.
+A production-ready, multi-source research agent built on the **AgentOrchestrator** framework.  It runs an iterative, parallel research pipeline across **RavenPack News** and **S&P Capital IQ** via internal MCP servers — then cross-verifying and synthesising findings into a comprehensive cited report.
 
 > **Example query:** _"Show me all M&A deals greater than $1B that were announced or updated in the past two weeks."_
 
@@ -15,13 +15,16 @@ flowchart TD
 
     subgraph dag [DAG Pipeline]
         plan["Step: plan_research\n(query decomposition)"]
-        search["Parallel Step Group:\nsearch_news / search_sec /\nsearch_financial / search_web"]
+        news["Step: search_news\n(RavenPack News MCP)"]
+        capiq["Step: search_capiq\n(Capital IQ MCP)"]
         aggregate["Step: aggregate_sources\n(dedup + rank)"]
         verify["Step: cross_verify\n(ReflectionMiddleware)"]
         report["Step: generate_report\n(SummarizerMiddleware)"]
 
-        plan --> search
-        search --> aggregate
+        plan --> news
+        plan --> capiq
+        news --> aggregate
+        capiq --> aggregate
         aggregate --> verify
         verify --> report
     end
@@ -29,13 +32,15 @@ flowchart TD
     AO --> dag
 
     subgraph tools [Tool Layer]
-        mcpNews["MCPToolAdapter\nnews_mcp"]
-        mcpSEC["MCPToolAdapter\nsec_mcp"]
-        mcpFinancial["MCPToolAdapter\nfinancial_mcp"]
-        webSearch["ToolRegistry\nweb_search"]
+        mcpRaven["MCPToolAdapter\nravenpack"]
+        mcpCapIQ["MCPToolAdapter\ncapiq"]
+        truncate["Observation guard\nMAX_OBSERVATION_CHARS"]
     end
 
-    search --> tools
+    news --> mcpRaven
+    capiq --> mcpCapIQ
+    mcpRaven --> truncate
+    mcpCapIQ --> truncate
 
     subgraph middleware [Middleware Stack]
         logger["LoggerMiddleware"]
@@ -47,15 +52,6 @@ flowchart TD
     end
 
     AO --> middleware
-
-    subgraph storage [Storage]
-        redis["Redis\nchat + cache"]
-        vectorStore["VectorStoreService\ndoc retrieval"]
-        mem0["Mem0\nsemantic memory"]
-    end
-
-    aggregate --> storage
-    verify --> storage
 ```
 
 ---
@@ -65,9 +61,9 @@ flowchart TD
 | Phase | Step | What happens |
 |---|---|---|
 | 1 | `plan_research` | LLM decomposes the query into 2–4 precise sub-queries with date range, deal-value filter, and source hints |
-| 2 | `search_*` (×4, parallel) | Four ReActAgent instances run concurrently — each calls its MCP data source iteratively, refining the query if results are sparse |
-| 3 | `aggregate_sources` | Findings are merged, de-duplicated by title/deal-ID, and sorted by date |
-| 4 | `cross_verify` | LLM validates each finding against the user's criteria; conflicts are flagged, off-topic items removed |
+| 2 | `search_news` + `search_capiq` (parallel) | Two ReActAgent instances run concurrently — one against RavenPack News, one against Capital IQ. Each MCP response is truncated to `MAX_OBSERVATION_CHARS` before entering the LLM context window |
+| 3 | `aggregate_sources` | Findings from both sources are merged, de-duplicated by title/deal-ID, and sorted by date |
+| 4 | `cross_verify` | LLM validates each finding against the user’s criteria; conflicts are flagged, off-topic items removed |
 | 5 | `generate_report` | LLM synthesises a fully cited Markdown (or JSON) report with an executive summary, categorised findings, and a coverage-notes appendix |
 
 The **ReAct loop** (Thought → Action → Observation) inside each search step means the agent can self-correct: if a search returns zero results it will refine its query and retry, up to `REACT_MAX_ITERATIONS` times.
@@ -117,14 +113,11 @@ LLM_API_KEY=sk-...                    # or use OAuth vars below
 # LLM_CLIENT_SECRET=...
 
 # MCP Data Sources — fill these in your corporate environment
-MCP_NEWS_ENDPOINT=https://news-mcp.internal/mcp
-MCP_NEWS_SECRET=your-news-mcp-secret
+MCP_RAVENPACK_ENDPOINT=https://ravenpack-mcp.internal/mcp
+MCP_RAVENPACK_SECRET=your-ravenpack-secret
 
-MCP_SEC_ENDPOINT=https://sec-mcp.internal/mcp
-MCP_SEC_SECRET=your-sec-mcp-secret
-
-MCP_FINANCIAL_ENDPOINT=https://financial-mcp.internal/mcp
-MCP_FINANCIAL_SECRET=your-financial-mcp-secret
+MCP_CAPIQ_ENDPOINT=https://capiq-mcp.internal/mcp
+MCP_CAPIQ_SECRET=your-capiq-secret
 ```
 
 > **Note:** MCP endpoints are stubs until you configure them.  The service still runs and returns LLM-generated placeholder results so you can test the full pipeline without live data sources.
@@ -174,7 +167,7 @@ curl http://localhost:8000/runs/3fa85f64-5717-4562-b3fc-2c963f66afa6
 {
   "run_id": "3fa85f64-...",
   "status": "completed",
-  "steps_completed": ["plan_research", "search_news", "search_sec", "search_financial", "search_web", "aggregate_sources", "cross_verify", "generate_report"]
+  "steps_completed": ["plan_research", "search_news", "search_capiq", "aggregate_sources", "cross_verify", "generate_report"]
 }
 ```
 
@@ -192,7 +185,7 @@ curl http://localhost:8000/runs/3fa85f64-5717-4562-b3fc-2c963f66afa6/output
   "stats": {
     "verified_findings": 23,
     "flagged_findings": 2,
-    "source_counts": { "news": 8, "sec": 6, "financial": 7, "web": 4 }
+    "source_counts": { "ravenpack": 12, "capiq": 11 }
   }
 }
 ```
@@ -273,7 +266,7 @@ data: {"event": "step_completed", "step": "plan_research", "label": "Planning re
 
 data: {"event": "step_completed", "step": "search_news", "label": "Searching news sources…", "success": true, "duration_ms": 8721.0}
 
-data: {"event": "step_completed", "step": "search_sec", "label": "Searching SEC/EDGAR filings…", "success": true, "duration_ms": 9103.0}
+data: {"event": "step_completed", "step": "search_capiq", "label": "Searching Capital IQ…", "success": true, "duration_ms": 9103.0}
 
 data: {"event": "step_completed", "step": "aggregate_sources", "label": "Aggregating and deduplicating findings…", "success": true, "duration_ms": 1204.0}
 
@@ -293,9 +286,11 @@ All settings live in `config.py` and are read from environment variables.
 | `LLM_SERVER_URL` | `http://localhost:8080/v1/...` | LLM gateway URL |
 | `LLM_MODEL_NAME` | `gpt-4` | Model to use |
 | `LLM_API_KEY` | — | API key (or use OAuth) |
-| `MCP_NEWS_ENDPOINT` | — | News MCP server URL |
-| `MCP_SEC_ENDPOINT` | — | SEC/EDGAR MCP server URL |
-| `MCP_FINANCIAL_ENDPOINT` | — | Financial data MCP server URL |
+| `MCP_RAVENPACK_ENDPOINT` | — | RavenPack News MCP server URL |
+| `MCP_RAVENPACK_SECRET` | — | RavenPack bearer token |
+| `MCP_CAPIQ_ENDPOINT` | — | S&P Capital IQ MCP server URL |
+| `MCP_CAPIQ_SECRET` | — | Capital IQ bearer token |
+| `MAX_OBSERVATION_CHARS` | `8000` | Max chars per MCP response before truncation |
 | `MCP_*_ROUTING` | `path` | `path` (RavenPack-style) or `jsonrpc` (CapIQ-style) |
 | `REDIS_HOST` | `localhost` | Redis host for caching |
 | `CHAIN_MAX_PARALLEL_STEPS` | `4` | Max concurrent parallel search steps |
@@ -358,7 +353,7 @@ When a user asks a research question in Cohere North, the LLM decides to call th
 ```
 data: {"type": "progress", "step": "plan_research",    "label": "Planning research sub-queries…",   "duration_ms": 2100}
 data: {"type": "progress", "step": "search_news",      "label": "Searching news sources…",          "duration_ms": 8700}
-data: {"type": "progress", "step": "search_sec",       "label": "Searching SEC/EDGAR filings…",     "duration_ms": 9100}
+data: {"type": "progress", "step": "search_capiq",     "label": "Searching Capital IQ…",            "duration_ms": 9100}
 data: {"type": "progress", "step": "aggregate_sources","label": "Aggregating findings…",            "duration_ms": 1200}
 data: {"type": "progress", "step": "cross_verify",     "label": "Cross-verifying findings…",        "duration_ms": 11400}
 data: {"type": "progress", "step": "generate_report",  "label": "Generating final report…",         "duration_ms": 18300}

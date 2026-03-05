@@ -2,7 +2,7 @@
 
 Five steps that implement the research pipeline:
 
-  plan_research        →  [search_news, search_sec, search_financial, search_web]
+  plan_research        →  [search_news, search_capiq]
                         ↓
                      aggregate_sources
                         ↓
@@ -130,7 +130,7 @@ async def plan_research(ctx: Any) -> dict[str, Any]:
             "sub_queries": [query],
             "date_range": {"start_date": "", "end_date": ""},
             "min_value_usd": 0,
-            "source_hints": ["news", "sec", "financial", "web"],
+            "source_hints": ["ravenpack", "capiq"],
             "filters": {},
         }
 
@@ -148,14 +148,14 @@ async def plan_research(ctx: Any) -> dict[str, Any]:
 
 
 async def search_news(ctx: Any) -> dict[str, Any]:
-    """Step 2a: Parallel — Search news sources via MCP or stub."""
+    """Step 2a: Parallel — Search RavenPack News MCP or stub."""
     plan: dict[str, Any] = ctx.get("research_plan", {})
     llm = ctx.get("llm_client")
     mcp_service = ctx.get("mcp_service")
 
-    adapter = mcp_service.get_adapter("news") if mcp_service else None
+    adapter = mcp_service.get_adapter("ravenpack") if mcp_service else None
     findings = await search_source(
-        source="news",
+        source="ravenpack",
         sub_queries=plan.get("sub_queries", []),
         system_instructions=plan.get("system_instructions", []),
         date_range=plan.get("date_range", {}),
@@ -166,15 +166,15 @@ async def search_news(ctx: Any) -> dict[str, Any]:
     return {"news_findings": cap_per_source(findings, max_per_source=settings.results_per_source)}
 
 
-async def search_sec(ctx: Any) -> dict[str, Any]:
-    """Step 2b: Parallel — Search SEC/EDGAR filings via MCP or stub."""
+async def search_capiq(ctx: Any) -> dict[str, Any]:
+    """Step 2b: Parallel — Search S&P Capital IQ MCP or stub."""
     plan: dict[str, Any] = ctx.get("research_plan", {})
     llm = ctx.get("llm_client")
     mcp_service = ctx.get("mcp_service")
 
-    adapter = mcp_service.get_adapter("sec") if mcp_service else None
+    adapter = mcp_service.get_adapter("capiq") if mcp_service else None
     findings = await search_source(
-        source="sec",
+        source="capiq",
         sub_queries=plan.get("sub_queries", []),
         system_instructions=plan.get("system_instructions", []),
         date_range=plan.get("date_range", {}),
@@ -182,54 +182,13 @@ async def search_sec(ctx: Any) -> dict[str, Any]:
         adapter=adapter,
         llm=llm,
     )
-    return {"sec_findings": cap_per_source(findings, max_per_source=settings.results_per_source)}
-
-
-async def search_financial(ctx: Any) -> dict[str, Any]:
-    """Step 2c: Parallel — Search financial databases via MCP or stub."""
-    plan: dict[str, Any] = ctx.get("research_plan", {})
-    llm = ctx.get("llm_client")
-    mcp_service = ctx.get("mcp_service")
-
-    adapter = mcp_service.get_adapter("financial") if mcp_service else None
-    findings = await search_source(
-        source="financial",
-        sub_queries=plan.get("sub_queries", []),
-        system_instructions=plan.get("system_instructions", []),
-        date_range=plan.get("date_range", {}),
-        min_value_usd=float(plan.get("min_value_usd", 0)),
-        adapter=adapter,
-        llm=llm,
-    )
-    return {"financial_findings": cap_per_source(findings, max_per_source=settings.results_per_source)}
-
-
-async def search_web(ctx: Any) -> dict[str, Any]:
-    """Step 2d: Parallel — Web search as supplementary source."""
-    plan: dict[str, Any] = ctx.get("research_plan", {})
-    llm = ctx.get("llm_client")
-
-    # Web search does not use an MCP adapter by default — it relies on the
-    # LLM's own knowledge + date-bounded prompting.  Swap in a web-search MCP
-    # (e.g. Tavily, Bing) by adding MCP_WEB_ENDPOINT to your environment.
-    findings = await search_source(
-        source="web",
-        sub_queries=plan.get("sub_queries", []),
-        system_instructions=plan.get("system_instructions", []),
-        date_range=plan.get("date_range", {}),
-        min_value_usd=float(plan.get("min_value_usd", 0)),
-        adapter=None,
-        llm=llm,
-    )
-    return {"web_findings": cap_per_source(findings, max_per_source=settings.results_per_source)}
+    return {"capiq_findings": cap_per_source(findings, max_per_source=settings.results_per_source)}
 
 
 async def aggregate_sources(ctx: Any) -> dict[str, Any]:
-    """Step 3: Merge all source findings, deduplicate, and rank by recency."""
+    """Step 3: Merge findings from RavenPack and CapIQ, deduplicate, rank by recency."""
     news = ctx.get("news_findings") or []
-    sec = ctx.get("sec_findings") or []
-    financial = ctx.get("financial_findings") or []
-    web = ctx.get("web_findings") or []
+    capiq = ctx.get("capiq_findings") or []
 
     # Tag each item with its source bucket for downstream citation
     def _tag(items: list[dict], source: str) -> list[dict]:
@@ -238,10 +197,8 @@ async def aggregate_sources(ctx: Any) -> dict[str, Any]:
         return items
 
     all_findings: list[dict[str, Any]] = (
-        _tag(list(news), "news")
-        + _tag(list(sec), "sec")
-        + _tag(list(financial), "financial")
-        + _tag(list(web), "web")
+        _tag(list(news), "ravenpack")
+        + _tag(list(capiq), "capiq")
     )
 
     # Basic deduplication by title/deal_id similarity
@@ -268,17 +225,15 @@ async def aggregate_sources(ctx: Any) -> dict[str, Any]:
     unique.sort(key=_date_key, reverse=True)
 
     logger.info(
-        "Aggregated %d raw findings → %d unique (news=%d, sec=%d, financial=%d, web=%d)",
-        len(all_findings), len(unique), len(news), len(sec), len(financial), len(web),
+        "Aggregated %d raw findings → %d unique (ravenpack=%d, capiq=%d)",
+        len(all_findings), len(unique), len(news), len(capiq),
     )
 
     return {
         "aggregated_findings": unique,
         "source_counts": {
-            "news": len(news),
-            "sec": len(sec),
-            "financial": len(financial),
-            "web": len(web),
+            "ravenpack": len(news),
+            "capiq": len(capiq),
             "total_raw": len(all_findings),
             "total_unique": len(unique),
         },

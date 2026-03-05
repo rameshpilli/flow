@@ -9,18 +9,19 @@ Two setup functions called once at application startup:
 
 DAG shape
 ─────────
-    plan_research
-         │
-    ┌────┴────────────────────┐
-    ▼    ▼         ▼          ▼
- search_news  search_sec  search_financial  search_web
-    └────┬────────────────────┘
-         ▼
-  aggregate_sources
-         ▼
-    cross_verify
-         ▼
-   generate_report
+         plan_research
+               │
+       ┌───────┴───────┐
+       ▼               ▼
+  search_news    search_capiq
+  (RavenPack)    (Capital IQ)
+       └───────┬───────┘
+               ▼
+       aggregate_sources
+               ▼
+          cross_verify
+               ▼
+         generate_report
 
 Middleware order (run_before fires top→bottom, run_after fires bottom→top)
 ──────────────────────────────────────────────────────────────────────────
@@ -58,10 +59,8 @@ from deep_research.steps import (
     cross_verify,
     generate_report,
     plan_research,
-    search_financial,
+    search_capiq,
     search_news,
-    search_sec,
-    search_web,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,41 +84,27 @@ def build_pipeline(ao: AgentOrchestrator) -> Pipeline:
             description="Decompose the user query into structured sub-queries and filters.",
             timeout_ms=30_000,
         )
-        # ── Steps 2a-2d: parallel search (all depend only on plan_research) ───
+        # ── Steps 2a-2b: parallel search (both depend only on plan_research) ───
         .step(
             "search_news",
             fn=search_news,
             deps=["plan_research"],
-            description="Search news sources (MCP/stub) for relevant findings.",
+            description="Search RavenPack News MCP for relevant findings.",
             timeout_ms=60_000,
         )
         .step(
-            "search_sec",
-            fn=search_sec,
+            "search_capiq",
+            fn=search_capiq,
             deps=["plan_research"],
-            description="Search SEC/EDGAR filings (MCP/stub).",
-            timeout_ms=60_000,
-        )
-        .step(
-            "search_financial",
-            fn=search_financial,
-            deps=["plan_research"],
-            description="Search financial databases for deal data (MCP/stub).",
-            timeout_ms=60_000,
-        )
-        .step(
-            "search_web",
-            fn=search_web,
-            deps=["plan_research"],
-            description="Supplementary web search using LLM knowledge.",
+            description="Search S&P Capital IQ MCP for deal data.",
             timeout_ms=60_000,
         )
         # ── Step 3: aggregate ─────────────────────────────────────────────────
         .step(
             "aggregate_sources",
             fn=aggregate_sources,
-            deps=["search_news", "search_sec", "search_financial", "search_web"],
-            description="Merge, deduplicate, and rank findings from all sources.",
+            deps=["search_news", "search_capiq"],
+            description="Merge, deduplicate, and rank findings from both sources.",
             timeout_ms=30_000,
         )
         # ── Step 4: verify ────────────────────────────────────────────────────

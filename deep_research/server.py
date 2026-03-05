@@ -64,10 +64,8 @@ _run_queues: dict[str, asyncio.Queue] = {}
 # Human-readable labels shown in SSE progress events
 _STEP_LABELS: dict[str, str] = {
     "plan_research":     "Planning research sub-queries…",
-    "search_news":       "Searching news sources…",
-    "search_sec":        "Searching SEC/EDGAR filings…",
-    "search_financial":  "Searching financial databases…",
-    "search_web":        "Supplementary web search…",
+    "search_news":       "Searching RavenPack News…",
+    "search_capiq":      "Searching Capital IQ…",
     "aggregate_sources": "Aggregating and deduplicating findings…",
     "cross_verify":      "Cross-verifying findings across sources…",
     "generate_report":   "Generating final report…",
@@ -103,12 +101,10 @@ async def lifespan(app: FastAPI):
     _mcp = MCPServiceManager()
 
     _mcp_sources = [
-        ("news",      settings.mcp_news_endpoint,      settings.mcp_news_secret,
-         settings.mcp_news_routing,      settings.mcp_news_verify_ssl),
-        ("sec",       settings.mcp_sec_endpoint,       settings.mcp_sec_secret,
-         settings.mcp_sec_routing,       settings.mcp_sec_verify_ssl),
-        ("financial", settings.mcp_financial_endpoint, settings.mcp_financial_secret,
-         settings.mcp_financial_routing, settings.mcp_financial_verify_ssl),
+        ("ravenpack", settings.mcp_ravenpack_endpoint, settings.mcp_ravenpack_secret,
+         settings.mcp_ravenpack_routing, settings.mcp_ravenpack_verify_ssl),
+        ("capiq",     settings.mcp_capiq_endpoint,     settings.mcp_capiq_secret,
+         settings.mcp_capiq_routing,     settings.mcp_capiq_verify_ssl),
     ]
 
     for adapter_name, endpoint, secret, routing, verify_ssl in _mcp_sources:
@@ -183,16 +179,7 @@ async def lifespan(app: FastAPI):
             "llm_client": _llm,
             "mcp_service": _mcp,
         },
-        step_labels={
-            "plan_research":     "Planning research sub-queries…",
-            "search_news":       "Searching news sources…",
-            "search_sec":        "Searching SEC/EDGAR filings…",
-            "search_financial":  "Searching financial databases…",
-            "search_web":        "Supplementary web search…",
-            "aggregate_sources": "Aggregating and deduplicating findings…",
-            "cross_verify":      "Cross-verifying findings across sources…",
-            "generate_report":   "Generating final report…",
-        },
+        step_labels=_STEP_LABELS,
     )
     app.include_router(_mcp_server.router, prefix="/mcp")
     logger.info(

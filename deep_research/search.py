@@ -12,7 +12,7 @@ ToolRegistry contents
     deduplicate_results  – remove near-duplicates within a source
 
   Stub tools (fallback when no MCP endpoint is configured):
-    search_news_stub, search_sec_stub, search_financial_stub
+    search_news_stub, search_capiq_stub
 
 ReActAgent entry point
 ──────────────────────
@@ -152,75 +152,44 @@ async def search_news_stub(query: str, start_date: str = "", end_date: str = "")
 
 
 @tool_registry.tool(
-    name="search_sec_stub",
+    name="search_capiq_stub",
     description=(
-        "[STUB — replace with MCP adapter] Search SEC/EDGAR filings for a given query. "
-        "Returns placeholder data until MCP_SEC_ENDPOINT is configured."
+        "[STUB — replace with MCP adapter] Search S&P Capital IQ for M&A deal data. "
+        "Returns placeholder data until MCP_CAPIQ_ENDPOINT is configured."
     ),
     category="search",
-    tags=["sec", "filings", "stub"],
+    tags=["capiq", "deals", "stub"],
 )
-async def search_sec_stub(query: str, form_type: str = "8-K", start_date: str = "") -> str:
-    logger.warning("search_sec_stub called — configure MCP_SEC_ENDPOINT for real data")
-    return json.dumps({
-        "source": "sec_stub",
-        "query": query,
-        "results": [],
-        "note": "Configure MCP_SEC_ENDPOINT to enable real SEC filings search.",
-    })
-
-
-@tool_registry.tool(
-    name="search_financial_stub",
-    description=(
-        "[STUB — replace with MCP adapter] Search financial data (M&A, deals) for a given query. "
-        "Returns placeholder data until MCP_FINANCIAL_ENDPOINT is configured."
-    ),
-    category="search",
-    tags=["financial", "deals", "stub"],
-)
-async def search_financial_stub(
+async def search_capiq_stub(
     query: str, deal_type: str = "M&A", min_value_usd: float = 0
 ) -> str:
-    logger.warning("search_financial_stub called — configure MCP_FINANCIAL_ENDPOINT for real data")
+    logger.warning("search_capiq_stub called — configure MCP_CAPIQ_ENDPOINT for real data")
     return json.dumps({
-        "source": "financial_stub",
+        "source": "capiq_stub",
         "query": query,
         "results": [],
-        "note": "Configure MCP_FINANCIAL_ENDPOINT to enable real financial data search.",
+        "note": "Configure MCP_CAPIQ_ENDPOINT to enable real Capital IQ data search.",
     })
 
 
 # ── ReAct searcher ─────────────────────────────────────────────────────────────
 
 _SYSTEM_PROMPTS: dict[str, str] = {
-    "news": (
-        "You are a financial news researcher. Your job is to search for news articles "
-        "about mergers, acquisitions, and corporate deals. "
+    "ravenpack": (
+        "You are a financial news researcher using the RavenPack News MCP server. "
+        "Search for news articles, press releases, and wire feeds about mergers, "
+        "acquisitions, and corporate deals. "
         "Always filter results to the specified date range and deal-value threshold. "
         "If a search returns fewer than 3 results, refine the query and try again. "
         "When you have enough results, return a JSON list of findings with fields: "
         "title, date, source, summary, deal_value_usd, companies_involved, url."
     ),
-    "sec": (
-        "You are an SEC filings researcher. Your job is to find relevant SEC filings "
-        "(8-K, SC-13D, SC-TO, merger proxy) for the given query. "
-        "Always include the filing date, form type, and filer. "
-        "When you have enough results, return a JSON list of findings with fields: "
-        "title, date, form_type, filer, description, deal_value_usd, url."
-    ),
-    "financial": (
-        "You are a financial data researcher. Your job is to find deal data from "
-        "financial databases (M&A transactions, valuations, deal terms). "
+    "capiq": (
+        "You are a financial data researcher using the S&P Capital IQ MCP server. "
+        "Search for M&A transactions, deal valuations, and corporate deal terms. "
         "Prioritise completeness: include target, acquirer, deal value, status, region. "
         "When you have enough results, return a JSON list of findings with fields: "
         "deal_id, target, acquirer, deal_value_usd, status, announced_date, region, source."
-    ),
-    "web": (
-        "You are a web research assistant. Your job is to supplement financial data "
-        "with publicly available web information. Focus on recency and credibility. "
-        "When you have enough results, return a JSON list of findings with fields: "
-        "title, date, source, summary, url."
     ),
 }
 
@@ -272,7 +241,20 @@ def _build_tools_for_source(source: str, adapter: Optional[MCPToolAdapter]) -> l
 
             async def _call(adapter=adapter, tool_name=tool_name, **kwargs: Any) -> str:
                 result = await adapter.session.call_tool(tool_name, kwargs)
-                return json.dumps(result) if not isinstance(result, str) else result
+                raw = json.dumps(result) if not isinstance(result, str) else result
+                # Guard: RavenPack / CapIQ can return thousands of records in one
+                # response. Truncating here — before the string enters the ReAct
+                # observation — prevents context-window overflow in the LLM.
+                # The agent will iterate with refined queries if it needs more data.
+                limit = settings.max_observation_chars
+                if len(raw) > limit:
+                    logger.warning(
+                        "MCP response from '%s' truncated %d → %d chars "
+                        "(increase MAX_OBSERVATION_CHARS to allow more)",
+                        tool_name, len(raw), limit,
+                    )
+                    raw = raw[:limit] + "\n... [truncated — response exceeded MAX_OBSERVATION_CHARS]"
+                return raw
 
             tools.append(Tool(
                 name=tool_name,
@@ -302,7 +284,7 @@ async def search_source(
     """Run a ReAct search loop for a single data source.
 
     Args:
-        source: One of "news", "sec", "financial", "web".
+        source: One of "ravenpack", "capiq".
         sub_queries: List of query strings from the planner step.
         system_instructions: Extra constraints from the user (e.g. "exclude deals < $1B").
         date_range: Dict with "start_date" and "end_date" (ISO-8601).
@@ -313,7 +295,7 @@ async def search_source(
     Returns:
         List of finding dicts from the agent's final answer.
     """
-    system_prompt = _SYSTEM_PROMPTS.get(source, _SYSTEM_PROMPTS["web"])
+    system_prompt = _SYSTEM_PROMPTS.get(source, next(iter(_SYSTEM_PROMPTS.values())))
     tools = _build_tools_for_source(source, adapter)
 
     config = ReActConfig(

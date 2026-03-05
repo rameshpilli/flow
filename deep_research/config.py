@@ -3,6 +3,16 @@
 All settings are read from environment variables. Copy .env.example to .env,
 fill in your values, then run the service.  In Kubernetes, mount the values
 from a ConfigMap (non-secret) and a Secret (credentials).
+
+Data sources
+────────────
+  This service connects to two internal MCP servers:
+    • RavenPack News MCP  — real-time news, press releases, wire feeds
+    • S&P Capital IQ MCP  — M&A deal data, financials, company data
+
+Both follow the AgentOrchestrator MCPToolAdapter protocol (JWT bearer token,
+either path-routing or JSON-RPC depending on which CapIQ/RavenPack endpoint
+you're targeting).
 """
 
 from __future__ import annotations
@@ -32,23 +42,26 @@ class Settings:
     llm_api_key: Optional[str]
 
     # ── MCP Data Sources ──────────────────────────────────────────────────────
-    # News  (e.g. RavenPack)
-    mcp_news_endpoint: Optional[str]
-    mcp_news_secret: Optional[str]
-    mcp_news_routing: str           # "path" | "jsonrpc"
-    mcp_news_verify_ssl: bool
 
-    # SEC / EDGAR filings
-    mcp_sec_endpoint: Optional[str]
-    mcp_sec_secret: Optional[str]
-    mcp_sec_routing: str
-    mcp_sec_verify_ssl: bool
+    # RavenPack News MCP (path-routing style)
+    mcp_ravenpack_endpoint: Optional[str]
+    mcp_ravenpack_secret: Optional[str]
+    mcp_ravenpack_routing: str       # "path" | "jsonrpc"
+    mcp_ravenpack_verify_ssl: bool
 
-    # Financial data  (e.g. S&P Capital IQ / Factset)
-    mcp_financial_endpoint: Optional[str]
-    mcp_financial_secret: Optional[str]
-    mcp_financial_routing: str
-    mcp_financial_verify_ssl: bool
+    # S&P Capital IQ MCP (JSON-RPC style)
+    mcp_capiq_endpoint: Optional[str]
+    mcp_capiq_secret: Optional[str]
+    mcp_capiq_routing: str           # "path" | "jsonrpc"
+    mcp_capiq_verify_ssl: bool
+
+    # ── Large Response Guard ──────────────────────────────────────────────────
+    # RavenPack / CapIQ can return very large payloads (thousands of articles
+    # or deal records).  This cap is applied to every single MCP tool-call
+    # observation *before* it enters the ReAct context window, preventing the
+    # LLM from being overwhelmed.  Increase if you need more raw data per call;
+    # decrease if you hit context-window limits.
+    max_observation_chars: int
 
     # ── Chain Execution ───────────────────────────────────────────────────────
     chain_max_parallel_steps: int
@@ -112,26 +125,25 @@ class Settings:
         self.llm_client_secret = os.getenv("LLM_CLIENT_SECRET")
         self.llm_api_key = os.getenv("LLM_API_KEY")
 
-        # MCP — News
-        self.mcp_news_endpoint = os.getenv("MCP_NEWS_ENDPOINT")
-        self.mcp_news_secret = os.getenv("MCP_NEWS_SECRET")
-        self.mcp_news_routing = os.getenv("MCP_NEWS_ROUTING", "path")
-        self.mcp_news_verify_ssl = _bool("MCP_NEWS_VERIFY_SSL", False)
+        # MCP — RavenPack News
+        self.mcp_ravenpack_endpoint = os.getenv("MCP_RAVENPACK_ENDPOINT")
+        self.mcp_ravenpack_secret = os.getenv("MCP_RAVENPACK_SECRET")
+        self.mcp_ravenpack_routing = os.getenv("MCP_RAVENPACK_ROUTING", "path")
+        self.mcp_ravenpack_verify_ssl = _bool("MCP_RAVENPACK_VERIFY_SSL", False)
 
-        # MCP — SEC
-        self.mcp_sec_endpoint = os.getenv("MCP_SEC_ENDPOINT")
-        self.mcp_sec_secret = os.getenv("MCP_SEC_SECRET")
-        self.mcp_sec_routing = os.getenv("MCP_SEC_ROUTING", "path")
-        self.mcp_sec_verify_ssl = _bool("MCP_SEC_VERIFY_SSL", False)
+        # MCP — S&P Capital IQ
+        self.mcp_capiq_endpoint = os.getenv("MCP_CAPIQ_ENDPOINT")
+        self.mcp_capiq_secret = os.getenv("MCP_CAPIQ_SECRET")
+        self.mcp_capiq_routing = os.getenv("MCP_CAPIQ_ROUTING", "jsonrpc")
+        self.mcp_capiq_verify_ssl = _bool("MCP_CAPIQ_VERIFY_SSL", False)
 
-        # MCP — Financial
-        self.mcp_financial_endpoint = os.getenv("MCP_FINANCIAL_ENDPOINT")
-        self.mcp_financial_secret = os.getenv("MCP_FINANCIAL_SECRET")
-        self.mcp_financial_routing = os.getenv("MCP_FINANCIAL_ROUTING", "path")
-        self.mcp_financial_verify_ssl = _bool("MCP_FINANCIAL_VERIFY_SSL", False)
+        # Large response guard — cap each MCP observation before it enters ReAct
+        # Default 8 000 chars ≈ ~2 000 tokens; tune up/down based on your LLM's
+        # context window and the verbosity of your MCP server responses.
+        self.max_observation_chars = _int("MAX_OBSERVATION_CHARS", 8000)
 
         # Chain
-        self.chain_max_parallel_steps = _int("CHAIN_MAX_PARALLEL_STEPS", 4)
+        self.chain_max_parallel_steps = _int("CHAIN_MAX_PARALLEL_STEPS", 2)
         self.chain_default_timeout_ms = _int("CHAIN_DEFAULT_TIMEOUT_MS", 60000)
         self.chain_default_retries = _int("CHAIN_DEFAULT_RETRIES", 2)
         self.chain_error_handling = os.getenv("CHAIN_ERROR_HANDLING", "fail_fast")
