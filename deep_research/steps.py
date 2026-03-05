@@ -21,7 +21,7 @@ import json
 import logging
 from typing import Any
 
-from agentorchestrator.middleware.offload import cap_per_source
+from agentorchestrator.middleware.offload import cap_items_with_metadata
 
 from deep_research.config import settings
 from deep_research.search import search_source
@@ -163,7 +163,8 @@ async def search_news(ctx: Any) -> dict[str, Any]:
         adapter=adapter,
         llm=llm,
     )
-    return {"news_findings": cap_per_source(findings, max_per_source=settings.results_per_source)}
+    capped, _ = cap_items_with_metadata(findings, max_items=settings.results_per_source)
+    return {"news_findings": capped}
 
 
 async def search_capiq(ctx: Any) -> dict[str, Any]:
@@ -182,7 +183,8 @@ async def search_capiq(ctx: Any) -> dict[str, Any]:
         adapter=adapter,
         llm=llm,
     )
-    return {"capiq_findings": cap_per_source(findings, max_per_source=settings.results_per_source)}
+    capped, _ = cap_items_with_metadata(findings, max_items=settings.results_per_source)
+    return {"capiq_findings": capped}
 
 
 async def aggregate_sources(ctx: Any) -> dict[str, Any]:

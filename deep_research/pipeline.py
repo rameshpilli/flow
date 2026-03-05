@@ -32,6 +32,9 @@ Middleware order (run_before fires top→bottom, run_after fires bottom→top)
   5. RollingSummaryMiddleware — prevent context window overflow on large payloads
   6. ReflectionMiddleware     — self-critique on cross_verify + generate_report
   7. CitationMiddleware       — track every source reference end-to-end
+  8. OffloadMiddleware        — offload large step outputs to Redis when
+                                CONTEXT_STORE_BACKEND=redis (skipped in
+                                memory mode so no Redis dependency locally)
 """
 
 from __future__ import annotations
@@ -41,6 +44,7 @@ from typing import Any
 
 from agentorchestrator.core.orchestrator import AgentOrchestrator
 from agentorchestrator.dsl.pipeline import Pipeline
+from agentorchestrator.core.context import InMemoryContextStore, RedisContextStore
 from agentorchestrator.middleware import (
     CacheMiddleware,
     CitationMiddleware,
@@ -52,6 +56,7 @@ from agentorchestrator.middleware import (
     TokenManagerMiddleware,
     create_metrics_middleware,
 )
+from agentorchestrator.middleware.offload import OffloadMiddleware
 
 from deep_research.config import settings
 from deep_research.steps import (
@@ -170,4 +175,27 @@ def setup_middleware(ao: AgentOrchestrator, llm: Any) -> None:
     # 7. Citation tracking — records every source reference for the bibliography
     ao.use(CitationMiddleware())
 
-    logger.info("Deep research middleware stack registered (7 layers)")
+    # 8. Offload — serialize large step outputs to Redis so in-process context
+    #    does not balloon.  Only enabled when CONTEXT_STORE_BACKEND=redis so the
+    #    service can run in pure in-memory mode without any Redis dependency.
+    if settings.context_store_backend == "redis":
+        # Note: RedisContextStore does not yet accept `username` (Redis ACL).
+        # For corporate Redis with ACL, extend RedisContextStore.__init__ to
+        # accept `username` and pass it to redis.asyncio.ConnectionPool.
+        store = RedisContextStore(
+            host=settings.redis_host,
+            port=settings.redis_port,
+            password=settings.redis_password,
+            ssl=settings.redis_ssl,
+        )
+        ao.use(OffloadMiddleware(store=store, default_threshold_bytes=50_000))
+        logger.info(
+            "OffloadMiddleware enabled → Redis at %s:%s",
+            settings.redis_host,
+            settings.redis_port,
+        )
+    else:
+        ao.use(OffloadMiddleware(store=InMemoryContextStore(), default_threshold_bytes=50_000))
+        logger.info("OffloadMiddleware enabled → in-memory store")
+
+    logger.info("Deep research middleware stack registered (8 layers)")

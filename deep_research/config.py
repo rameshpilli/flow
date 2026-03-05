@@ -73,6 +73,9 @@ class Settings:
     context_store_backend: str      # "memory" | "redis"
     redis_host: str
     redis_port: int
+    redis_password: Optional[str]   # requirepass value; None = no auth
+    redis_username: Optional[str]   # ACL username (Redis 6+); None = default user
+    redis_ssl: bool                 # TLS for corporate Redis (set True in prod)
 
     # ── Summarizer ────────────────────────────────────────────────────────────
     summarizer_strategy: str        # "map_reduce" | "stuff" | "refine"
@@ -152,6 +155,9 @@ class Settings:
         self.context_store_backend = os.getenv("CONTEXT_STORE_BACKEND", "memory")
         self.redis_host = os.getenv("REDIS_HOST", "localhost")
         self.redis_port = _int("REDIS_PORT", 6379)
+        self.redis_password = os.getenv("REDIS_PASSWORD") or None
+        self.redis_username = os.getenv("REDIS_USERNAME") or None
+        self.redis_ssl = _bool("REDIS_SSL", False)
 
         # Summarizer
         self.summarizer_strategy = os.getenv("SUMMARIZER_STRATEGY", "map_reduce")

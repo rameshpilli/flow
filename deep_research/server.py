@@ -40,6 +40,7 @@ from agentorchestrator.core.orchestrator import AgentOrchestrator
 from agentorchestrator.server.mcp import MCPServer
 from agentorchestrator.services.llm_gateway import LLMGatewayClient
 from agentorchestrator.services.mcp_service import MCPServiceManager
+from agentorchestrator.services.redis import RedisService
 from agentorchestrator.utils.mcp_tool_adapter import MCPToolAdapter
 
 from deep_research.config import settings
@@ -53,6 +54,7 @@ logger = logging.getLogger(__name__)
 _ao: Optional[AgentOrchestrator] = None
 _llm: Optional[LLMGatewayClient] = None
 _mcp: Optional[MCPServiceManager] = None
+_redis: Optional[RedisService] = None  # Optional; used when CONTEXT_STORE_BACKEND=redis
 
 # In-process run store: run_id → state dict
 _runs: dict[str, dict[str, Any]] = {}
@@ -77,9 +79,29 @@ _STEP_LABELS: dict[str, str] = {
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: initialise LLM, MCP adapters, orchestrator, middleware."""
-    global _ao, _llm, _mcp
+    global _ao, _llm, _mcp, _redis
 
     logger.info("Starting Deep Research Agent service…")
+
+    # ── Redis (optional — used by OffloadMiddleware + CacheMiddleware) ──────
+    if settings.context_store_backend == "redis":
+        _redis = RedisService(
+            host=settings.redis_host,
+            port=settings.redis_port,
+            username=settings.redis_username,
+            password=settings.redis_password,
+            ssl=settings.redis_ssl,
+        )
+        try:
+            await _redis.ping()
+            logger.info(
+                "Redis connected → %s:%s", settings.redis_host, settings.redis_port
+            )
+        except Exception as exc:
+            logger.warning(
+                "Redis ping failed (%s) — OffloadMiddleware will use in-memory fallback", exc
+            )
+            _redis = None
 
     # LLM client
     _llm = LLMGatewayClient(
@@ -504,13 +526,29 @@ async def list_chains():
 
 @app.get("/health")
 async def health():
-    """Full health check — includes MCP adapter status."""
+    """Full health check — includes MCP adapter, Redis, and LLM status."""
     mcp_health = await _mcp.health_check() if _mcp else {}
     llm_ok = _llm is not None
+
+    redis_status: dict[str, Any] = {"enabled": settings.context_store_backend == "redis"}
+    if _redis is not None:
+        try:
+            await _redis.ping()
+            redis_status["ok"] = True
+        except Exception as exc:
+            redis_status["ok"] = False
+            redis_status["error"] = str(exc)
+    elif settings.context_store_backend == "redis":
+        redis_status["ok"] = False
+        redis_status["error"] = "Not connected"
+
+    overall = "ok" if llm_ok else "degraded"
     return JSONResponse({
-        "status": "ok" if llm_ok else "degraded",
+        "status": overall,
         "llm": {"ok": llm_ok, "url": settings.llm_server_url},
         "mcp": mcp_health,
+        "redis": redis_status,
+        "context_store": settings.context_store_backend,
     })
 
 
