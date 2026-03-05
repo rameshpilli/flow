@@ -21,26 +21,24 @@ We're building **AgentOrchestrator** - a production-grade, DAG-based agent orche
 
 ```
 flow/
-├── ChainServer/
-│   ├── agentorchestrator/     # THE FRAMEWORK (domain-agnostic)
-│   │   ├── core/              # Orchestrator, Context, DAG, Registry
-│   │   │   ├── state.py       # StateStore (Pydantic state management)
-│   │   │   └── event_bus.py   # EventBus (in-memory, Redis)
-│   │   ├── middleware/        # Cache, Logger, Summarizer, TokenManager
-│   │   ├── agents/            # BaseAgent, ResilientAgent, CompositeAgent
-│   │   ├── services/          # LLMGatewayClient, VectorStoreService
-│   │   ├── squad/             # Multi-agent orchestration
-│   │   │   ├── agents/        # LLMGatewayAgent, SupervisorAgent
-│   │   │   ├── storage/       # ChatStorage (InMemory, Redis)
-│   │   │   └── types.py       # AgentTool, AgentTools
-│   │   ├── dsl/               # Declarative pipeline builder
-│   │   ├── connectors/        # MCPConnector
-│   │   ├── plugins/           # Plugin discovery, capability schemas
-│   │   ├── llm/               # LCEL chain builders
-│   │   ├── templates/         # Project scaffolding
-│   │   ├── utils/             # Logging, tracing
-│   │   └── config.py          # Environment configuration
-│   └── cmpt/                  # DOMAIN EXAMPLE (Client Meeting Prep Tool)
+├── agentorchestrator/         # THE FRAMEWORK (domain-agnostic)
+│   ├── core/                  # Orchestrator, Context, DAG, Registry
+│   │   ├── state.py           # StateStore (Pydantic state management)
+│   │   └── event_bus.py       # EventBus (in-memory, Redis)
+│   ├── middleware/            # Cache, Logger, Summarizer, TokenManager
+│   ├── agents/                # BaseAgent, ResilientAgent, CompositeAgent
+│   ├── services/              # LLMGatewayClient, VectorStoreService
+│   ├── squad/                 # Multi-agent orchestration
+│   │   ├── agents/            # LLMGatewayAgent, SupervisorAgent
+│   │   ├── storage/           # ChatStorage (InMemory, Redis)
+│   │   └── types.py           # AgentTool, AgentTools
+│   ├── dsl/                   # Declarative pipeline builder
+│   ├── connectors/            # MCPConnector
+│   ├── plugins/               # Plugin discovery, capability schemas
+│   ├── llm/                   # LCEL chain builders
+│   ├── templates/             # Project scaffolding
+│   ├── utils/                 # Logging, tracing
+│   └── config.py              # Environment configuration
 ├── AGENTS.md                  # THIS FILE - agent context
 └── .beads/                    # Issue tracking database
 ```
@@ -237,7 +235,7 @@ pytest tests/ -v
 
 ### Linting
 ```bash
-ruff check agentorchestrator cmpt
+ruff check agentorchestrator
 ```
 
 ### CLI Commands
@@ -395,7 +393,7 @@ async def handler(ctx: Context, event: Event):
 
 ## Questions to Ask Before Implementing
 
-1. Does this belong in `agentorchestrator/` (framework) or `cmpt/` (domain)?
+1. Does this belong in `agentorchestrator/` (framework) or a domain-specific package?
 2. Should this be a middleware, or part of core?
 3. Does this need environment variable configuration?
 4. Does this require streaming support?

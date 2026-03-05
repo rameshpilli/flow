@@ -106,7 +106,7 @@ agentorchestrator = "agentorchestrator.cli:main"
 
 [project.urls]
 Repository = "https://github.com/rameshpilli/flow"
-Documentation = "https://github.com/rameshpilli/flow/tree/main/ChainServer/agentorchestrator/docs"
+Documentation = "https://github.com/rameshpilli/flow/tree/main/agentorchestrator/docs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agentorchestrator"]
@@ -128,7 +128,7 @@ known-first-party = ["agentorchestrator"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["agentorchestrator/tests"]
+testpaths = ["agentorchestrator/tests", "tests"]
 addopts = ["-ra", "-q"]
 filterwarnings = ["ignore::DeprecationWarning"]
 

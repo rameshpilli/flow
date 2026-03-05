@@ -58,13 +58,13 @@ install-editable:
 
 lint:
 	@echo "Running linters..."
-	$(PYTHON) -m ruff check agentorchestrator tests examples
-	$(PYTHON) -m black --check agentorchestrator tests examples
+	$(PYTHON) -m ruff check agentorchestrator tests
+	$(PYTHON) -m black --check agentorchestrator tests
 
 format:
 	@echo "Formatting code..."
-	$(PYTHON) -m ruff check --fix agentorchestrator tests examples
-	$(PYTHON) -m black agentorchestrator tests examples
+	$(PYTHON) -m ruff check --fix agentorchestrator tests
+	$(PYTHON) -m black agentorchestrator tests
 
 type-check:
 	@echo "Running type checker..."
@@ -105,24 +105,20 @@ ci: lint type-check test
 # ============================================================
 
 run:
-	@echo "Running CMPT chain test..."
-	$(PYTHON) -m agentorchestrator.test_cmpt_chain
+	@echo "Running quickstart example..."
+	$(PYTHON) agentorchestrator/examples/getting_started/hello_world.py
 
 run-quickstart:
 	@echo "Running quickstart example..."
-	$(PYTHON) examples/quickstart.py
+	$(PYTHON) agentorchestrator/examples/getting_started/hello_world.py
 
-run-meeting-prep:
-	@echo "Running meeting prep example..."
-	$(PYTHON) examples/meeting_prep_chain.py
+run-event:
+	@echo "Running event workflow example..."
+	$(PYTHON) agentorchestrator/examples/event_workflow.py
 
-run-capiq:
-	@echo "Running CapIQ integration example..."
-	$(PYTHON) examples/capiq_integration.py
-
-run-custom-agent:
-	@echo "Running custom agent example..."
-	$(PYTHON) examples/custom_agent_example.py
+run-deep-research:
+	@echo "Running deep research agent example..."
+	$(PYTHON) agentorchestrator/examples/deep_research_agent.py
 
 # ============================================================
 # DOCUMENTATION
@@ -312,10 +308,10 @@ help:
 	@echo "  make ci            Run lint + type-check + test (for CI)"
 	@echo ""
 	@echo "Run Examples:"
-	@echo "  make run               Run CMPT chain test"
+	@echo "  make run               Run hello world example"
 	@echo "  make run-quickstart    Run quickstart example"
-	@echo "  make run-meeting-prep  Run meeting prep example"
-	@echo "  make run-capiq         Run CapIQ integration example"
+	@echo "  make run-event         Run event workflow example"
+	@echo "  make run-deep-research Run deep research agent example"
 	@echo ""
 	@echo "Documentation:"
 	@echo "  make docs          Build documentation"
