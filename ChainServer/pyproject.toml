@@ -1,0 +1,141 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentorchestrator"
+version = "0.1.0"
+description = "A DAG-based chain orchestration framework for AI/ML pipelines"
+readme = "agentorchestrator/README.md"
+license = "MIT"
+requires-python = ">=3.10"
+keywords = ["ai", "ml", "chains", "dag", "orchestration", "llm", "agents"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+    "pydantic>=2.5",
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+# Pin redis to 5.x to avoid breaking changes in 6.x
+redis = ["redis>=5.0.0,<6.0.0"]
+observability = [
+    "opentelemetry-api>=1.22.0",
+    "opentelemetry-sdk>=1.22.0",
+    "opentelemetry-exporter-otlp>=1.22.0",
+    "structlog>=24.0.0",
+]
+# Pin langchain-core to avoid breaking changes in fast-moving 0.x releases
+langchain = [
+    "langchain-core>=0.2.0,<0.4.0",
+    "langchain-text-splitters>=0.2.0,<0.4.0",
+    "tiktoken>=0.7.0",
+]
+summarization = [
+    "langchain-core>=0.2.0,<0.4.0",
+    "langchain-text-splitters>=0.2.0,<0.4.0",
+    "tiktoken>=0.7.0",
+]
+openai = [
+    "langchain-core>=0.2.0,<0.4.0",
+    "langchain-text-splitters>=0.2.0,<0.4.0",
+    "tiktoken>=0.7.0",
+    "langchain-openai>=0.1.0,<0.3.0",
+]
+anthropic = [
+    "langchain-core>=0.2.0,<0.4.0",
+    "langchain-text-splitters>=0.2.0,<0.4.0",
+    "tiktoken>=0.7.0",
+    "langchain-anthropic>=0.1.0,<0.3.0",
+]
+http = [
+    "aiohttp>=3.9.0",
+]
+secrets = [
+    "hvac>=1.0.0,<3.0.0",  # HashiCorp Vault client
+]
+# Pin mem0ai until 1.0 release for API stability
+memory = [
+    "mem0ai>=0.1.0,<0.2.0",
+]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "watchdog>=3.0.0",
+]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.5.0",
+    "mkdocs-minify-plugin>=0.7.0",
+]
+workflows = [
+    "redis>=5.0.0,<6.0.0",
+]
+all = [
+    "redis>=5.0.0,<6.0.0",
+    "opentelemetry-api>=1.22.0",
+    "opentelemetry-sdk>=1.22.0",
+    "opentelemetry-exporter-otlp>=1.22.0",
+    "structlog>=24.0.0",
+    "langchain-core>=0.2.0,<0.4.0",
+    "langchain-text-splitters>=0.2.0,<0.4.0",
+    "tiktoken>=0.7.0",
+    "langchain-openai>=0.1.0,<0.3.0",
+    "langchain-anthropic>=0.1.0,<0.3.0",
+    "aiohttp>=3.9.0",
+    "mem0ai>=0.1.0,<0.2.0",
+    "hvac>=1.0.0,<3.0.0",
+]
+
+[project.scripts]
+ao = "agentorchestrator.cli:main"
+agentorchestrator = "agentorchestrator.cli:main"
+
+[project.urls]
+Repository = "https://github.com/rameshpilli/flow"
+Documentation = "https://github.com/rameshpilli/flow/tree/main/ChainServer/agentorchestrator/docs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agentorchestrator"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP"]
+ignore = ["E501", "E402"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*" = ["S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["agentorchestrator"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["agentorchestrator/tests"]
+addopts = ["-ra", "-q"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["agentorchestrator"]
+branch = true
+omit = ["*/tests/*", "*/__init__.py"]
+
+[tool.coverage.report]
+fail_under = 70
