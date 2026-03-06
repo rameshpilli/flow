@@ -21,7 +21,9 @@ import json
 import logging
 from typing import Any
 
+from agentorchestrator.middleware.citation import add_citation, add_source_content
 from agentorchestrator.middleware.offload import cap_items_with_metadata
+from agentorchestrator.models.citation import Citation, CitedValue
 
 from deep_research.config import settings
 from deep_research.search import search_source
@@ -207,6 +209,31 @@ async def search_news(ctx: Any) -> dict[str, Any]:
         llm=llm,
     )
     capped, _ = cap_items_with_metadata(findings, max_items=settings.results_per_source)
+
+    # Register a Citation for every finding so CitationMiddleware can track
+    # source attribution end-to-end.
+    # We get-modify-set the collection explicitly so mutations are persisted
+    # regardless of whether ctx.get() returns a reference or a copy.
+    from agentorchestrator.models.citation import CitationCollection as _CC
+    collection = ctx.get("_citation_collection") or _CC()
+    for finding in capped:
+        title = (
+            finding.get("headline")
+            or finding.get("title")
+            or finding.get("deal_name", "Untitled")
+        )
+        cit = Citation(
+            source_type="api",
+            source_name="ravenpack",
+            content=title,
+            document_id=str(finding.get("article_id") or finding.get("id") or ""),
+            url=finding.get("url"),
+            reasoning="Direct result from RavenPack News MCP tool call",
+        )
+        collection.add(cit)
+        collection.add_source_chunk("ravenpack", title)
+    ctx.set("_citation_collection", collection)
+
     ctx.set("news_findings", capped)
     return {"news_findings": capped}
 
@@ -228,6 +255,29 @@ async def search_capiq(ctx: Any) -> dict[str, Any]:
         llm=llm,
     )
     capped, _ = cap_items_with_metadata(findings, max_items=settings.results_per_source)
+
+    from agentorchestrator.models.citation import CitationCollection as _CC
+    collection = ctx.get("_citation_collection") or _CC()
+    for finding in capped:
+        target   = finding.get("target", "")
+        acquirer = finding.get("acquirer", "")
+        title = (
+            finding.get("deal_name")
+            or finding.get("title")
+            or finding.get("headline")
+            or (f"{target} ← {acquirer}" if target or acquirer else "Untitled")
+        )
+        cit = Citation(
+            source_type="api",
+            source_name="capiq",
+            content=title,
+            document_id=str(finding.get("deal_id") or finding.get("id") or ""),
+            reasoning="Direct result from S&P Capital IQ MCP tool call",
+        )
+        collection.add(cit)
+        collection.add_source_chunk("capiq", title)
+    ctx.set("_citation_collection", collection)
+
     ctx.set("capiq_findings", capped)
     return {"capiq_findings": capped}
 
@@ -373,7 +423,12 @@ async def generate_report(ctx: Any) -> dict[str, Any]:
             "**Suggestion:** Broaden the date range or lower the deal-value threshold."
         )
         ctx.set("report", report)
-        return {"report": report, "report_format": settings.report_format}
+        ctx.set("citation_summary", {"total": 0, "verified": 0, "by_source": {}})
+        return {
+            "report": report,
+            "report_format": settings.report_format,
+            "citation_summary": {"total": 0, "verified": 0, "by_source": {}},
+        }
 
     findings_json = json.dumps(verified, indent=2)
     if len(findings_json) > 28000:
@@ -405,10 +460,34 @@ async def generate_report(ctx: Any) -> dict[str, Any]:
         if len(flagged) > 10:
             report += f"\n_...and {len(flagged) - 10} more flagged items._\n"
 
+    # ── Build citation bibliography from the shared collection ────────────────
+    # CitationMiddleware initialises _citation_collection before the first step;
+    # search_news and search_capiq populate it with one Citation per finding.
+    collection = ctx.get("_citation_collection")
+    citation_summary: dict[str, Any] = {"total": 0, "verified": 0, "by_source": {}}
+
+    if collection and collection.citations:
+        # Verify each citation against the source content registered earlier
+        collection.verify_all()
+        citation_summary = collection.get_verification_summary()
+
+        # Append a numbered References section to the Markdown report
+        report += "\n\n---\n\n## References\n\n"
+        report += collection.to_footnotes()
+
+        logger.info(
+            "Citations: %d total | %d verified | by_source=%s",
+            citation_summary["total"],
+            citation_summary["verified"],
+            citation_summary["by_source"],
+        )
+
     ctx.set("report", report)
+    ctx.set("citation_summary", citation_summary)
     return {
         "report": report,
         "report_format": settings.report_format,
+        "citation_summary": citation_summary,
         "stats": {
             "verified_findings": len(verified),
             "flagged_findings": len(flagged),

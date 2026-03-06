@@ -265,6 +265,7 @@ class RunOutputResponse(BaseModel):
     status: str
     report: Optional[str] = None
     stats: Optional[dict[str, Any]] = None
+    citation_summary: Optional[dict[str, Any]] = None
 
 
 # ── SSE helpers ───────────────────────────────────────────────────────────────
@@ -388,10 +389,12 @@ async def _execute_run(run_id: str, request: ResearchRequest) -> None:
             debug_callback=_make_debug_callback(run_id),
         )
 
+        ctx_data: dict = result.get("context", {}).get("data", {})
         _runs[run_id].update({
             "status": "completed",
-            "report": result.get("report"),
-            "stats": result.get("stats"),
+            "report": ctx_data.get("report"),
+            "stats": ctx_data.get("stats"),
+            "citation_summary": ctx_data.get("citation_summary"),
         })
         logger.info("Run %s completed successfully", run_id)
 
@@ -513,6 +516,7 @@ async def get_run_output(run_id: str):
         status=run["status"],
         report=run.get("report"),
         stats=run.get("stats"),
+        citation_summary=run.get("citation_summary"),
     )
 
 

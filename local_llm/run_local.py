@@ -292,6 +292,16 @@ async def main() -> None:
     else:
         print("\n  WARNING: report not found in context — check logs above for errors")
 
+    # ── Citation summary ──────────────────────────────────────────────────
+    cs = ctx_data.get("citation_summary") or {}
+    if cs.get("total", 0) > 0:
+        _banner("CITATION SUMMARY")
+        print(f"  Total citations:   {cs['total']}")
+        print(f"  Verified:          {cs['verified']}  ({cs.get('verification_rate', 0):.0%})")
+        print(f"  Unverified:        {cs.get('unverified', 0)}")
+        print(f"  By source:         {cs.get('by_source', {})}")
+        print()
+
     _banner("RUN COMPLETE")
     print(f"  Total wall time: {total_ms:.0f} ms")
     print(f"  Model:           {llm.model}")
