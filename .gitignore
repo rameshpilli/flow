@@ -24,3 +24,7 @@ htmlcov/
 .env.local
 local_llm/.env
 local_llm/.env.local
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db

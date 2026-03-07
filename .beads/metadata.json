@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "thirsty_pasteur",
+  "project_id": "67ab4ae9-e328-4e2e-804e-26a86ede773f"
+}
