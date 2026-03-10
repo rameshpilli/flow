@@ -159,7 +159,7 @@ def __getattr__(name: str):
 
     # Legacy decorators (use @ao.step, @ao.agent, @ao.chain instead)
     # Also includes utility decorators: depends_on, produces, consumes
-    if name in ("agent", "step", "chain", "middleware",
+    if name in ("agent", "step", "chain", "supervisor", "suite", "middleware",
                 "depends_on", "produces", "consumes"):
         from agentorchestrator.core import decorators
         return getattr(decorators, name)

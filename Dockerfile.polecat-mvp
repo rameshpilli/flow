@@ -1,0 +1,22 @@
+FROM python:3.11-slim
+
+LABEL org.opencontainers.image.title="Polecat Gastown MVP"
+LABEL org.opencontainers.image.description="Autonomous QA + Docs workflow runtime for AgentOrchestrator"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY . /app
+
+RUN pip install --no-cache-dir -e ".[dev]" "fastapi>=0.111.0" "uvicorn[standard]>=0.29.0"
+
+ENV PYTHONUNBUFFERED=1
+ENV WORKTREE_PATH=/workspace
+ENV GASTOWN_OUTPUT_DIR=/workspace/.gastown
+ENV POLECAT_TEST_CMD="pytest -q"
+ENV POLECAT_AUTOCOMMIT=false
+
+CMD ["python", "-m", "agentorchestrator.integrations.gastown_mvp.entrypoint"]

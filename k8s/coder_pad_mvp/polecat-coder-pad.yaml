@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: polecat-coder-pad-config
+data:
+  GASTOWN_BEAD_ID: "coder-pad-task-1"
+  GASTOWN_BEAD_JSON: '{"id":"coder-pad-task-1","title":"Coder pad sample bead","description":"Create calculator app with CLI, tests, and docs","labels":["coder-pad","calculator"],"priority":1}'
+  WORKTREE_PATH: "/app"
+  GASTOWN_OUTPUT_DIR: "/app/.gastown"
+  POLECAT_TEST_CMD: "pytest tests/test_calculator_core.py -q"
+  POLECAT_AUTOCOMMIT: "false"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: polecat-coder-pad
+  labels:
+    app: polecat-coder-pad
+spec:
+  restartPolicy: Never
+  containers:
+    - name: polecat-coder-pad
+      image: polecat-mvp:local
+      imagePullPolicy: IfNotPresent
+      command: ["python", "-m", "agentorchestrator.integrations.coder_pad_mvp.entrypoint"]
+      envFrom:
+        - configMapRef:
+            name: polecat-coder-pad-config

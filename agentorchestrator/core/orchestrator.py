@@ -348,6 +348,8 @@ class AgentOrchestrator:
         # Event bus (Redis-backed if available, otherwise in-memory)
         self._event_bus = event_bus or get_event_bus(prefer_redis=True)
         self._event_handlers: dict[str, list[Any]] = {}
+        self._supervisor_specs: dict[str, dict[str, Any]] = {}
+        self._suite_specs: dict[str, dict[str, Any]] = {}
 
         # Executor & Runner
         self._executor = DAGExecutor(
@@ -538,6 +540,8 @@ class AgentOrchestrator:
         name: str | None = None,
         description: str = "",
         group: str | None = None,
+        version: str = "1.0.0",
+        capabilities: list[str] | None = None,
         resilient: bool = False,
         resilient_config: dict[str, Any] | None = None,
     ) -> type[T] | Callable[[type[T]], type[T]]:
@@ -554,6 +558,8 @@ class AgentOrchestrator:
             name (str | None): Custom agent name. Default: class name.
             description (str): Human-readable description.
             group (str | None): Group name for organization.
+            version (str): Version string. Default: "1.0.0".
+            capabilities (list[str] | None): Optional capabilities metadata.
             resilient (bool): If True, auto-wrap instances in ResilientAgent.
                 Default: False.
             resilient_config (dict[str, Any] | None): Config for ResilientAgent.
@@ -592,13 +598,101 @@ class AgentOrchestrator:
             self._agent_registry.register_agent(
                 name=agent_name,
                 agent_class=cls,
+                version=version,
                 description=description,
+                capabilities=capabilities or [],
                 group=group,
                 resilient=resilient,
                 resilient_config=resilient_config or {},
             )
             cls._fg_name = agent_name
             cls._fg_type = "agent"
+            cls._fg_version = version
+            cls._fg_capabilities = list(capabilities or [])
+            return cls
+
+        if cls is not None:
+            return decorator(cls)
+        return decorator
+
+    def supervisor(
+        self,
+        cls: type[T] | None = None,
+        *,
+        name: str | None = None,
+        description: str = "",
+        lead_agent: str | None = None,
+        team: list[str] | None = None,
+        max_concurrent_agents: int = 10,
+        agent_timeout_seconds: float = 60.0,
+        guardrails: list[str] | None = None,
+        context_isolation: bool = True,
+    ) -> type[T] | Callable[[type[T]], type[T]]:
+        """
+        Register supervisor metadata (thin declarative API).
+
+        This stores hierarchy metadata only; runtime behavior remains in the
+        existing Squad/Supervisor implementations.
+        """
+
+        def decorator(cls: type[T]) -> type[T]:
+            supervisor_name = name or cls.__name__
+            spec = {
+                "name": supervisor_name,
+                "description": description,
+                "lead_agent": lead_agent or getattr(cls, "lead_agent", None),
+                "team": list(team or getattr(cls, "team", []) or []),
+                "max_concurrent_agents": max_concurrent_agents,
+                "agent_timeout_seconds": float(agent_timeout_seconds),
+                "guardrails": list(guardrails or []),
+                "context_isolation": bool(context_isolation),
+            }
+            self._supervisor_specs[supervisor_name] = spec
+
+            cls._fg_name = supervisor_name
+            cls._fg_type = "supervisor"
+            cls._fg_supervisor_spec = spec
+            return cls
+
+        if cls is not None:
+            return decorator(cls)
+        return decorator
+
+    def suite(
+        self,
+        cls: type[T] | None = None,
+        *,
+        name: str | None = None,
+        version: str = "1.0.0",
+        root_supervisor: str | None = None,
+        entry_chain: str | None = None,
+        capabilities: list[str] | None = None,
+        handoff_targets: list[str] | None = None,
+        runtime: dict[str, Any] | None = None,
+    ) -> type[T] | Callable[[type[T]], type[T]]:
+        """
+        Register deployable suite metadata (thin declarative API).
+
+        This stores suite topology/deployment metadata without altering
+        core chain execution runtime.
+        """
+
+        def decorator(cls: type[T]) -> type[T]:
+            suite_name = name or cls.__name__
+            spec = {
+                "name": suite_name,
+                "version": version,
+                "root_supervisor": root_supervisor or getattr(cls, "root_supervisor", None),
+                "entry_chain": entry_chain or getattr(cls, "entry_chain", None),
+                "capabilities": list(capabilities or []),
+                "handoff_targets": list(handoff_targets or []),
+                "runtime": dict(runtime or {}),
+            }
+            self._suite_specs[suite_name] = spec
+
+            cls._fg_name = suite_name
+            cls._fg_type = "suite"
+            cls._fg_suite_spec = spec
             return cls
 
         if cls is not None:
@@ -1956,19 +2050,146 @@ class AgentOrchestrator:
 
             print()
 
+        hierarchy_result = self._check_hierarchy(max_depth=4)
+        if hierarchy_result["errors"]:
+            errors.extend(hierarchy_result["errors"])
+            print("  ✗ Hierarchy Validation")
+            for err in hierarchy_result["errors"]:
+                print(f"    ✗ {err}")
+            print()
+        elif hierarchy_result["checked"]:
+            print("  ✓ Hierarchy Validation\n")
+
+        warnings.extend(hierarchy_result["warnings"])
+
         valid = len(errors) == 0
         print(f"{'═' * 60}")
         print(f"  Result: {'✓ All checks passed' if valid else '✗ Errors found'}")
         print(
-            f"  Agents: {len(self.list_agents())} | Steps: {len(self.list_steps())} | Chains: {len(self.list_chains())}"
+            "  Agents: "
+            f"{len(self.list_agents())} | Supervisors: {len(self.list_supervisors())} | "
+            f"Suites: {len(self.list_suites())} | Steps: {len(self.list_steps())} | "
+            f"Chains: {len(self.list_chains())}"
         )
         print(f"{'═' * 60}\n")
 
         return {
             "valid": valid,
             "chains": chain_results,
+            "hierarchy": hierarchy_result,
             "errors": errors,
             "warnings": warnings,
+        }
+
+    def _check_hierarchy(self, max_depth: int = 4) -> dict[str, Any]:
+        """Validate supervisor/suite metadata graph."""
+        errors: list[str] = []
+        warnings: list[str] = []
+        checked = bool(self._supervisor_specs or self._suite_specs)
+
+        if not checked:
+            return {"checked": False, "errors": [], "warnings": []}
+
+        agent_names = set(self._agent_registry.list())
+        supervisor_names = set(self._supervisor_specs.keys())
+        resolvable_nodes = agent_names | supervisor_names
+
+        # Validate supervisor specs
+        for name, spec in self._supervisor_specs.items():
+            lead = spec.get("lead_agent")
+            team = list(spec.get("team") or [])
+
+            if not lead:
+                errors.append(f"Supervisor '{name}' missing lead_agent")
+            elif lead not in agent_names:
+                errors.append(
+                    f"Supervisor '{name}' lead_agent '{lead}' is not a registered agent"
+                )
+
+            if not team:
+                warnings.append(f"Supervisor '{name}' has empty team")
+
+            if len(team) != len(set(team)):
+                errors.append(f"Supervisor '{name}' has duplicate team members")
+
+            for member in team:
+                if member == name:
+                    errors.append(f"Supervisor '{name}' cannot include itself in team")
+                elif member not in resolvable_nodes:
+                    errors.append(
+                        f"Supervisor '{name}' team member '{member}' is unknown "
+                        "(expected registered agent or supervisor)"
+                    )
+
+        # Validate supervisor graph for cycles/depth
+        graph: dict[str, list[str]] = {}
+        for name, spec in self._supervisor_specs.items():
+            graph[name] = [
+                member for member in (spec.get("team") or []) if member in supervisor_names
+            ]
+
+        visited: set[str] = set()
+        in_stack: set[str] = set()
+
+        def dfs(node: str, depth: int) -> int:
+            if node in in_stack:
+                errors.append(f"Supervisor hierarchy has a cycle at '{node}'")
+                return depth
+            if depth > max_depth:
+                errors.append(
+                    f"Supervisor hierarchy exceeds max depth {max_depth} at '{node}'"
+                )
+                return depth
+            if node in visited:
+                return depth
+            visited.add(node)
+            in_stack.add(node)
+            local_max = depth
+            for nxt in graph.get(node, []):
+                local_max = max(local_max, dfs(nxt, depth + 1))
+            in_stack.remove(node)
+            return local_max
+
+        deepest = 0
+        for root in graph:
+            deepest = max(deepest, dfs(root, 1))
+
+        # Validate suite specs
+        suite_names = set(self._suite_specs.keys())
+        chain_names = set(self._chain_registry.list())
+        for name, spec in self._suite_specs.items():
+            root = spec.get("root_supervisor")
+            entry_chain = spec.get("entry_chain")
+
+            if not root:
+                errors.append(f"Suite '{name}' missing root_supervisor")
+            elif root not in supervisor_names:
+                errors.append(
+                    f"Suite '{name}' root_supervisor '{root}' is not a registered supervisor"
+                )
+
+            if not entry_chain:
+                errors.append(f"Suite '{name}' missing entry_chain")
+            elif entry_chain not in chain_names:
+                errors.append(
+                    f"Suite '{name}' entry_chain '{entry_chain}' is not a registered chain"
+                )
+
+            for target in spec.get("handoff_targets", []):
+                if target not in suite_names:
+                    warnings.append(
+                        f"Suite '{name}' handoff target '{target}' is not currently registered"
+                    )
+
+        return {
+            "checked": True,
+            "errors": errors,
+            "warnings": warnings,
+            "stats": {
+                "supervisors": len(self._supervisor_specs),
+                "suites": len(self._suite_specs),
+                "max_depth_seen": deepest,
+            },
         }
 
     def _check_chain(self, chain_name: str) -> dict[str, Any]:
@@ -2076,6 +2297,8 @@ class AgentOrchestrator:
         agents = self.list_agents()
         steps = self.list_steps()
         chains = self.list_chains()
+        supervisors = self.list_supervisors()
+        suites = self.list_suites()
 
         print(f"\n{'═' * 50}")
         print("  AgentOrchestrator Definitions")
@@ -2103,6 +2326,24 @@ class AgentOrchestrator:
                 print(f"    • {c} ({step_count} steps)")
             print()
 
+        if supervisors:
+            print("  Supervisors:")
+            for s in supervisors:
+                spec = self._supervisor_specs.get(s, {})
+                lead = spec.get("lead_agent") or "<unset>"
+                team_sz = len(spec.get("team") or [])
+                print(f"    • {s} (lead={lead}, team={team_sz})")
+            print()
+
+        if suites:
+            print("  Suites:")
+            for s in suites:
+                spec = self._suite_specs.get(s, {})
+                entry = spec.get("entry_chain") or "<unset>"
+                root = spec.get("root_supervisor") or "<unset>"
+                print(f"    • {s} (entry={entry}, root={root})")
+            print()
+
         resources = self.list_resources()
         if resources:
             print("  Resources:")
@@ -2112,7 +2353,13 @@ class AgentOrchestrator:
 
         print(f"{'═' * 50}\n")
 
-        return {"agents": agents, "steps": steps, "chains": chains}
+        return {
+            "agents": agents,
+            "steps": steps,
+            "chains": chains,
+            "supervisors": supervisors,
+            "suites": suites,
+        }
 
     def graph(self, chain_name: str, format: str = "ascii") -> str:
         """
@@ -2688,18 +2935,37 @@ class AgentOrchestrator:
     #                         DISCOVERY
     # ══════════════════════════════════════════════════════════════════
 
-    def list_agents(self) -> list[str]:
+    def list_agents(self, detailed: bool = False) -> list[str] | list[dict[str, Any]]:
         """
         List all registered agents.
 
         Returns:
-            list[str]: List of agent names.
+            list[str] | list[dict[str, Any]]: Agent names or metadata.
 
         Example:
             >>> agents = ao.list_agents()
             >>> print(f"Registered agents: {agents}")
         """
-        return self._agent_registry.list()
+        agents = self._agent_registry.list()
+        if not detailed:
+            return agents
+
+        details: list[dict[str, Any]] = []
+        for name in agents:
+            spec = self._agent_registry.get_spec(name)
+            if not spec:
+                continue
+            details.append(
+                {
+                    "name": spec.metadata.name,
+                    "description": spec.metadata.description,
+                    "group": spec.metadata.group,
+                    "version": spec.metadata.version,
+                    "capabilities": list(spec.capabilities or []),
+                    "resilient": bool(spec.resilient),
+                }
+            )
+        return details
 
     def list_steps(self) -> list[str]:
         """
@@ -2726,6 +2992,30 @@ class AgentOrchestrator:
             >>> print(f"Registered chains: {chains}")
         """
         return self._chain_registry.list()
+
+    def list_supervisors(self, detailed: bool = False) -> list[str] | list[dict[str, Any]]:
+        """List registered supervisor metadata."""
+        names = list(self._supervisor_specs.keys())
+        if not detailed:
+            return names
+        return [dict(v) for v in self._supervisor_specs.values()]
+
+    def list_suites(self, detailed: bool = False) -> list[str] | list[dict[str, Any]]:
+        """List registered deployable suites metadata."""
+        names = list(self._suite_specs.keys())
+        if not detailed:
+            return names
+        return [dict(v) for v in self._suite_specs.values()]
+
+    def get_supervisor_spec(self, name: str) -> dict[str, Any] | None:
+        """Get supervisor metadata by name."""
+        spec = self._supervisor_specs.get(name)
+        return dict(spec) if spec else None
+
+    def get_suite_spec(self, name: str) -> dict[str, Any] | None:
+        """Get suite metadata by name."""
+        spec = self._suite_specs.get(name)
+        return dict(spec) if spec else None
 
     def get_resource(self, name: str) -> Any:
         """
@@ -3028,6 +3318,8 @@ class AgentOrchestrator:
         self._agent_registry.clear()
         self._step_registry.clear()
         self._chain_registry.clear()
+        self._supervisor_specs.clear()
+        self._suite_specs.clear()
         self._resource_manager.clear()
 
     # Legacy alias

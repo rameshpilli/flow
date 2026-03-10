@@ -1,6 +1,16 @@
 """AgentOrchestrator Core Module"""
 
-from agentorchestrator.core.context_store import ChainContext
+from agentorchestrator.core.constants import (
+    AgentCapability,
+    ContextScope,
+    ErrorHandling,
+    MergeMode,
+    RunStatus,
+    StorageBackend,
+)
+from agentorchestrator.core.constants import (
+    ResourceScope as ResourceScopeEnum,  # Alias to avoid conflict
+)
 from agentorchestrator.core.context import (
     ContextRef,
     ContextRefNotFoundError,
@@ -12,8 +22,16 @@ from agentorchestrator.core.context import (
     offload_to_redis,
     resolve_context_ref,
 )
+from agentorchestrator.core.context_store import ChainContext
 from agentorchestrator.core.dag import DAGExecutor
-from agentorchestrator.core.decorators import agent, chain, middleware, step
+from agentorchestrator.core.decorators import (
+    agent,
+    chain,
+    middleware,
+    step,
+    suite,
+    supervisor,
+)
 from agentorchestrator.core.exceptions import (
     AgentError,
     AgentExecutionError,
@@ -68,21 +86,14 @@ from agentorchestrator.core.serializers import (
     create_summary_serializer,
 )
 from agentorchestrator.core.validation import ContractValidationError
-from agentorchestrator.core.constants import (
-    AgentCapability,
-    ContextScope,
-    ErrorHandling,
-    MergeMode,
-    ResourceScope as ResourceScopeEnum,  # Alias to avoid conflict
-    RunStatus,
-    StorageBackend,
-)
 
 __all__ = [
     "AgentOrchestrator",
     "agent",
     "step",
     "chain",
+    "supervisor",
+    "suite",
     "middleware",
     "ChainContext",
     "AgentRegistry",

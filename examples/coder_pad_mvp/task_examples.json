@@ -1,0 +1,20 @@
+[
+  {
+    "task_id": "calc-core-001",
+    "description": "Create calculator package with add/subtract/multiply/divide and tests.",
+    "labels": ["coder-pad", "calculator", "qa", "docs"],
+    "priority": 1
+  },
+  {
+    "task_id": "calc-cli-001",
+    "description": "Add CLI support for calculator operations and document usage.",
+    "labels": ["coder-pad", "calculator", "cli", "docs"],
+    "priority": 2
+  },
+  {
+    "task_id": "calc-qa-001",
+    "description": "Expand calculator QA and update runbook coverage.",
+    "labels": ["coder-pad", "qa", "tests", "runbook"],
+    "priority": 2
+  }
+]

@@ -200,6 +200,70 @@ def agent(
             name=name,
             description=description,
             group=group,
+            version=version or "1.0.0",
+            capabilities=capabilities,
+        )
+
+    if cls is not None:
+        return decorator(cls)
+    return decorator
+
+
+def supervisor(
+    cls: type[T] | None = None,
+    *,
+    name: str | None = None,
+    description: str = "",
+    lead_agent: str | None = None,
+    team: list[str] | None = None,
+    max_concurrent_agents: int = 10,
+    agent_timeout_seconds: float = 60.0,
+    guardrails: list[str] | None = None,
+    context_isolation: bool = True,
+) -> type[T] | Callable[[type[T]], type[T]]:
+    """Decorator to register supervisor metadata on the global orchestrator."""
+
+    def decorator(cls: type[T]) -> type[T]:
+        return _get_orchestrator().supervisor(
+            cls,
+            name=name,
+            description=description,
+            lead_agent=lead_agent,
+            team=team,
+            max_concurrent_agents=max_concurrent_agents,
+            agent_timeout_seconds=agent_timeout_seconds,
+            guardrails=guardrails,
+            context_isolation=context_isolation,
+        )
+
+    if cls is not None:
+        return decorator(cls)
+    return decorator
+
+
+def suite(
+    cls: type[T] | None = None,
+    *,
+    name: str | None = None,
+    version: str = "1.0.0",
+    root_supervisor: str | None = None,
+    entry_chain: str | None = None,
+    capabilities: list[str] | None = None,
+    handoff_targets: list[str] | None = None,
+    runtime: dict[str, Any] | None = None,
+) -> type[T] | Callable[[type[T]], type[T]]:
+    """Decorator to register deployable suite metadata on the global orchestrator."""
+
+    def decorator(cls: type[T]) -> type[T]:
+        return _get_orchestrator().suite(
+            cls,
+            name=name,
+            version=version,
+            root_supervisor=root_supervisor,
+            entry_chain=entry_chain,
+            capabilities=capabilities,
+            handoff_targets=handoff_targets,
+            runtime=runtime,
         )
 
     if cls is not None:

@@ -16,6 +16,8 @@
 # ============================================================
 
 .PHONY: install install-dev lint format type-check test check run docs clean help
+.PHONY: mvp-kind-create mvp-image-build mvp-kind-load mvp-deploy mvp-logs
+.PHONY: coderpad-image-build coderpad-kind-load coderpad-deploy coderpad-logs coderpad-mayor-run
 
 # Default target
 .DEFAULT_GOAL := help
@@ -24,6 +26,10 @@
 PYTHON := python3
 UV := uv
 PIP := $(UV) pip
+
+# Polecat MVP settings
+KIND_CLUSTER ?= polecat-mvp
+MVP_IMAGE ?= polecat-mvp:local
 
 # Use --system flag if no venv is active (set SYSTEM=1 to install globally)
 ifdef SYSTEM
@@ -119,6 +125,50 @@ run-event:
 run-deep-research:
 	@echo "Running deep research agent example..."
 	$(PYTHON) agentorchestrator/examples/deep_research_agent.py
+
+# ============================================================
+# GASTOWN MVP / POLECAT
+# ============================================================
+
+mvp-kind-create:
+	@echo "Creating kind cluster '$(KIND_CLUSTER)'..."
+	kind create cluster --name $(KIND_CLUSTER)
+
+mvp-image-build:
+	@echo "Building Polecat MVP image $(MVP_IMAGE)..."
+	docker build -f Dockerfile.polecat-mvp -t $(MVP_IMAGE) .
+
+mvp-kind-load:
+	@echo "Loading image into kind cluster '$(KIND_CLUSTER)'..."
+	kind load docker-image $(MVP_IMAGE) --name $(KIND_CLUSTER)
+
+mvp-deploy:
+	@echo "Deploying Polecat MVP pod..."
+	kubectl apply -f k8s/mvp/polecat-mvp.yaml
+
+mvp-logs:
+	@echo "Streaming Polecat MVP logs..."
+	kubectl logs -f pod/polecat-mvp
+
+coderpad-image-build:
+	@echo "Building Coder Pad MVP image $(MVP_IMAGE)..."
+	docker build -f Dockerfile.polecat-mvp -t $(MVP_IMAGE) .
+
+coderpad-kind-load:
+	@echo "Loading Coder Pad image into kind cluster '$(KIND_CLUSTER)'..."
+	kind load docker-image $(MVP_IMAGE) --name $(KIND_CLUSTER)
+
+coderpad-deploy:
+	@echo "Deploying Coder Pad MVP pod..."
+	kubectl apply -f k8s/coder_pad_mvp/polecat-coder-pad.yaml
+
+coderpad-logs:
+	@echo "Streaming Coder Pad MVP logs..."
+	kubectl logs -f pod/polecat-coder-pad
+
+coderpad-mayor-run:
+	@echo "Starting Coder Pad Mayor API on http://127.0.0.1:8787 ..."
+	$(PYTHON) -m agentorchestrator.integrations.coder_pad_mvp.mayor_api
 
 # ============================================================
 # DOCUMENTATION
@@ -312,6 +362,20 @@ help:
 	@echo "  make run-quickstart    Run quickstart example"
 	@echo "  make run-event         Run event workflow example"
 	@echo "  make run-deep-research Run deep research agent example"
+	@echo ""
+	@echo "Gastown MVP / Polecat:"
+	@echo "  make mvp-kind-create  Create local kind cluster"
+	@echo "  make mvp-image-build  Build Polecat MVP image"
+	@echo "  make mvp-kind-load    Load image into kind cluster"
+	@echo "  make mvp-deploy       Apply MVP pod + config"
+	@echo "  make mvp-logs         Tail MVP pod logs"
+	@echo ""
+	@echo "Coder Pad MVP:"
+	@echo "  make coderpad-image-build  Build Coder Pad image"
+	@echo "  make coderpad-kind-load    Load image into kind cluster"
+	@echo "  make coderpad-deploy       Apply Coder Pad pod + config"
+	@echo "  make coderpad-logs         Tail Coder Pad pod logs"
+	@echo "  make coderpad-mayor-run    Start local Mayor-style /chat API"
 	@echo ""
 	@echo "Documentation:"
 	@echo "  make docs          Build documentation"

@@ -1,0 +1,56 @@
+version: 1
+
+repo:
+  name: agentorchestrator
+  language: python
+  framework: fastapi
+  test_command: "python -m pytest tests/ -x --tb=short -q"
+  lint_command: "python -m ruff check agentorchestrator"
+  docs_path: docs/
+  main_branch: main
+
+services: []
+
+experts:
+  # depends_on declares bead-level dependencies for GT's MEOW planner.
+  # Mayor wires these as: bd depend <this-bead> blocks <dep-bead>
+  # GT's convoy scheduler computes parallel waves automatically.
+  # When omitted, pipeline runs sequentially in list order (backward-compatible).
+  #
+  # Dependency types available: blocks, waits-for, conditional-blocks, merge-blocks
+  pipeline:
+    - role: PRE
+      model: claude-sonnet-4-5
+      description: "Planning & Requirements Expert — scopes the task, produces requirements.md"
+      # No depends_on — root of the DAG (Wave 0)
+
+    - role: EES
+      model: claude-sonnet-4-5
+      description: "Engineering Expert — implements code based on PRE's requirements"
+      depends_on: [PRE]
+
+    - role: QES
+      model: claude-sonnet-4-5
+      description: "Quality Engineering Supervisor — runs tests, gates on coverage/pass rate"
+      depends_on: [EES]
+
+    - role: DE
+      model: claude-sonnet-4-5
+      description: "Documentation Expert — generates API docs, runbooks, release notes from QES results"
+      depends_on: [QES]      # Hard dep: reads qa_report.md from QES
+
+    - role: RE
+      model: claude-sonnet-4-5
+      description: "Release Expert — creates release branch, version bump, changelog"
+      depends_on: [EES]       # Only needs git state — can run parallel with QES!
+
+skills:
+  platform: []
+  per_role:
+    PRE: []
+    EES: []
+    QES: []
+    DE: []
+    RE: []
+
+custom_agents: []

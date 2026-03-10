@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: polecat-mvp-config
+data:
+  GASTOWN_TASK_JSON: '{"task_id":"mvp-task-1","description":"Validate autonomous QA and docs flow for examples/gastown_mvp/pipeline.py"}'
+  WORKTREE_PATH: "/app"
+  GASTOWN_OUTPUT_DIR: "/app/.gastown"
+  DEEP_RESEARCH_BASE_URL: ""
+  POLECAT_TEST_CMD: "pytest tests/test_gastown_mvp_runtime.py -q"
+  POLECAT_AUTOCOMMIT: "false"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: polecat-mvp
+  labels:
+    app: polecat-mvp
+spec:
+  restartPolicy: Never
+  containers:
+    - name: polecat-mvp
+      image: polecat-mvp:local
+      imagePullPolicy: IfNotPresent
+      envFrom:
+        - configMapRef:
+            name: polecat-mvp-config
